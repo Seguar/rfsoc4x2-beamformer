@@ -175,3 +175,28 @@ EVM/BER. Version tags prevent reinterpretation of old captures. Nineteen host te
 cover timing drift, corrupted payload remaining visible, within-symbol sample loss
 remaining visible, and installed GPIO metadata fallback. The new timing tracker
 does not repair arbitrary missing samples and has not yet passed a physical test.
+
+## Full-memory timing and capture-clock control
+
+**Test / How:** eight full-RAM records with unchanged waveform1, immediate settled
+RAM rereads, full DAC memory readback and two negative controls lowering only the
+PS capture clock. The original clock was restored in finally. No new FPGA build.
+
+**Results:** every RAM reread agrees bit-for-bit. Stored DAC0 contents match the
+tiled reference; DAC1 RAM is all zero. Received waveform timing advances99.4–100.8ppm
+over the long records. Lowering the driver-calculated PS clock124.99875→99.999MHz
+contracts a4096-sample received period to3276samples. RFdc status flags do not
+measure downstream capture-converter occupancy. No improvement/EVM claim is made
+from this diagnostic, and DAC physical timing was not independently scoped.
+
+**Conclusions:** downstream capture throughput is a supported leading explanation
+for sample loss; exact synthesis-matched RTL attribution remains open. A longer
+settle wait or refilling an already-correct DAC RAM cannot establish a fix.
+
+**Ways to resolve:** inspect matched capture/backpressure RTL and measure clock
+relationships. A separate bounded experiment will check an installed vendor RF
+clock profile with a source rate below the125MHz capture domain, preserving the
+sink's original clock constraint. Clock profile compatibility, rate metadata,
+locks/MTS and before/after raw timing loss must be validated before adopting it.
+The host reference/analyzer now accept explicit or recorded sample rates; this
+software capability does not change hardware clocks or validate a profile.

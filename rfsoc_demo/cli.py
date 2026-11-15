@@ -59,9 +59,10 @@ def main():
     s = sub.add_parser('reference')
     s.add_argument('--out', default='out/reference.npz')
     s.add_argument('--peak', type=int, default=1200)
+    s.add_argument('--fs', type=float, default=FS, help='ADC complex sample rate; DAC reference uses four times this rate')
     s = sub.add_parser('analyze')
     s.add_argument('capture')
-    s.add_argument('--fs', type=float, default=FS)
+    s.add_argument('--fs', type=float, help='Override capture sample-rate metadata')
     s.add_argument('--adc0-only', action='store_true', help='Direct DAC_A to ADC_A diagnostic; no array gain claim')
     s.add_argument('--waveform-version', type=int, choices=[1,2], help='Override capture metadata; untagged old captures use version1')
     s.add_argument('--out', default='out/analysis')
@@ -77,20 +78,23 @@ def main():
                               delay=(793+37*i)%4096) for i in range(a.frames)], a.out,
                     'SIMULATED: '+('common interference path' if a.shared_path else 'distinct interference path'), FS)
     elif a.command == 'reference':
+        if not np.isfinite(a.fs) or a.fs <= 0:
+            p.error('--fs must be finite and positive')
         path = Path(a.out)
         path.parent.mkdir(parents=True, exist_ok=True)
         wave, symbols = reference()
-        np.savez(path, wave=wave, symbols=symbols, dac_words=dac_words(wave, a.peak), fs=FS,
-                 dac_complex_fs=500e6, dac_datapath_mode=3, dac_imr_factor=2,
+        np.savez(path, wave=wave, symbols=symbols, dac_words=dac_words(wave, a.peak), fs=a.fs,
+                 dac_complex_fs=4*a.fs, dac_datapath_mode=3, dac_imr_factor=2,
                  waveform_version=WAVEFORM_VERSION)
         print(path)
     elif a.command == 'analyze':
         with np.load(a.capture, allow_pickle=False) as data:
             x = data['samples']
             version = int(data['waveform_version']) if 'waveform_version' in data else 1
+            fs = float(data['fs']) if 'fs' in data else FS
         if x.ndim == 2:
             x = x[None]
-        save_report(x, a.out, 'HARDWARE CAPTURE (provenance supplied separately)', a.fs, a.adc0_only,
+        save_report(x, a.out, 'HARDWARE CAPTURE (provenance supplied separately)', a.fs or fs, a.adc0_only,
                     a.waveform_version or version)
     else:
         from .transport import capture

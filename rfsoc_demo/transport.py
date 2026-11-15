@@ -17,6 +17,11 @@ def receive_session(sock):
     metadata = json.loads(recv_exact(sock, size))
     if metadata.get('format') != 'int16le-I-minus-jQ-4ch' or metadata.get('frame_bytes') != 262144:
         raise ValueError('Unsupported stream format/frame size')
+    fs = metadata.get('fs_hz', 0)
+    if not isinstance(fs, (float,int)) or not np.isfinite(fs) or fs <= 0:
+        raise ValueError('Invalid stream sample rate')
+    if metadata.get('waveform_version',1) not in (1,2):
+        raise ValueError('Unsupported waveform version')
     return metadata
 
 

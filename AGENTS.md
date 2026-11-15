@@ -95,6 +95,13 @@ intermittent errors; hardware cause/timing fix remain unproven. Do not call it s
 Working credential retention was explicitly authorized by user; keep it private
 outside repo/evidence and reuse instead of asking again after every subtask.
 
+Full-RAM diagnostics found~100ppm advances and a slower-sink negative control
+demonstrated capture loss. Exact matched RTL is absent. Do not raise the PS
+capture clock above its125MHz design constraint as a routine workaround. Lower
+RF source profiles require matched LMK/LMX programming, actualRFdc-rate metadata,
+NCO/MTS validation and before/after raw timing-loss measurements. Preserve failed
+records. Host `reference --fs`/capture metadata specify samples, not clock commands.
+
 Each milestone updates docs/VALIDATION.md and PLAN.md with Test / How / Results /
 Conclusions / Ways to resolve. Report what is not proven. Keep access details in
 ignored local/ files; use secure secret cards for credentials. Do not introduce
