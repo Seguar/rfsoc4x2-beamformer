@@ -10,6 +10,10 @@ EVM median3.79%, maximum9.98%. Raw timing loss remains, so constant EVM is not
 claimed. Physical array beamforming and MXG rejection are still unvalidated.
 See [validation](docs/VALIDATION.md) and [agent instructions](AGENTS.md).
 
+The [MATLAB + VSA refactor](docs/MATLAB_VSA.md) adds a readable MATLAB frontend,
+twelve beamformer choices and a hardware-independent legacy boot stream loop.
+MATLAB execution and live VSA EVM remain under validation.
+
 **Connector correction:** this overlay's logical `dac0` is the printed **DAC_B**;
 `dac1` is DAC_A. Earlier DAC_A wording in direct-test descriptions was incorrect.
 The launcher defaults to DAC_B (`--dac-port B`); `--dac-port A` selects DAC_A.

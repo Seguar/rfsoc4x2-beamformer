@@ -5,6 +5,15 @@ before describing results; docs/LIVE_DEMO.md defines the real-time antenna demo.
 This repository is specifically RFSoC4x2 / xczu48dr;
 ZCU216 overlays, clocks, DAC indexing and burst protocols do not apply.
 
+MATLAB work must also read docs/MATLAB_VSA.md. Keep the original reference .mlapp
+and exported .m unchanged unless both can be updated consistently. The replacement
+frontend lives in matlab/. Maintain X*conj(w), training-only channel estimates and
+payload/pilot separation. Do not fit payload EVM away. Do not claim VSA lock from
+a completed acquisition alone. Validate the waveform/setup pair and report VSA
+metrics separately from the held-out MATLAB payload metric. VSA sessions must own
+their new application and never attach to unrelated instances or delete global
+instrument handles. The legacy boot-loop module is staged, not deployed firmware.
+
 ## Ownership and workflow
 
 Use one hardware owner at a time. Record claims and handovers in PLAN.md; claims

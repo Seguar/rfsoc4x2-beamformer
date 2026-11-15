@@ -83,3 +83,16 @@ Confirmed naming error: logical dac0 actually feeds printed DAC_B. TX labels and
 launcher selection now use printed letters; RX labels use stream numbers until
 verified. Added RX RMS/freshness and current-metric clearing for stale/unlocked
 states.21 host tests pass. The user's live GUI requires a controlled restart.
+
+Connector-loss validation completed: real DAC_B RAM blanking produced unlock
+and a received-level drop; capture pause cleared current metrics as STALE.
+The corrected Python GUI now remains running and holds the hardware claim.
+
+MATLAB milestone in progress: actual old/new .mlapp XML, exports, shared helpers
+and matched boot.py were audited. Parent owns new MATLAB core/frontend, boot-loop
+source, docs and tests. One laptop agent owns private MATLAB/VSA validation only;
+it must preserve the current Python GUI and board ownership. 23 Python host tests
+pass. Exact waveform reference and Python differential fixture generated privately.
+MATLAB execution, new UI and VSA streaming/EVM remain pending. The first newly
+owned VSA instance timed out during startup; packing tests passed. Original binary
+apps and deployed boot assets remain unchanged.
