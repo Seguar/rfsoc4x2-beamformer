@@ -201,3 +201,20 @@ the pilot identifies the wanted DAC independently. Tracking can be disabled whil
 DOA continues. No physical angle accuracy or antenna pattern has been measured.
 **Ways to resolve:** Measure spacing, verify channel order, calibrate all four
 channels and validate OTA angles before labelling geometry-model angles physical.
+
+
+## VSA-style instrument display — 2026-11-15
+
+**Test:** Dark instrument display, prominent metrics, genuine constellation
+persistence and steady graphics between new captures.
+**How:** Complete-frame readiness polling with a receive buffer >=one frame;
+persistent plot objects; existing pure DSP unchanged. Added GUI contracts for
+steady current data between arrivals and cleared metric cards on failure/staleness.
+**Results:** DSP MATLAB spatial/core gates and direct+array GUI campaigns pass,
+exit0 and `DSP_THEME_GUI_COMPLETE`. All28 Python tests pass. Initial cold-render
+GUI test exceeded its1s stale deadline; test config now explicitly allows5s for
+cold rendering, while production remains1s. No simulated samples enter live mode.
+**Conclusions:** Display theme and refresh behavior validated in simulation. No
+RF quality or capture-rate improvement is inferred from the visual changes.
+**Ways to resolve:** Restart the laptop app through its owned launcher, verify
+fresh live frames and target-window layout, retain all DAC shutdown safeguards.

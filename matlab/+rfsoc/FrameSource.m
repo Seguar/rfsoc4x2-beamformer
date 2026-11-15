@@ -17,6 +17,8 @@ classdef FrameSource < handle
                 'rfsoc:Protocol','ZCU216 burst control is not a 4x2 protocol.');
             self.Config=cfg;
             self.Client=System.Net.Sockets.TcpClient();
+            % GUI readiness checks need room for one complete framed capture.
+            self.Client.ReceiveBufferSize=int32(max(1048576,cfg.frameSamples*16+24));
             try
                 task=self.Client.ConnectAsync(char(cfg.host),int32(cfg.port));
                 assert(task.Wait(int32(cfg.timeoutSeconds*1000)), ...
@@ -42,6 +44,15 @@ classdef FrameSource < handle
             catch exception
                 delete(self); rethrow(exception);
             end
+        end
+        function ready=isFrameReady(self)
+            count=self.Config.frameSamples*16;
+            if self.Config.profile=="demo-framed", count=count+24; end
+            available=double(self.Client.Available);
+            assert(~(available==0 && self.Client.Client.Poll(int32(0), ...
+                System.Net.Sockets.SelectMode.SelectRead)), ...
+                'rfsoc:Disconnected','Stream disconnected.');
+            ready=available>=count;
         end
         function frame=next(self)
             frame=self.readFrame(); skipped=0; deadline=tic;

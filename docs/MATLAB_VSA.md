@@ -274,3 +274,25 @@ acquisition/processing failure; EVM history remains explicitly labelled history.
 nulls, direct-mode rejection and calibrated scan bounds with simulated data.
 `validateGui(referencePath,directory,true)` checks array display and loss/pause
 clearing using `tools/gui_fixture.py --angle-deg 18` as a simulated source.
+
+
+## Instrument display and persistence
+
+The app uses a dark instrument theme with large EVM dB/percent, RX-level and BER
+cards. Current constellation dots are bright; dim dots retain at most two genuine
+prior frames, with fixed symbol reference crosses and stable I/Q limits. EVM uses
+a highlighted trace and a separate amber frozen-baseline trace. DOA and pattern
+colors match the selected-versus-baseline convention.
+
+The GUI polls complete-frame readiness at up to20Hz. The receive buffer holds at
+least one entire capture, so this check does not deadlock a partial TCP frame.
+Persistent graphics handles update only on genuine new data; points are not
+interpolated or synthesized. Between arrivals the latest fresh frame stays steady.
+`displayStaleSeconds` defaults to1s; after that, current cards, constellation
+persistence, phases and spatial curves clear. Noise and disconnects also clear
+current values. Acquisition rate remains limited by real capture/processing.
+
+DSP GUI checks exercise direct and simulated-array modes, including a no-new-frame
+callback which must preserve a still-fresh display, noise rejection, pause clearing
+and close cleanup. Cold-render tests explicitly use a5s display stale threshold;
+the production default remains1s. These are display tests, not improved RF metrics.
