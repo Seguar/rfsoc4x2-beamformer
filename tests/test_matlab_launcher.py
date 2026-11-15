@@ -30,6 +30,26 @@ class MatlabLauncherTests(unittest.TestCase):
             np.testing.assert_array_equal(saved['wave'][:, 0], wave)
             np.testing.assert_array_equal(saved['symbols'], symbols)
 
+    def test_typed_vsa_reference_does_not_mutate_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            sdk = {}
+            for name in ('dllPath', 'customOfdmDllPath', 'typedHelperPath'):
+                path = out/(name+'.dll')
+                path.write_bytes(b'test-placeholder')
+                sdk[name] = str(path)
+            sdk.update(fsHz=FS, fcHz=3e9, bandwidthHz=FS,
+                       captureSamples=4096, visible=False)
+            original = dict(sdk)
+            command(out, out, {'host': 'example.invalid',
+                'matlab_executable': 'matlab-test', 'matlab_vsa': sdk},
+                headless=True, frames=1, use_vsa=True)
+            settings = json.loads((out/'matlab-frontend.json').read_text())
+            self.assertEqual(settings['vsa']['referencePath'], str(out/'matlab-reference.mat'))
+            self.assertEqual(settings['vsa']['measurementTimeoutSeconds'], 3)
+            self.assertNotIn('setupPath', settings['vsa'])
+            self.assertEqual(sdk, original)
+
     def test_literal_quotes_and_line_rejection(self):
         self.assertEqual(literal("a'b"), "'a''b'")
         for value in ('a\nb', 'a\rb', 'a\0b'):

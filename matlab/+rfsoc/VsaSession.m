@@ -12,7 +12,8 @@ classdef VsaSession < handle
     end
     methods
         function obj = VsaSession(cfg)
-            required = {'dllPath','setupPath','fsHz','fcHz','bandwidthHz','captureSamples','visible'};
+            required = {'dllPath','customOfdmDllPath','typedHelperPath','referencePath', ...
+                'fsHz','fcHz','bandwidthHz','captureSamples','visible'};
             for k=1:numel(required)
                 assert(isfield(cfg,required{k}), 'rfsoc:Config','Missing %s',required{k});
             end
@@ -20,7 +21,13 @@ classdef VsaSession < handle
             validateattributes(cfg.fcHz,{'numeric'},{'scalar','real','finite'});
             validateattributes(cfg.bandwidthHz,{'numeric'},{'scalar','real','finite','positive','<=',cfg.fsHz});
             validateattributes(cfg.captureSamples,{'numeric'},{'scalar','integer','>',300});
-            assert(isfile(cfg.dllPath) && isfile(cfg.setupPath),'rfsoc:Path','DLL/setup file missing');
+            for name={'dllPath','customOfdmDllPath','typedHelperPath','referencePath'}
+                assert(isfile(cfg.(name{1})),'rfsoc:Path','Missing %s',name{1});
+            end
+            ref=rfsoc.loadReference(cfg.referencePath);
+            assert(cfg.fsHz==125e6 && ref.fsHz==cfg.fsHz && ref.nfft==256 && ...
+                ref.cp==64 && ref.train==4 && isequal(size(ref.symbols),[12 48]), ...
+                'rfsoc:Reference','Typed VSA configuration requires the exact 125MHz v2 reference.');
             if ~isfield(cfg,'startupTimeoutSeconds'), cfg.startupTimeoutSeconds=45; end
             if ~isfield(cfg,'measurementTimeoutSeconds'), cfg.measurementTimeoutSeconds=15; end
             validateattributes(cfg.startupTimeoutSeconds,{'numeric'},{'scalar','integer','positive','finite'});
@@ -37,25 +44,35 @@ classdef VsaSession < handle
                 assert(~isempty(obj.App),'rfsoc:StartupTimeout','New VSA instance did not start before timeout');
                 obj.App.IsVisible=logical(cfg.visible);
                 obj.App.Title=obj.ConfigurationName;
-                obj.App.RecallSetup(char(cfg.setupPath));
                 obj.Meas=obj.App.Measurements.SelectedItem;
                 obj.Meas.Pause();
                 hw=obj.App.Hardware.Configurations.Create(obj.ConfigurationName);
                 hw.Groups.Create('USR::Stream');
                 hw.Groups.ApplyChanges();
                 obj.Meas.SelectedAnalyzer=hw;
+                NET.addAssembly(cfg.customOfdmDllPath);
+                NET.addAssembly(cfg.typedHelperPath);
+                FinalValidation.FinalVsa.Restore(obj.Meas);
+                obj.Meas.Input.DataFrom=Agilent.SA.Vsa.DataSource.Hardware;
+                assert(obj.Meas.Input.DataFrom==Agilent.SA.Vsa.DataSource.Hardware, ...
+                    'rfsoc:Source','Hardware source readback failed');
                 obj.Input=obj.Meas.SelectedAnalyzer.Groups.Item(0).UserInput;
                 assert(~isempty(obj.Input) && obj.Input.Enabled,'rfsoc:DDC','USR::Stream unavailable (license/configuration)');
                 obj.Input.ChannelCount=int32(1);
                 s=obj.Input.Setup;
                 s.IsImmediateChangesEnabled=false;
                 s.SetFrequencyParameters(true,double(cfg.fcHz),double(cfg.fsHz),double(cfg.bandwidthHz));
-                s.CaptureSizeMaximum=double(cfg.captureSamples);
+                % Capacity is not a promise to supply this many input samples.
+                s.CaptureSizeMaximum=max(8192,double(cfg.captureSamples));
                 s.IsContinuousCapable=true;
                 s.ApplyChanges();
                 obj.Meas.Frequency.Center=double(cfg.fcHz);
                 obj.Meas.Frequency.Span=double(cfg.bandwidthHz);
                 obj.Meas.IsContinuous=false;
+                pre=ref.symbols(1:4,:).'; pilots=ref.symbols(5:12,ref.pilots).';
+                pack=@(x)single(reshape([real(x(:)).';imag(x(:)).'],[],1));
+                % Analyzer/rate/span changes precede the final typed OFDM setup.
+                disp(char(FinalValidation.FinalVsa.Apply(obj.Meas,pack(pre),pack(pilots))));
             catch er
                 delete(obj); rethrow(er);
             end

@@ -7,7 +7,8 @@ assert(ref.fsHz==cfg.fsHz,'rfsoc:Rate','Reference sample rate mismatch.');
 cfg.latestOnly=true; % display skips queued frames; transport validation stays strict
 source=[]; vsa=[]; fixedWeights=[]; tick=[]; frameCount=0;
 history=zeros(0,3); started=tic; lastFrame=tic; lastResult=[];
-fig=uifigure('Name','RFSoC4x2 MATLAB + VSA','Position',[100 100 1150 740]);
+visibility='on'; if isfield(cfg,'visible') && ~cfg.visible, visibility='off'; end
+fig=uifigure('Visible',visibility,'Name','RFSoC4x2 MATLAB + VSA','Position',[100 100 1150 740]);
 grid=uigridlayout(fig,[5 4]); grid.RowHeight={35,35,'1x','1x',45};
 status=uilabel(grid,'Text','Connecting; no current EVM'); status.Layout.Column=[1 4];
 algorithm=uidropdown(grid,'Items',cellstr(rfsoc.algorithmNames()),'Value',char(cfg.algorithm));
@@ -17,7 +18,7 @@ uibutton(grid,'Text','Stop acquisition','ButtonPushedFcn',@closeApp);
 evmAxes=uiaxes(grid); evmAxes.Layout.Row=[3 4]; evmAxes.Layout.Column=[1 2];
 evmLine=plot(evmAxes,NaN,NaN,'DisplayName','Selected'); hold(evmAxes,'on');
 baselineLine=plot(evmAxes,NaN,NaN,'DisplayName','Frozen broadside');
-ylabel(evmAxes,'Held-out payload EVM (dB)'); xlabel(evmAxes,'Time (s)'); legend(evmAxes);
+ylabel(evmAxes,'History: held-out payload EVM (dB)'); xlabel(evmAxes,'Time (s)'); legend(evmAxes);
 iqAxes=uiaxes(grid); iqAxes.Layout.Row=3; iqAxes.Layout.Column=[3 4];
 iqLine=scatter(iqAxes,NaN,NaN,7,'.'); xlabel(iqAxes,'I'); ylabel(iqAxes,'Q');
 phaseAxes=uiaxes(grid); phaseAxes.Layout.Row=4; phaseAxes.Layout.Column=[3 4];
@@ -30,13 +31,16 @@ if cfg.directOnly
     note.Text='Direct DAC_B → 20 dB → ADC_D (stream 0). Single channel; beamforming gain unmeasured.';
 end
 if ~cfg.useVsa, note.Text=[note.Text,' VSA unavailable (disabled).']; end
+if isfield(cfg,'simulated') && cfg.simulated
+    fig.Name=['SIMULATED localhost | ',fig.Name]; note.Text=['SIMULATED localhost. ',note.Text];
+end
 fig.CloseRequestFcn=@closeApp;
 try
     if cfg.useVsa, vsa=rfsoc.VsaSession(cfg.vsa); end
     source=rfsoc.FrameSource(cfg);
     tick=timer('ExecutionMode','fixedSpacing','Period',0.05, ...
         'BusyMode','drop','TimerFcn',@update,'ErrorFcn',@timerError);
-    start(tick);
+    if ~isfield(cfg,'startTimer') || cfg.startTimer, start(tick); end
 catch exception
     closeApp(); rethrow(exception);
 end

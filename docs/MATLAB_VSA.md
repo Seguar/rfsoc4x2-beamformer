@@ -17,16 +17,18 @@ single-channel evidence, not physical array tracking or jammer rejection.
 New VSA startup works with explicit localhost port and Use64Bit, but valid VSA
 EVM/lock remains unproven. Fresh replay can return tiny raw EVM even with NoSync.
 Seven simulated guarded-reader cases pass; they do not establish a real VSA
-positive control. Controlled MATLAB GUI loss/pause/close checks remain pending.
+positive control. The hidden localhost MATLAB GUI campaign passed clean IQ,
+noise rejection, pause clearing, explicit history labelling and socket/close cleanup.
 
 The laptop has MATLAB R2026a Update 5 and VSA interfaces 30.40.333.0. Signal,
 Communications, Phased Array and Optimization licence checks passed; Instrument
 Control did not. Acquisition uses .NET TCP and VSA uses its .NET assembly. Only
 RAB PC in the new core requires Optimization; other core modes use linear algebra.
 
-VSA needs valid licenses for its Custom OFDM and direct-data input workflow.
-The current probe reports `IsValid=false` for Custom OFDM and DDC; the effective
-license mode is still being checked. Keysight's
+Use the **DirectDataSource hardware analyzer**, as specified by the user, with
+`USR::Stream` input. Custom OFDM and DDC option entries report `IsValid=false`
+while Educational Version is valid. Those entries alone do not establish
+DirectDataSource availability; actual analyzer acceptance is under test. Keysight's
 [Demo License documentation](https://helpfiles.keysight.com/csg/89600B/Webhelp/Subsystems/licensing/content/demolicense.htm)
 limits Demo input to built-in simulation/vendor recordings and excludes input
 from external hardware or other programs. A plausible vendor-recording EVM is
@@ -126,8 +128,10 @@ the capture owner handles RAM clears/off when its stream closes. For array work
 set `directOnly=false`, measured `spacingM`, corrections and manifold. The 5.2 GHz
 patch label provides no spacing calibration. Keep 3 GHz for this conducted test.
 
-VSA requires `cfg.useVsa=true` and explicit `cfg.vsa` fields `dllPath`, `setupPath`,
-`fsHz`, `fcHz`, `bandwidthHz`, `captureSamples`, `visible`. Always creates a new
+VSA requires `cfg.useVsa=true` and explicit `cfg.vsa` fields `dllPath`,
+`customOfdmDllPath`, `typedHelperPath`, `referencePath`, `fsHz`, `fcHz`,
+`bandwidthHz`, `captureSamples`, `visible`. The launcher generates `referencePath`.
+Manual MATLAB callers supply it explicitly. The adapter creates a new
 instance and unique USR::Stream configuration; never attaches to unrelated instances
 or deletes global instrument handles. Capture size counts complex samples;
 RequiredSamples counts floats, two per complex sample. No padding/repetition of
@@ -151,6 +155,45 @@ and verify effective mode/rate/search/result lengths. Candidate setup readback
 also differed from intended 125MHz, so file contents alone cannot validate it.
 The isolated vendor recording produced raw EVM0.608% and sync0.976, but both
 required traces retained unnamed status32; the guarded reader rejected it.
+
+The typed correction was exercised: Fs125MHz, FFT256, CP¼, twelve symbols,
+48 active carriers and pilots±7/±21. Capacity8192 was required to retain twelve
+symbols; capacity4096 clamped the result to six. Actual search readback was
+48.64µs. Capacity is independent of finite input: no padding or repetition of
+the aligned 4096-sample result. Additional demand returns unavailable. Actual
+external-IQ operation and adequacy of a single aligned period remain unproven.
+
+Build the included helper against the locally installed SDK:
+
+```powershell
+py -3.11 tools/build_vsa_helper.py --interfaces-dir "VSA_INSTALL/Interfaces" --out out/FinalVsa.dll
+```
+
+`dllPath` points to Agilent.SA.Vsa.Interfaces.dll, `customOfdmDllPath` to
+Agilent.SA.Vsa.CustomOfdm.Interfaces.dll, and `typedHelperPath` to the locally
+compiled FinalVsa.dll. Vendor assemblies are not redistributed. The helper
+sets the v2 resource map/reference directly, without recalling historical setup
+files or inherited hardware addresses/calibrations. This is a verified setup
+correction, not a validated external-IQ measurement workflow.
+
+## Reproduce the simulated GUI campaign
+
+Use a fresh fixture directory and generated reference. Start this localhost
+producer, then invoke MATLAB in another process:
+
+```sh
+python -m tools.gui_fixture --reference out/matlab-reference.mat --directory out/gui-check
+```
+
+```matlab
+addpath(fullfile(repoRoot,'matlab'),fullfile(repoRoot,'matlab','tests'));
+validateGui(fullfile(repoRoot,'out','matlab-reference.mat'), ...
+    fullfile(repoRoot,'out','gui-check'));
+```
+
+The hidden test app is labelled SIMULATED and the producer never accesses hardware.
+Clean IQ, noise, pause, history labelling and closure passed on the laptop. Public
+scripts package the same handshake-based campaign for reproduction.
 
 ## Boot-loop integration
 

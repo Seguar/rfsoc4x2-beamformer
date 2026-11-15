@@ -130,3 +130,13 @@ CustomOFDM/DDC IsValid=false; effective license mode unconfirmed. Sole nextlapto
 agent must APPLY documented post-analyzer SetMeasurementExtension +typed settings,
 readback rates/mode and licensing, then finish independent localhostGUIcampaign.
 No physicalowner changes; actualVSApositive remains unavailable.
+
+Typed restore/setup exercised: CustomOFDM,125MHz,FFT256,CP¼,result12,48active,
+pilots±7/±21. Capacity8192 required; actualsearch48.64us,finiteinputnotextended.
+HiddenlocalhostGUI clean/noise/pause/history/closecampaignPASS, socketEOFverified.
+Parentintegratedmodehelper,portablebuild/GUIcampaign scriptsandtypedreference
+config; 27hosttestsPASS. ExternalVSApositive remainsunproven. USER clarified
+'Use DirecDataSource hardware analyzer as in gui'. Sole newlaptopagent tests
+thatactualanalyzer acceptance andread-onlyinspectsrelatedexistingGUIconfiguration;
+genericDDCoption IsValid=false alone isnotadecisiveDirectDataSourceblock.
+PhysicalMATLABsessioncontinuesholdinghardware; no competingownerauthorized.

@@ -31,15 +31,17 @@ def command(root, out, config, *, headless, frames, use_vsa):
         settings['maxFrames'] = frames
     if use_vsa:
         settings['vsa'] = dict(config.get('matlab_vsa', {}))
-        required = ('dllPath','setupPath','fsHz','fcHz','bandwidthHz','captureSamples','visible')
+        required = ('dllPath','customOfdmDllPath','typedHelperPath','fsHz','fcHz',
+                    'bandwidthHz','captureSamples','visible')
         if any(key not in settings['vsa'] for key in required):
-            raise ValueError('matlab_vsa requires explicit DLL/setup, rates, capture size and visibility')
+            raise ValueError('matlab_vsa requires explicit SDK/helper DLLs, rates, capture size and visibility')
         if settings['vsa']['fsHz'] != FS:
             raise ValueError('VSA setup must match the actual 125 Mcomplex/s input')
-        for key in ('dllPath', 'setupPath'):
+        for key in ('dllPath', 'customOfdmDllPath', 'typedHelperPath'):
             if not Path(settings['vsa'][key]).is_file():
                 raise ValueError('VSA '+key+' does not exist')
         settings['vsa'].setdefault('measurementTimeoutSeconds', 3)
+        settings['vsa']['referencePath'] = str(ref_path)
         if settings['vsa']['measurementTimeoutSeconds'] > 4:
             raise ValueError('Live VSA processing timeout must be <=4s for bounded board streaming')
     settings_path = out/'matlab-frontend.json'
