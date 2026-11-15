@@ -42,10 +42,16 @@ classdef Controller < handle
         function open(obj)
             assert(obj.hasBackend(), 'origapp:Backend', 'No backend injected (cfg.backend is empty).');
             if obj.IsOpen, return; end
-            if origapp.Controller.hasOp(obj.Backend, "open")
-                obj.Backend.open();
+            try
+                if origapp.Controller.hasOp(obj.Backend,"open"), obj.Backend.open(); end
+                m=obj.availableChannels();
+                assert(obj.Config.directOnly || all(m),'origapp:Channels', ...
+                    'Array mode needs four measured channels.');
+                obj.IsOpen=true;
+            catch err
+                try, obj.Backend.close(); catch, end
+                rethrow(err);
             end
-            obj.IsOpen = true;
             obj.ConsecutiveErrors = 0;
         end
 
@@ -102,8 +108,36 @@ classdef Controller < handle
             t=raw.timestamp;
             assert(nowS-t<=obj.Config.staleSeconds && t-nowS<=0.5, ...
                 'origapp:Stale','Frame is old or its acquisition timestamp is in the future.');
+            if isfield(raw,'availableChannels')
+                m = raw.availableChannels;
+                assert(islogical(m) && isequal(size(m),[1 4]) && any(m), ...
+                    'origapp:Channels','availableChannels must be a 1-by-4 logical mask.');
+                assert(obj.Config.directOnly || all(m), 'origapp:Channels', ...
+                    'Array mode needs 4 measured channels; backend reports %s.', mat2str(m));
+            end
             obj.LastFrameTime = t;
             frame = raw;
+        end
+
+        function m = availableChannels(obj)
+            % Optional backend op. Unavailable columns in samples are interface
+            % placeholders, not measured data. Default: all four measured.
+            m = true(1,4);
+            if obj.hasBackend() && origapp.Controller.hasOp(obj.Backend, "availableChannels")
+                m = obj.Backend.availableChannels();
+                assert(islogical(m) && isequal(size(m),[1 4]) && any(m), 'origapp:Channels', ...
+                    'availableChannels must be a 1-by-4 logical mask.');
+            end
+        end
+
+        function s = vsaStatus(obj)
+            % Optional backend op: latest guarded native-VSA result
+            % (valid, reason, evmPercent...). [] when the backend has none.
+            % sendVsa returning true only means the hook exists.
+            s = [];
+            if obj.hasBackend() && origapp.Controller.hasOp(obj.Backend, "vsaStatus")
+                s = obj.Backend.vsaStatus();
+            end
         end
 
         function n = expectedSamples(obj)

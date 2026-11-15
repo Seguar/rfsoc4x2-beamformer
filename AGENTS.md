@@ -146,3 +146,12 @@ Each milestone updates docs/VALIDATION.md and PLAN.md with Test / How / Results 
 Conclusions / Ways to resolve. Report what is not proven. Keep access details in
 ignored local/ files; use secure secret cards for credentials. Do not introduce
 licensed dependencies, paid services or instrument resets without user scope.
+
+The selected original-app native launcher is tools/run_original_vsa.py, distinct
+from tools/run_demo.py (earlier FFT256 frontend). Its FFT64 profile pins the legacy
+SETX and source waveform. Keep the profile-specific lock>=0.3 and sync>=0.9 guards,
+acquisition-age limit2s, bounded decompression and decoded SHA checks. Never admit
+frames by EVM magnitude. Only ADC_D is measured by its compressed transport; three
+zero placeholder columns must never enter physical DOA or beamforming. Rebuild both
+editable binary and export after UI changes; native backend-only changes do not
+change the component model. Freeze source/config before final physical gates.

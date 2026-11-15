@@ -123,6 +123,15 @@ classdef VsaSession < handle
             end
             r.elapsedSeconds=toc(t);
         end
+        function setDisplayStatus(obj,text)
+            % Owned-instance window annotation only (Application.Title of the
+            % VSA this session created). Never attaches to another instance and
+            % never writes measurement values into vendor traces.
+            if obj.Closed || isempty(obj.App), return; end
+            text=char(string(text));
+            assert(numel(text)<=200,'rfsoc:DisplayStatus','Status text too long');
+            obj.App.Title=text;
+        end
         function delete(obj)
             if obj.Closed, return; end
             obj.Closed=true;

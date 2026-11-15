@@ -1,0 +1,11 @@
+{
+  "host": "board.tailnet.example",
+  "user": "xilinx",
+  "host_key": "SHA256:REPLACE_WITH_VERIFIED_BOARD_KEY",
+  "password_file": "C:/private/board.pw",
+  "original_repo": "C:/path/to/vsa_rfsoc",
+  "matlab_executable": "C:/Program Files/MATLAB/R2026a/bin/matlab.exe",
+  "vsa_dll_path": "C:/Program Files/Keysight/89600 Software YYYY/89600 VSA Software/Interfaces/Agilent.SA.Vsa.Interfaces.dll",
+  "legacy_stream_port": 4011,
+  "vsa_startup_port": 60685
+}

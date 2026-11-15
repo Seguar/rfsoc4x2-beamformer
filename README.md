@@ -8,8 +8,9 @@ boot overlay and `vsa_rfsoc` sample conventions; no FPGA build is required.
 VSA for constellation/EVM. The [original-app refactor](matlab/original/README.md)
 retains all119 controls and defaults to the reviewed beamformer core. Synthetic
 UI/failure tests pass and the editable `.mlapp` passes headless model/code checks.
-Its live native-VSA backend is under validation; editor round-trip testing remains
-pending. The separate dashboard below is retained as earlier experimental work.
+Its integrated native-VSA backend has a bounded hardware-tested predecessor;
+[the original-app launcher](matlab/original/README.md#native-vsa-launch) is undergoing
+final lifecycle validation. Editor round-trip testing remains pending. The separate dashboard below is retained as earlier experimental work.
 
 **Status: direct ADC_D capture and live demodulation demonstrated with waveform2.**
 One hundred live frames had zero bit errors and no pilot-lock failures; measured
@@ -22,7 +23,8 @@ twelve beamformer choices and a hardware-independent legacy boot stream loop.
 All twelve MATLAB beamformer software checks pass. A fresh 100-frame MATLAB
 direct-cable run locked every frame with zero BER: EVM median 3.31% (−29.61 dB),
 maximum 8.30%. That MATLAB GUI session has ended. Matched offline VSA replay now passes with
-an explicit unclassified-status warning; live VSA integration remains pending.
+an explicit unclassified-status warning. The original-app native backend also
+demonstrated live synchronization with blank-input rejection; see its launch notes.
 
 **Connector correction:** this overlay's logical `dac0` is the printed **DAC_B**;
 `dac1` is DAC_A. Earlier DAC_A wording in direct-test descriptions was incorrect.

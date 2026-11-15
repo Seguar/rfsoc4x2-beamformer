@@ -185,7 +185,12 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                 setStatus(app, "no backend injected: acquisition not started");
                 return
             end
-            app.Controller.open();
+            try
+                app.Controller.open();
+            catch err
+                setStatus(app, "acquisition not started: " + string(err.message));
+                return
+            end
             if strcmp(app.AcqTimer.Running, 'off')
                 start(app.AcqTimer);
             end
@@ -392,8 +397,8 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             app.UIAxes.YLabel.String = 'DOA Normalized Spectrum';
             app.UIAxes2.XLabel.String = '\Theta^o';
             app.UIAxes2.YLabel.String = 'Gain Pattern (dB)';
-            app.UIAxes.FontSize = 30;
-            app.UIAxes2.FontSize = 30;
+            app.UIAxes.FontSize = 14;    % was 30: long status titles were clipped
+            app.UIAxes2.FontSize = 14;
         end
 
         function p = frameParams(app)
@@ -414,9 +419,31 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             clearCurrent(app, "directOnly: no physical DOA/pattern");
             if app.vsa
                 chn = app.ch; if chn > 4, chn = 1; end
+                m = true(1,4);
+                if isfield(frame,'availableChannels'), m = frame.availableChannels; end
+                if ~m(chn)
+                    error('origapp:Channels', 'Channel %d is not measured (available %s).', ...
+                        chn, mat2str(find(m)));
+                end
                 buff = frame.samples(:,chn)/2^16;
                 if ~app.Controller.sendVsa(buff)
                     note(app, "directOnly: VSA send not available from backend");
+                end
+                % sendVsa only reports that the hook exists; the guarded native
+                % result (if the backend offers vsaStatus) decides what is shown.
+                v = app.Controller.vsaStatus();
+                if isstruct(v) && isfield(v,'valid') && isfield(v,'reason')
+                    why = string(v.reason);
+                    if isfield(v,'shortReason'), why = string(v.shortReason); end
+                    src = ""; if isfield(v,'source'), src = "[" + string(v.source) + "] "; end
+                    if v.valid
+                        msg = src + sprintf('VSA seq %g: EVM %.2f %% (guarded)', frame.sequence, v.evmPercent);
+                    else
+                        msg = src + "VSA unavailable: " + why;
+                    end
+                    clearCurrent(app, msg);   % shown in the axes titles and app.Status
+                    app.Status = "directOnly: " + string(msg) + ...
+                        repmat(" (" + string(v.reason) + ")", 1, ~v.valid);
                 end
             end
             app.LastResult = struct('directOnly', true, 'sequence', getfield(frame, 'sequence')); %#ok<GFLD>
@@ -573,8 +600,11 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             end
             if isvalid(app.UIAxes2), cla(app.UIAxes2); end
             if isvalid(app.UIAxes)
-                app.UIAxes.Title.String = ['Direction of Arrival: unavailable' newline char(reason)];
-                app.UIAxes2.Title.String = ['Beam Pattern: unavailable' newline char(reason)];
+                % Titles get a short line; the full reason stays in app.Status.
+                short = char(reason);
+                if numel(short) > 44, short = [short(1:42) '..']; end
+                app.UIAxes.Title.String = ['Direction of Arrival: unavailable' newline short];
+                app.UIAxes2.Title.String = ['Beam Pattern: unavailable' newline short];
             end
             setStatus(app, reason);
         end
@@ -696,7 +726,14 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
 
         % Value changed function: ChannelselectListBox
         function ChannelselectListBoxValueChanged(app, event)
-            app.ch = str2double(app.ChannelselectListBox.Value);
+            v = str2double(app.ChannelselectListBox.Value);
+            m = app.Controller.availableChannels();
+            if (v <= 4 && ~m(v)) || (v > 4 && ~app.Config.directOnly && ~all(m))
+                app.ChannelselectListBox.Value = num2str(app.ch);
+                setStatus(app, sprintf('channel not measured by backend (available %s)', mat2str(find(m))));
+                return
+            end
+            app.ch = v;
         end
 
         % Value changed function: dataChanEditField

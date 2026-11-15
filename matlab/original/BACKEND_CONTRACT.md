@@ -1,8 +1,7 @@
 # Backend contract for VSA_rfsoc_refactor_exported (a1 → board/VSA owner)
 
-Status: proposed by a1 on 2026-11-15. The board/VSA owner (a2) had not delivered
-`original-app-interface.md` when this was written, so the contract is a1's proposal. The
-parent reconciles the two. a1 did not run any board, VSA or instrument code.
+Status: integrated original-app contract. The native direct-cable implementation
+is `origapp.LegacyVsaBackend`; see README.md for its matched waveform and guards.
 
 ## Construction
 
@@ -73,3 +72,11 @@ struct uses `rfsoc.defaultConfig()`; explicit configuration overrides that basel
 The `original` engine remains an explicit regression/comparison option with known
 conjugation defects. It is not the default. Missing/nonfinite/future timestamps and
 missing/non-scalar sequences are rejected rather than assigning receive time.
+
+## Native backend extensions
+
+`availableChannels()` returns a logical 1-by-4 measured-channel mask. Frames repeat
+that mask as `availableChannels`; zero placeholders are not measurements. Partial
+masks forbid array mode. `vsaStatus()` returns current guarded validity, reason,
+source and EVM. A successful `vsaSend` call alone does not imply valid demodulation.
+The owned VSA title distinguishes hardware, unavailable, acquiring and stale data.

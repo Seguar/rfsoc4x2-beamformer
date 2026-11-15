@@ -458,3 +458,29 @@ uses internal R2026a APIs and does not establish live VSA or physical array resu
 **Ways to resolve:** Validate an editor round trip when editing the component
 layout; use full-model rebuild/readback after code-only changes. Live blank-input
 rejection and transfer-latency work remains with the separate backend campaign.
+
+
+## Original app + native VSA integration (2026-11-15)
+
+- **Test:** matched legacy FFT64 native VSA, blank rejection, freshness and original
+  App Designer integration. No array or MXG test.
+- **How:** private predecessor frozen guards lock>=0.3 and sync>=0.9; lossless
+  ADC_D-only full-RAM transport; 25-frame wanted/blank/pause hardware gate and
+  separate 30-frame continuous smoke test. Public integration then rebuilt the
+  complete `.mlapp`/export pair and checked model/code agreement independently.
+- **Results:** hardware gate: 16/16 wanted valid, 9/9 blanks unavailable, wanted
+  median EVM4.61%, receipt age0.58–1.32s. Outlier24.95% retained. Continuous run:
+  30/30 valid, max receipt age1.65s, outlier21.24% retained. Earlier failed gates
+  remain in private evidence. Public software: 31 Python tests pass; MATLAB
+  original UI/12-mode fixtures, wire negative controls and fresh model/code checks
+  pass (119 components, 65 callbacks, no resource leaks).
+- **Conclusions:** matched native VSA can demodulate conducted hardware with
+  meaningful blank rejection. Public integration additionally bounds decompression,
+  clears current validity during acquisition and expires metrics using acquisition
+  time at measurement completion. Those final changes and the new public launcher
+  still require a fresh exact-source hardware gate. No helper/VSA claim is held
+  after the predecessor tests; nothing continuous was left running.
+- **Ways to resolve:** validate the public one-command launch with wanted/blank/
+  pause/recovery before a durable visible session. Preserve all outliers. Raw
+  sample loss, physical beamforming/DOA, jammer rejection and observed RF-off remain
+  unproven. App Designer editor round trip remains untested.
