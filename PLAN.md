@@ -9,8 +9,10 @@ Claims hold until explicitly released, irrespective of timestamps.
 
 | Part | Owner | State |
 |---|---|---|
-| Repository code, docs, tests, publication | Coordinator | Software verified; live validation pending |
-| Laptop and board experiments | Laptop agent released its claim | Access attempt complete; SSH/password and VISA blocked; no hardware changes |
+| Repository code, docs, tests, publication | Coordinator | MATLAB software and direct live path validated; VSA/array remain pending |
+| Laptop and board experiments | Running MATLAB demo owns hardware | Claim HELD until its launcher finishes shutdown; no competing overlay owner |
+
+## Initial plan and historical checkpoints
 
 Decisions: public code repository; existing matched 4x2 overlay; no FPGA build;
 low-level waveform first; hardware-free simulation clearly labelled. Initial RF
@@ -107,3 +109,16 @@ replay completes fresh but trace status32 prevents a valid EVM/lock claim. Sole
 laptop agent now investigates waveform/setup compatibility; no board handover yet.
 Parent added MATLAB launcher/headless lifecycle and bounded UI backlog draining;
 new MATLAB source is staged for its next execution check, not yet live-validated.
+
+Latest milestone: corrected c87817f core gate passes all12 modes, differential
+CFO/EVM/BER, noise and isotropic root controls; transport passes. 26 Python tests
+pass. Seven simulated VSA reader cases reject stale/NoSync/unknown/low-correlation
+results; actual VSA positive control remains unavailable. Reviewed reader and
+headless resource-cleanup fixes integrated. A fresh100frame MATLAB physical run
+has unique sequences0..99, all acquired, BER0, median/maxEVM3.31/8.30%. Both DAC
+RAM clear/off records and no shutdown errors; physical RF-off not measured.
+Durable MATLAB GUI left visible/advancing. That session now owns hardware, replacing
+the prior Python display, and its claim remains HELD until orderly shutdown.
+Sole laptop agent owns only new private VSA-source and localhost UI diagnostics;
+must preserve physical MATLAB session. VSA Input.DataFrom Hardware/Recording and
+effective CustomOFDM settings are the next concrete probe. Array/OTA/MXG unproven.

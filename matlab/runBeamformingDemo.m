@@ -29,6 +29,7 @@ if cfg.directOnly
     algorithm.Enable='off'; track.Enable='off'; calibrate.Enable='off';
     note.Text='Direct DAC_B → 20 dB → ADC_D (stream 0). Single channel; beamforming gain unmeasured.';
 end
+if ~cfg.useVsa, note.Text=[note.Text,' VSA unavailable (disabled).']; end
 fig.CloseRequestFcn=@closeApp;
 try
     if cfg.useVsa, vsa=rfsoc.VsaSession(cfg.vsa); end

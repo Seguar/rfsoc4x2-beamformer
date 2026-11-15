@@ -12,7 +12,9 @@ See [validation](docs/VALIDATION.md) and [agent instructions](AGENTS.md).
 
 The [MATLAB + VSA refactor](docs/MATLAB_VSA.md) adds a readable MATLAB frontend,
 twelve beamformer choices and a hardware-independent legacy boot stream loop.
-MATLAB execution and live VSA EVM remain under validation.
+All twelve MATLAB beamformer software checks pass. A fresh 100-frame MATLAB
+direct-cable run locked every frame with zero BER: EVM median 3.31% (−29.61 dB),
+maximum 8.30%. The MATLAB GUI was left running; VSA EVM remains unavailable.
 
 **Connector correction:** this overlay's logical `dac0` is the printed **DAC_B**;
 `dac1` is DAC_A. Earlier DAC_A wording in direct-test descriptions was incorrect.

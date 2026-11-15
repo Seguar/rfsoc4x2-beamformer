@@ -283,3 +283,41 @@ clears current EVM, constellation, phase and CFO. RX RMS level is now logged/sho
 stream. Actual cable-loss behavior and the revised running GUI still need checking.
 **Ways to resolve:** restart the user's live session with the corrected connector
 metadata and freshness display, then compare fresh levels/lock during cable changes.
+
+## MATLAB processing and conducted loopback
+
+**Test:** execute the corrected MATLAB core, strict TCP boundary and complete
+direct DAC_B → BW-S20W2+20dB → ADC_D lifecycle, then leave the MATLAB GUI visible.
+
+**How:** source c87817f exported to private staging. Unchanged differential core
+and transport gates, all-source MATLAB checkcode and 26 Python host tests. Private
+corrections replaced a nested cleanup closure with captured per-resource cleanup
+handles and guarded VSA EVM against invalid IQ, summary status and correlation.
+After the cleanup correction, a fresh 100-frame physical run completed. Every
+processed frame is retained in the private metrics log; no exclusions.
+
+**Results:** all twelve beamformer software checks pass, including iterative-load
+root/endpoints and isotropic closed form. Independent Python/MATLAB simulated EVM,
+BER and CFO agree. Fragmented localhost TCP, exact IQ, sequences, duplicate and
+framing/error controls pass. Seven SIMULATED VSA reader cases pass; these include
+rejection of NoSync, unknown bit32, stale input and low/nonfinite correlation.
+
+The fresh physical MATLAB run has 100 unique sequences0–99, all locked, zero BER.
+EVM min/median/p95/max: 2.88/3.31/7.30/8.30%, or −30.82/−29.61/−22.74/−21.62dB.
+RX0 RMS is −48.31 to −48.28dBFS. Saved final raw capture component peaks are
+343/368 codes, with no rails; this raw headroom check covers that final capture.
+Both DAC RAM clears/off commands and no shutdown errors are recorded for the
+finite run. A subsequent durable MATLAB GUI was left visible with advancing
+sequences; that active session holds hardware ownership until orderly closure.
+
+**Conclusions:** MATLAB direct conducted acquisition, demodulation and finite
+cleanup are validated. This does not validate physical array beamforming, OTA
+angle tracking, constant EVM, MXG rejection or independently measured RF-off.
+Actual VSA EVM/lock remains unavailable; its reader contract has simulated tests
+only. The controlled MATLAB GUI loss/pause/close campaign remains incomplete.
+
+**Ways to resolve:** keep the active MATLAB owner exclusive. Test the effective
+VSA CustomOFDM configuration and Input.DataFrom Hardware versus Recording, then
+obtain a valid positive control with noise/wrong-setup rejection. Later connect
+and calibrate the array before physical beamforming claims. Raw capture timing
+loss is unchanged by this host refactor.

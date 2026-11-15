@@ -4,10 +4,15 @@ assert(isfinite(cfg.maxFrames) && cfg.maxFrames>=1 && cfg.maxFrames==fix(cfg.max
     'rfsoc:Count','Headless runs need a finite positive maxFrames.');
 assert(strlength(cfg.logPath)>0,'rfsoc:Log','Supply a private log path.');
 ref=rfsoc.loadReference(cfg.referencePath); source=[]; vsa=[];
-cleanup=onCleanup(@closeOwned);
+
 % Start VSA before connecting: a connected producer has a bounded send timeout.
-if cfg.useVsa, vsa=rfsoc.VsaSession(cfg.vsa); end
-source=rfsoc.FrameSource(cfg); locked=0; vsaValid=0; evm=nan(1,cfg.maxFrames);
+if cfg.useVsa
+    vsa=rfsoc.VsaSession(cfg.vsa);
+    vsaGuard=onCleanup(@()delete(vsa)); %#ok<NASGU>
+end
+source=rfsoc.FrameSource(cfg);
+sourceGuard=onCleanup(@()delete(source)); %#ok<NASGU>
+locked=0; vsaValid=0; evm=nan(1,cfg.maxFrames);
 fid=fopen(cfg.logPath,'a'); assert(fid>=0,'rfsoc:Log','Cannot open metrics log.');
 fileGuard=onCleanup(@()fclose(fid));
 for k=1:cfg.maxFrames
@@ -36,8 +41,4 @@ assert(report.allFramesLocked,'rfsoc:Validation','Some frames failed; inspect AL
 assert(~cfg.useVsa || vsaValid==cfg.maxFrames, ...
     'rfsoc:VsaValidation','Some VSA measurements are unavailable; inspect ALL log records.');
 disp('RFSOC_MATLAB_LIVE_PASS');
-    function closeOwned()
-        if ~isempty(source), delete(source); end
-        if ~isempty(vsa), delete(vsa); end
-    end
 end

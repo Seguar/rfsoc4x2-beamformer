@@ -121,37 +121,9 @@ classdef VsaSession < handle
     end
     methods (Access=private)
         function [pct,db,status]=readEvm(obj)
-            pct=NaN; db=NaN; status='EVM unavailable: no valid scalar RMS EVM summary with percent/dB units';
-            traces=obj.App.Display.Traces;
-            for k=0:double(traces.Count)-1
-
-                try
-                    d=obj.Meas.MeasurementData(char(traces.Item(k).DataName));
-                    if isempty(d), continue; end
-                    guard=onCleanup(@()d.Dispose());
-                    if int32(d.Status)~=0
-                        status=['EVM unavailable: trace status ' char(d.Status.ToString())];
-                        clear guard; continue
-                    end
-                    names=d.SummaryNames;
-                    for j=1:names.Length
-                        key=char(names(j));
-                        if isempty(regexpi(key,'^(rms\s*evm|evm\s*rms|evm|Ch1EVM)$','once')), continue; end
-                        v=d.Summary(key); u=strtrim(char(d.SummaryUnit(key)));
-                        if isempty(v) || v.Length~=1, continue; end
-                        value=System.Convert.ToDouble(v.GetValue(int32(0)));
-                        if ~isfinite(value), continue; end
-                        if strcmp(u,'%') && value>=0, pct=double(value); end
-                        if strcmpi(u,'dB'), db=double(value); end
-                    end
-                    clear guard
-                catch er
-                    status=['EVM unavailable: ' er.message];
-                end
-            end
-            if isfinite(pct) && isnan(db), db=20*log10(pct/100); end
-            if isfinite(db) && isnan(pct), pct=100*10^(db/20); end
-            if isfinite(pct) || isfinite(db), status='completed; RMS EVM read from VSA summary'; end
+            threshold=0.5;
+            if isfield(obj.Config,'syncCorrThreshold'), threshold=obj.Config.syncCorrThreshold; end
+            [pct,db,status]=rfsoc.readVsaEvm(obj.Meas,true,threshold);
         end
     end
 end

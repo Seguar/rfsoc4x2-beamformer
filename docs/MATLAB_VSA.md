@@ -6,15 +6,18 @@ and exports stay unchanged. The readable frontend is `matlab/runBeamformingDemo.
 
 ## Validation status
 
-Python host tests pass, including stop during streaming and MATLAB launcher config
-filtering. MATLAB differential CFO/EVM/BER and noise rejection passed; eleven modes
-passed. Iterative loading failed its original root check and has since been
-corrected against the source equations; its complete MATLAB gate needs rerunning.
-Fragmented localhost transport and framing/sequence rejection passed. New VSA
-startup works with explicit localhost port and Use64Bit; fresh replay completes
-but returns trace status 32, so no valid VSA EVM/lock is established. The new UI
-and MATLAB live RF workflow remain pending.
-The current Python DAC_B → 20 dB → ADC_D demo is separate evidence.
+26 Python host tests pass, including stream controls and launcher config filtering.
+MATLAB differential CFO/EVM/BER, noise rejection, all twelve beamformer modes,
+iterative-loading endpoint/isotropic controls and strict transport checks pass.
+A fresh 100-frame physical MATLAB DAC_B → 20 dB → ADC_D run locked every frame
+with zero BER. EVM min/median/p95/max: 2.88/3.31/7.30/8.30%; median −29.61 dB.
+The MATLAB GUI was left visible with advancing sequences. This is conducted
+single-channel evidence, not physical array tracking or jammer rejection.
+
+New VSA startup works with explicit localhost port and Use64Bit, but valid VSA
+EVM/lock remains unproven. Fresh replay can return tiny raw EVM even with NoSync.
+Seven simulated guarded-reader cases pass; they do not establish a real VSA
+positive control. Controlled MATLAB GUI loss/pause/close checks remain pending.
 
 The laptop has MATLAB R2026a Update 5 and VSA interfaces 30.40.333.0. Signal,
 Communications, Phased Array and Optimization licence checks passed; Instrument
@@ -121,6 +124,10 @@ instance and unique USR::Stream configuration; never attaches to unrelated insta
 or deletes global instrument handles. Capture size counts complex samples;
 RequiredSamples counts floats, two per complex sample. No padding/repetition of
 finite frames. Timeout, insufficient input or missing valid EVM gives unavailable.
+The reader requires fresh acquisition, both IQ and summary statuses zero, and
+normalized `Ch1SyncCorr` from that same summary ≥ configurable 0.5. A later invalid
+IQ trace cannot leave an earlier good summary EVM visible. Unknown status bits,
+including unnamed bit32, remain unavailable. Installed enum NoSync is 128.
 For live streams, limit VSA measurement timeout to at most four seconds; the board
 producer has a bounded send timeout. VSA starts before the capture client connects.
 
