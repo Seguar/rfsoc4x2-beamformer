@@ -1,5 +1,10 @@
 # MATLAB + VSA refactor
 
+The current user-selected interface is the [original-app refactor](../matlab/original/README.md).
+Native VSA owns constellation/EVM; MATLAB retains its original controls, DOA and
+pattern plots. The earlier separate dashboard is experimental. Live native VSA
+and the editable refactored `.mlapp` remain pending.
+
 Target: RFSoC4x2. `VSA_rfsoc_new.mlapp` supplies the newer ZCU216 feature reference;
 its overlays, rates and burst commands are not 4x2 settings. Original binary apps
 and exports stay unchanged. The readable frontend is `matlab/runBeamformingDemo.m`.

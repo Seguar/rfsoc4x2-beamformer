@@ -1,0 +1,170 @@
+classdef Controller < handle
+    %CONTROLLER Owns the injected backend, the board-command queue, frame
+    % freshness and the bounded error policy for VSA_rfsoc_refactor_exported.
+    % It never opens a socket, VSA or instrument by itself: all I/O goes
+    % through the injected backend (BACKEND_CONTRACT.md).
+
+    properties (SetAccess = private)
+        Config
+        Backend = []
+        Pending = strings(0,1)      % queued board commands (original commandsHandler)
+        Sent = strings(0,1)         % commands actually handed to backend.send
+        IsOpen = false
+        ConsecutiveErrors = 0
+        TotalErrors = 0
+        FramesAccepted = 0
+        LastFrameTime = NaN         % posix seconds of the last accepted frame
+        LastSequence = NaN
+        LastError = ""
+    end
+
+    methods
+        function obj = Controller(cfg)
+            obj.Config = cfg;
+            obj.Backend = cfg.backend;
+            if ~isempty(obj.Backend)
+                for op = ["next","close"]
+                    assert(origapp.Controller.hasOp(obj.Backend, op), 'origapp:Backend', ...
+                        'Backend must provide %s().', op);
+                end
+            end
+        end
+
+        function tf = hasBackend(obj)
+            tf = ~isempty(obj.Backend);
+        end
+
+        function queue(obj, command)
+            % Original commandsHandler: commands are joined with '#'.
+            obj.Pending(end+1,1) = string(command);
+        end
+
+        function open(obj)
+            assert(obj.hasBackend(), 'origapp:Backend', 'No backend injected (cfg.backend is empty).');
+            if obj.IsOpen, return; end
+            if origapp.Controller.hasOp(obj.Backend, "open")
+                obj.Backend.open();
+            end
+            obj.IsOpen = true;
+            obj.ConsecutiveErrors = 0;
+        end
+
+        function msg = flushCommands(obj)
+            % Original partReset sent queued commands on reconnect. Here they
+            % are only sent with cfg.allowBoardCommands and a backend send().
+            msg = "";
+            if isempty(obj.Pending), return; end
+            if ~obj.Config.allowBoardCommands
+                msg = sprintf('%d board command(s) held: cfg.allowBoardCommands=false', numel(obj.Pending));
+                return
+            end
+            if ~origapp.Controller.hasOp(obj.Backend, "send")
+                msg = sprintf('%d board command(s) held: backend has no send()', numel(obj.Pending));
+                return
+            end
+            line = strjoin(obj.Pending, '#');
+            obj.Backend.send(char(line));
+            obj.Sent(end+1,1) = line;
+            obj.Pending = strings(0,1);
+        end
+
+        function [frame, status] = acquire(obj)
+            % Bounded read of one frame plus freshness checks. Returns [] and
+            % a status when no fresh frame is available (not an error).
+            frame = []; status = "";
+            raw = obj.Backend.next(obj.Config.frameTimeoutSeconds);
+            nowS = origapp.Controller.nowSeconds();
+            if isempty(raw)
+                if isnan(obj.LastFrameTime) || nowS - obj.LastFrameTime > obj.Config.staleSeconds
+                    status = "stale";
+                else
+                    status = "no-frame";
+                end
+                return
+            end
+            assert(isstruct(raw) && isfield(raw,'samples'), 'origapp:Backend', ...
+                'next() must return a struct with .samples.');
+            x = raw.samples;
+            assert(isnumeric(x) && size(x,2)==4 && size(x,1)>=16 && all(isfinite(x),'all'), ...
+                'origapp:Frame', 'Frame must be finite N-by-4 samples.');
+            assert(size(x,1)==obj.expectedSamples(), 'origapp:Frame', ...
+                'Frame has %d samples, dataChan expects %d.', size(x,1), obj.expectedSamples());
+            assert(isfield(raw,'sequence') && isnumeric(raw.sequence) && ...
+                isscalar(raw.sequence) && isreal(raw.sequence) && isfinite(raw.sequence) && ...
+                raw.sequence>=0 && raw.sequence==fix(raw.sequence), ...
+                'origapp:Sequence','Frame needs a finite nonnegative integer sequence.');
+            assert(isnan(obj.LastSequence) || raw.sequence > obj.LastSequence, ...
+                'origapp:Sequence','Repeated or out-of-order frame.');
+            obj.LastSequence = raw.sequence;
+            assert(isfield(raw,'timestamp') && isnumeric(raw.timestamp) && ...
+                isscalar(raw.timestamp) && isreal(raw.timestamp) && isfinite(raw.timestamp), ...
+                'origapp:Timestamp','Frame needs a finite acquisition timestamp.');
+            t=raw.timestamp;
+            assert(nowS-t<=obj.Config.staleSeconds && t-nowS<=0.5, ...
+                'origapp:Stale','Frame is old or its acquisition timestamp is in the future.');
+            obj.LastFrameTime = t;
+            frame = raw;
+        end
+
+        function n = expectedSamples(obj)
+            n = obj.Config.dataChan;
+        end
+
+        function setDataChan(obj, n)
+            obj.Config.dataChan = n;
+        end
+
+        function sent = sendVsa(obj, buffer)
+            % Native VSA feed is backend-owned (a2). Returns false when absent.
+            sent = origapp.Controller.hasOp(obj.Backend, "vsaSend");
+            if sent, obj.Backend.vsaSend(buffer); end
+        end
+
+        function done = vsaReset(obj, request)
+            done = origapp.Controller.hasOp(obj.Backend, "vsaReset");
+            if done, obj.Backend.vsaReset(request); end
+        end
+
+        function recordSuccess(obj)
+            obj.ConsecutiveErrors = 0;
+            obj.FramesAccepted = obj.FramesAccepted + 1;
+        end
+
+        function mustStop = recordFailure(obj, err)
+            obj.ConsecutiveErrors = obj.ConsecutiveErrors + 1;
+            obj.TotalErrors = obj.TotalErrors + 1;
+            obj.LastError = string(err.identifier) + ": " + string(err.message);
+            mustStop = obj.ConsecutiveErrors >= obj.Config.maxConsecutiveErrors;
+        end
+
+        function close(obj)
+            if obj.IsOpen && ~isempty(obj.Backend)
+                obj.IsOpen = false;
+                obj.Backend.close();
+            end
+        end
+
+        function delete(obj)
+            try
+                obj.close();
+            catch
+                % delete must not throw; LastError is not updated during teardown
+            end
+        end
+    end
+
+    methods (Static)
+        function tf = hasOp(b, name)
+            name = char(name);
+            if isstruct(b)
+                tf = isfield(b, name) && isa(b.(name), 'function_handle');
+            else
+                tf = ~isempty(b) && ismethod(b, name);
+            end
+        end
+
+        function s = nowSeconds()
+            s = posixtime(datetime('now','TimeZone','UTC'));
+        end
+    end
+end

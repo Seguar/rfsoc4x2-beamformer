@@ -4,6 +4,12 @@ Pilot-locked OFDM demodulation, frequency/phase tracking and four-channel
 adaptive combining for the RFSoC4x2. Uses the existing `doa_rfsoc/main` matched
 boot overlay and `vsa_rfsoc` sample conventions; no FPGA build is required.
 
+**Current UI direction:** rework the original `VSA_rfsoc` interface and use native
+VSA for constellation/EVM. The [original-app refactor](matlab/original/README.md)
+retains all119 controls and defaults to the reviewed beamformer core. Synthetic
+UI/failure tests pass; its live native-VSA backend and editable `.mlapp` remain
+pending. The separate dashboard below is retained as earlier experimental work.
+
 **Status: direct ADC_D capture and live demodulation demonstrated with waveform2.**
 One hundred live frames had zero bit errors and no pilot-lock failures; measured
 EVM median3.79%, maximum9.98%. Raw timing loss remains, so constant EVM is not
@@ -14,7 +20,8 @@ The [MATLAB + VSA refactor](docs/MATLAB_VSA.md) adds a readable MATLAB frontend,
 twelve beamformer choices and a hardware-independent legacy boot stream loop.
 All twelve MATLAB beamformer software checks pass. A fresh 100-frame MATLAB
 direct-cable run locked every frame with zero BER: EVM median 3.31% (−29.61 dB),
-maximum 8.30%. The MATLAB GUI was left running; VSA EVM remains unavailable.
+maximum 8.30%. That MATLAB GUI session has ended. Matched offline VSA replay now passes with
+an explicit unclassified-status warning; live VSA integration remains pending.
 
 **Connector correction:** this overlay's logical `dac0` is the printed **DAC_B**;
 `dac1` is DAC_A. Earlier DAC_A wording in direct-test descriptions was incorrect.

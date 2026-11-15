@@ -218,3 +218,26 @@ cold rendering, while production remains1s. No simulated samples enter live mode
 RF quality or capture-rate improvement is inferred from the visual changes.
 **Ways to resolve:** Restart the laptop app through its owned launcher, verify
 fresh live frames and target-window layout, retain all DAC shutdown safeguards.
+
+
+## Original interface selected; source integration — 2026-11-15
+
+**Test:** Refactor the user's original App Designer interface while delegating
+constellation/EVM to native VSA, preserving DOA/pattern and original controls.
+**How:** Integrate the exported AppBase class under `matlab/original`, retain119
+components, replace the startup infinite loop with an owned timer and injected
+backend. Parent review made the reviewed twelve-mode beamformer core the default,
+required finite acquisition timestamps/increasing sequences, and excluded the
+candidate unframed TCP flushing backend because it could lose lane alignment.
+**Results:** DSP MATLAB batch exit0 and completion sentinel. Hidden UI construction,
+transport/stale/repeated-frame clearing, recovery, command gating, phase-calibration
+output and zero leaked figures/timers passed. All twelve reviewed modes execute.
+Six metadata rejection controls pass. An independent JSON audit confirms these
+checks. Explicit legacy comparison modes retain documented failures and are not
+the production default. All original source-repo files remain untouched.
+**Conclusions:** Original-UI source integration is validated with synthetic data;
+no live native-VSA/EVM, physical DOA or editable refactored `.mlapp` is established.
+**Ways to resolve:** Finish the native matched-FFT64 backend, integrate it with this
+interface, run and screenshot original MATLAB UI plus owned native VSA, and create
+an editable App Designer artifact consistently if needed. a2 restarted after its
+advertised quota reset; only a2 owns board/VSA writes.
