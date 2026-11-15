@@ -5,8 +5,10 @@ This is a refactor of `vsa_rfsoc/VSA_rfsoc_exported.m`, retaining its original
 owns DOA, beam patterns and beamformer/control selection. It does not use the
 replacement dashboard.
 
-The runnable artifact is `app/VSA_rfsoc_refactor_exported.m`. The editable `.mlapp`
-is still pending; the source repository's original binary and export are untouched.
+The runnable pair is `app/VSA_rfsoc_refactor.mlapp` and its matching
+`app/VSA_rfsoc_refactor_exported.m`. Both pass headless model/code checks;
+an App Designer editor round trip is still untested. The source repository's
+original binary and export are untouched.
 See [MLAPP_STATUS.md](MLAPP_STATUS.md).
 
 ```matlab

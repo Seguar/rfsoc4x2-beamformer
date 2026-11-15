@@ -8,8 +8,9 @@ ZCU216 overlays, clocks, DAC indexing and burst protocols do not apply.
 MATLAB work must also read docs/MATLAB_VSA.md. Keep the original reference .mlapp
 and exported .m unchanged unless both can be updated consistently. The user selected the original UI refactor in matlab/original/ with native VSA
 for constellation/EVM. The earlier replacement dashboard remains experimental;
-do not relaunch it as the requested app. The original editable .mlapp remains
-pending; a separate exported AppBase class preserves the original layout. Maintain X*conj(w), training-only channel estimates and
+do not relaunch it as the requested app. The original-layout editable .mlapp and its export are a matched pair under
+matlab/original/app. Rebuild both through the full App Designer serializer and
+verify model/code consistency after changes; never patch only document.xml. Maintain X*conj(w), training-only channel estimates and
 payload/pilot separation. Do not fit payload EVM away. Do not claim VSA lock from
 a completed acquisition alone. Validate the waveform/setup pair and report VSA
 metrics separately from the held-out MATLAB payload metric. VSA sessions must own

@@ -24,7 +24,8 @@ try
     fwrite(fid, jsonencode(lint, 'PrettyPrint', true)); fclose(fid);
     addpath(fullfile(root,'app'),char(reviewedPath));
     validateMetadata();
-    results = runOriginalUiFixture(originalRepoPath, reviewedPath, outDir);
+    [appPath,shadowGuard]=hiddenAppCopy(fullfile(root,'app')); %#ok<NASGU>
+    results = runOriginalUiFixture(originalRepoPath, reviewedPath, outDir,appPath);
     disp(jsonencode(results));
     fprintf('ORIGINAL_APP_REFACTOR_COMPLETE %s\n', outDir);
 catch err

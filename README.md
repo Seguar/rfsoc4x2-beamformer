@@ -7,7 +7,8 @@ boot overlay and `vsa_rfsoc` sample conventions; no FPGA build is required.
 **Current UI direction:** rework the original `VSA_rfsoc` interface and use native
 VSA for constellation/EVM. The [original-app refactor](matlab/original/README.md)
 retains all119 controls and defaults to the reviewed beamformer core. Synthetic
-UI/failure tests pass; its live native-VSA backend and editable `.mlapp` remain
+UI/failure tests pass and the editable `.mlapp` passes headless model/code checks.
+Its live native-VSA backend is under validation; editor round-trip testing remains
 pending. The separate dashboard below is retained as earlier experimental work.
 
 **Status: direct ADC_D capture and live demodulation demonstrated with waveform2.**

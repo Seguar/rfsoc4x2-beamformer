@@ -1,11 +1,4 @@
 classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
-    % Refactor of VSA_rfsoc_exported (vsa_rfsoc, original 4x2 app).
-    % UI components and layout: copied from the original createComponents.
-    % Behaviour: owned timer, injected backend, bounded transport, freshness,
-    % explicit errors and cleanup. Construct with a session config:
-    %   app = VSA_rfsoc_refactor_exported(cfg)      % cfg from origapp.defaultConfig
-    %   app = VSA_rfsoc_refactor_exported('backend', b, 'visible', true, ...)
-    % Startup sends no board, RF, clock, VSA or instrument command.
 
     % Properties that correspond to app components
     properties (Access = public)
@@ -134,6 +127,17 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
     properties (Access = private)
         onePanelWidth = 576;
     end
+
+    % VSA_rfsoc_refactor: refactor of the original 4x2 VSA_rfsoc app
+    % (exported class: VSA_rfsoc_refactor_exported).
+    % UI components and layout: the original App Designer component model.
+    % Behaviour: owned timer, injected backend, bounded transport, freshness,
+    % explicit errors and cleanup. Construct with a session config:
+    %   app = VSA_rfsoc_refactor(cfg)      % cfg from origapp.defaultConfig
+    %   app = VSA_rfsoc_refactor('backend', b, 'visible', true, ...)
+    % Startup sends no board, RF, clock, VSA or instrument command.
+    % Owned-resource cleanup: releaseResources, run by a UIFigure
+    % ObjectBeingDestroyed listener (App Designer owns delete(app)).
 
     % Original state (same names; values come from the session config)
     properties (Access = private)
@@ -619,6 +623,26 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                 setStatus(app, "timer error: " + string(evt.Data.message));
             end
         end
+
+        function releaseResources(app)
+            % Owned resources: timer, backend (via controller), external figures.
+            if ~isempty(app.AcqTimer) && isvalid(app.AcqTimer)
+                stop(app.AcqTimer);
+                delete(app.AcqTimer);
+            end
+            if ~isempty(app.Controller) && isvalid(app.Controller)
+                try
+                    app.Controller.close();
+                catch err
+                    warning('origapp:Close', 'Backend close failed: %s', err.message);
+                end
+                delete(app.Controller);
+            end
+            for k = 1:numel(app.ExternalFigures)
+                if isvalid(app.ExternalFigures(k)), delete(app.ExternalFigures(k)); end
+            end
+            % Called from the UIFigure ObjectBeingDestroyed listener (startupFcn).
+        end
     end
 
 
@@ -627,6 +651,7 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
 
         % Code that executes after component creation
         function startupFcn(app, varargin)
+            addlistener(app.RFSoCBeamformerUIFigure, 'ObjectBeingDestroyed', @(~,~) releaseResources(app));
             cfg = origapp.resolveConfig(varargin{:});
             app.Config = cfg;
             if strlength(string(cfg.originalRepoPath)) > 0
@@ -651,6 +676,9 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             if cfg.visible
                 movegui(app.RFSoCBeamformerUIFigure, "east");
                 app.RFSoCBeamformerUIFigure.Visible = 'on';
+            else
+                % App Designer shows the figure at the end of createComponents.
+                app.RFSoCBeamformerUIFigure.Visible = 'off';
             end
             if cfg.directOnly
                 app.UIAxes.Title.String = ['Direction of Arrival: unavailable' newline 'directOnly'];
@@ -1874,7 +1902,7 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             app.UIAxes2.Layout.Column = 1;
 
             % Show the figure after all components are created
-            app.RFSoCBeamformerUIFigure.Visible = 'off'; % refactor: startupFcn applies cfg.visible
+            app.RFSoCBeamformerUIFigure.Visible = 'on';
         end
     end
 
@@ -1884,7 +1912,6 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
         % Construct app
         function app = VSA_rfsoc_refactor_exported(varargin)
 
-            % No singleton focus: several hidden instances may exist in tests.
             % Create UIFigure and components
             createComponents(app)
 
@@ -1901,22 +1928,7 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
 
         % Code that executes before app deletion
         function delete(app)
-            % Owned resources: timer, backend (via controller), external figures.
-            if ~isempty(app.AcqTimer) && isvalid(app.AcqTimer)
-                stop(app.AcqTimer);
-                delete(app.AcqTimer);
-            end
-            if ~isempty(app.Controller) && isvalid(app.Controller)
-                try
-                    app.Controller.close();
-                catch err
-                    warning('origapp:Close', 'Backend close failed: %s', err.message);
-                end
-                delete(app.Controller);
-            end
-            for k = 1:numel(app.ExternalFigures)
-                if isvalid(app.ExternalFigures(k)), delete(app.ExternalFigures(k)); end
-            end
+
             % Delete UIFigure when app is deleted
             delete(app.RFSoCBeamformerUIFigure)
         end

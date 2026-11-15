@@ -1,31 +1,26 @@
-# .mlapp status: binary PENDING, exported AppBase class delivered
+# Editable App Designer artifact
 
-Delivered: `app/VSA_rfsoc_refactor_exported.m`, a runnable AppBase class. Its
-`createComponents` and `updateAppLayout` are copied verbatim from the original export
-(original lines 971–1757). The one changed line is the final `Visible='on'` → `'off'`;
-`startupFcn` shows the window only when `cfg.visible=true`. The integrated
-export is the source of truth for this refactor; its private initial generator is
-not included because replaying it would discard the subsequent review fixes.
+Delivered together:
 
-**Not delivered: an editable `.mlapp`.** Reasons:
+- `app/VSA_rfsoc_refactor.mlapp`: original119-component model with the refactored controller callbacks.
+- `app/VSA_rfsoc_refactor_exported.m`: matching App Designer-generated export.
 
-1. The original package is an OPC zip: `matlab/document.xml` (code, embedded class name
-   `VSA_rfsoc`), `appdesigner/appModel.mat` (component model), screenshot and metadata.
-   The embedded code matches the export (1796 lines each, identical `startupFcn`). The
-   export's class name is `VSA_rfsoc_exported`.
-2. R2026a has no documented headless API that saves an App Designer app. What exists is
-   `appdesigner` (opens the GUI) plus internal, undocumented
-   `appdesigner.internal.serialization.MLAPPSerializer` / `PlainTextSerializer`. An
-   internal serializer would also have to regenerate `appModel.mat`. Replacing only
-   `document.xml` in the zip would leave `appModel.mat` stale, so that was not done.
-3. Therefore no `.mlapp` was written and the original `VSA_rfsoc.mlapp` /
-   `VSA_rfsoc_exported.m` were not changed. They stay consistent with each other.
+Both were saved together using MATLAB R2026a internal serialization APIs. Fresh-process
+readback checks every component,65 callback links, stored editable/startup code,
+MathWorks parser output, and matching99 methods/212 properties. Closing by either
+`delete(app)` or window close cleans up the timer, controller and backend.
 
-Ways to get the editable file (the parent or user decides; it needs the App Designer GUI):
+App Designer generates `delete(app)`, so cleanup lives in `releaseResources`,
+registered as a figure-destruction listener. It also generates `Visible='on'` at the
+end of component creation. Startup then applies `cfg.visible`; with false, a brief
+window flash is possible. Headless tests use a disposable export copy with exactly
+that generated show line changed to off. The shipped app/export stay consistent.
 
-- Open `VSA_rfsoc.mlapp` in App Designer, Save As `VSA_rfsoc_refactor.mlapp` (class
-  `VSA_rfsoc_refactor`), paste the code sections from `tools/head.m.part` / `tail.m.part`
-  into the editable areas (startup with `varargin`, private methods, callbacks, delete),
-  save, export, then diff the export against the delivered `.m`.
-- Or, on R2025a+, save the app in App Designer's plain-text `.m` format, which App Designer
-  can open as an app. Use the GUI for this, not an internal serializer.
+Opening/saving/exporting in the App Designer editor has not been checked. The
+artifact passed headless model/code readback and parser checks; this is not an editor
+round-trip claim. The original source repository and its app are untouched.
+
+Code-only rebuild tools live in `tools/appdesigner/`. They rely on undocumented
+R2026a APIs and may require adaptation for another MATLAB release. Preserve the
+component model, callback signatures and generated layout; visual component edits
+belong in App Designer. Never replace only the ZIP's `document.xml`.

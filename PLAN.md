@@ -249,3 +249,25 @@ frame retained; all-channel fullRAMtransfer2.2–4.7s failsdefault2sfreshness.
 a2solehardware/VSAowner follow-up validatesprofile0.9+reference-lock andsmaller
 actual-channelpayload. Parentdoesnotintegratethisbackendasvalidatedyet. a1bounded
 privateAppDesignerpackagingresearchindependent, noboard/VSA. See latestVALIDATION.
+
+
+## Editable original app artifact — 2026-11-15
+
+**Test:** Package the original119-component model and refactored controller into
+a consistent `.mlapp` plus generated export, without opening the editor.
+**How:** Full R2026a App Designer serialization writes code, model and metadata
+together. Parent-reviewed generated differences move resource cleanup into a
+figure-destruction listener. A fresh process deserializes and independently parses
+the artifact; a second DSP rebuild/readback also checks LF-export compatibility.
+**Results:**119 components,65 callback bindings,99 methods and212 properties agree
+between model/code/export. All consistency gates exit0 with sentinels. The original
+UI fixture passes with no leaked timers/figures; both deletion paths were checked.
+Headless runtime uses a disposable export differing only in its generated show
+line, avoiding the brief window flash that real generated code permits before
+startup applies `visible=false`.
+**Conclusions:** Editable `.mlapp` and matching export are included; original source
+repo files are untouched. App Designer editor open/save/export is untested. This
+uses internal R2026a APIs and does not establish live VSA or physical array results.
+**Ways to resolve:** Validate an editor round trip when editing the component
+layout; use full-model rebuild/readback after code-only changes. Live blank-input
+rejection and transfer-latency work remains with the separate backend campaign.

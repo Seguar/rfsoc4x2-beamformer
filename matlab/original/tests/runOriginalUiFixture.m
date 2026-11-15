@@ -1,9 +1,10 @@
-function results = runOriginalUiFixture(originalRepoPath, reviewedPath, outDir)
+function results = runOriginalUiFixture(originalRepoPath, reviewedPath, outDir,appPath)
 %RUNORIGINALUIFIXTURE Hidden-UI fixture for VSA_rfsoc_refactor_exported.
 % Synthetic finite IQ only (FiniteIqBackend). No board, VSA or instrument.
 %   results = runOriginalUiFixture(<vsa_rfsoc checkout>, <demo matlab folder>, <out dir>)
 root = fileparts(fileparts(mfilename('fullpath')));
-addpath(fullfile(root, 'app'));
+if nargin<4, appPath=fullfile(root,'app'); end
+addpath(appPath);
 addpath(char(reviewedPath));
 if ~isfolder(outDir), mkdir(outDir); end
 rng(20261115, 'twister');
