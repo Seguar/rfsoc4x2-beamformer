@@ -24,6 +24,14 @@ Communications, Phased Array and Optimization licence checks passed; Instrument
 Control did not. Acquisition uses .NET TCP and VSA uses its .NET assembly. Only
 RAB PC in the new core requires Optimization; other core modes use linear algebra.
 
+VSA needs valid licenses for its Custom OFDM and direct-data input workflow.
+The current probe reports `IsValid=false` for Custom OFDM and DDC; the effective
+license mode is still being checked. Keysight's
+[Demo License documentation](https://helpfiles.keysight.com/csg/89600B/Webhelp/Subsystems/licensing/content/demolicense.htm)
+limits Demo input to built-in simulation/vendor recordings and excludes input
+from external hardware or other programs. A plausible vendor-recording EVM is
+therefore insufficient evidence that the external-IQ workflow is available.
+
 ## Components and conventions
 
 | Source | Responsibility |
@@ -135,6 +143,14 @@ producer has a bounded send timeout. VSA starts before the capture client connec
 Validate historical waveform/setup pairs independently; filenames are insufficient.
 A matching VSA v2 setup is still required. Held-out MATLAB payload EVM and VSA's
 configurable demodulator EVM have different equalization/reference definitions.
+
+The source-mode probe found that selecting the USR analyzer changes the effective
+measurement from Custom OFDM to VectorMeasurement. Configuration must restore
+the Custom OFDM extension after analyzer selection, apply the matching settings
+and verify effective mode/rate/search/result lengths. Candidate setup readback
+also differed from intended 125MHz, so file contents alone cannot validate it.
+The isolated vendor recording produced raw EVM0.608% and sync0.976, but both
+required traces retained unnamed status32; the guarded reader rejected it.
 
 ## Boot-loop integration
 

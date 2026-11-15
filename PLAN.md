@@ -122,3 +122,11 @@ the prior Python display, and its claim remains HELD until orderly shutdown.
 Sole laptop agent owns only new private VSA-source and localhost UI diagnostics;
 must preserve physical MATLAB session. VSA Input.DataFrom Hardware/Recording and
 effective CustomOFDM settings are the next concrete probe. Array/OTA/MXG unproven.
+
+VSA source probe complete: selecting USR analyzer changes CustomOFDM toVector;
+Hardware source readback succeeds. Candidate effective sample rate differs from
+intended125MHz. Vendor recording rawEVM0.608/sync0.976 stillstatus32 and rejected.
+CustomOFDM/DDC IsValid=false; effective license mode unconfirmed. Sole nextlaptop
+agent must APPLY documented post-analyzer SetMeasurementExtension +typed settings,
+readback rates/mode and licensing, then finish independent localhostGUIcampaign.
+No physicalowner changes; actualVSApositive remains unavailable.
