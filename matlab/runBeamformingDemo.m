@@ -45,7 +45,8 @@ trailLine=plot(iqAxes,NaN,NaN,'.','Color',[.12 .29 .4],'MarkerSize',4,'DisplayNa
 ideal=unique(ref.symbols(:));
 plot(iqAxes,real(ideal),imag(ideal),'+','Color',[.5 .6 .7],'MarkerSize',10,'LineWidth',1.2,'DisplayName','Reference');
 iqLine=scatter(iqAxes,NaN,NaN,12,[.2 .85 1],'.','DisplayName','Current frame');
-xlim(iqAxes,[-1.6 1.6]); ylim(iqAxes,[-1.6 1.6]); iqAxes.DataAspectRatio=[1 1 1];
+iqLimit=1.6*max([abs(real(ideal));abs(imag(ideal));eps]);
+xlim(iqAxes,[-iqLimit iqLimit]); ylim(iqAxes,[-iqLimit iqLimit]); iqAxes.DataAspectRatio=[1 1 1];
 xlabel(iqAxes,'In phase'); ylabel(iqAxes,'Quadrature'); title(iqAxes,'CONSTELLATION · 2-frame persistence');
 phaseAxes=uiaxes(grid); phaseAxes.Layout.Row=7; phaseAxes.Layout.Column=[3 4];
 phaseBars=bar(phaseAxes,zeros(1,4),'FaceColor',[.27 .7 .95],'EdgeColor','none'); ylim(phaseAxes,[-180 180]);

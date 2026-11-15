@@ -14,6 +14,10 @@ labels=findall(app.Figure,'Type','uilabel'); scatter=findall(app.Figure,'Type','
 waitFrame(); callback([],[]);
 assert(any(contains(string({labels.Text}),'LIVE seq 1')),'Clean frame did not lock.');
 assert(any(isfinite(scatter.XData)),'Clean constellation empty.');
+iqAxes=scatter.Parent;
+inside=scatter.XData>=iqAxes.XLim(1) & scatter.XData<=iqAxes.XLim(2) & ...
+    scatter.YData>=iqAxes.YLim(1) & scatter.YData<=iqAxes.YLim(2);
+assert(mean(inside)>.9,'Fixed I/Q bounds hide the constellation.');
 card=findobj(app.Figure,'Tag','Metric1'); assert(~strcmp(card.Text,'—'),'EVM card empty.');
 callback([],[]); % no new frame: current data remains steady, not blinked away
 assert(any(isfinite(scatter.XData)),'Display blinked between fresh frames.');
