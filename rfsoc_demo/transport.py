@@ -1,6 +1,30 @@
 """Legacy TCP boundary. A connection is a continuous stream, not a request/frame."""
 import socket
+import json
+import struct
 import numpy as np
+
+MAGIC = b'R4X2IQ1\n'
+FRAME = struct.Struct('<4sQQI')
+
+
+def receive_session(sock):
+    if recv_exact(sock, len(MAGIC)) != MAGIC:
+        raise ValueError('Not the versioned RFSoC4x2 demo stream')
+    size = struct.unpack('<I', recv_exact(sock, 4))[0]
+    if size > 65536:
+        raise ValueError('Oversized session header')
+    metadata = json.loads(recv_exact(sock, size))
+    if metadata.get('format') != 'int16le-I-minus-jQ-4ch' or metadata.get('frame_bytes') != 262144:
+        raise ValueError('Unsupported stream format/frame size')
+    return metadata
+
+
+def receive_frame(sock):
+    marker, sequence, timestamp, size = FRAME.unpack(recv_exact(sock, FRAME.size))
+    if marker != b'IQF1' or size != 262144:
+        raise ValueError('Bad frame header')
+    return sequence, timestamp, decode(recv_exact(sock, size))
 
 
 def decode(payload):

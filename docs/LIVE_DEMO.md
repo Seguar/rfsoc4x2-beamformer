@@ -1,0 +1,103 @@
+# Real-time moving-antenna demonstration
+
+The target is a four-patch linear receive array on the ADCs, both DACs combined
+into one moving wanted-transmitter patch, and a separate MXG-driven jammer patch.
+The user identifies the patch silkscreen as 5.2 GHz; the antenna response and
+centre spacing remain to be measured. Jammer waveform (CW or modulated) is open.
+
+The present ZAPDQ-4 hybrid and ZA4PD-4 splitter are specified for 2–4.2 GHz.
+The initial conducted loopback uses a 3 GHz candidate; that does not validate the
+later 5.2 GHz antenna chain. Use a suitable 5.2 GHz combiner, or characterize the
+current hardware out of band before interpreting an antenna demonstration.
+Do not assume the RF converter Nyquist settings for 3 GHz apply at 5.2 GHz.
+The existing helper intentionally limits the current passive-chain experiment
+to 2–4.2 GHz. Extending RF range needs a reviewed hardware configuration change.
+
+## Host dashboard
+
+```sh
+python -m rfsoc_demo.live --simulate
+```
+
+This opens a Matplotlib dashboard with moving-angle simulation, live EVM traces,
+selected output constellation, channel phases and CFO. Buttons calibrate a fixed
+broadside beam, switch the displayed receiver between fixed and adaptive, and
+toggle a simulated independent modulated jammer. It does not control the MXG.
+The simulator assumes a four-element half-wave ULA, which has broadside-sum
+nulls at ±30°. Those angles are a model assumption, not a measured antenna fact.
+
+For actual ADC samples from the new versioned stream:
+
+```sh
+python -m rfsoc_demo.live --host BOARD_ADDRESS --port 4010
+```
+
+The default log is `out/live.jsonl`. Live RF samples are labelled LIVE ADC, with
+no inferred angle. The receive worker drains the socket and keeps at most two
+complete frames, dropping old display frames. The dashboard processes the newest
+frame every nominal 100 ms. Actual cadence depends on acquisition, network, DSP
+and rendering; host age is measured after receipt and excludes unknown network
+and board delay. Stalled streams show STALE; failed pilot acquisition shows
+UNLOCKED and clears the constellation. Logs preserve individual capture metrics.
+
+## Board stream
+
+After the exclusive-ownership and RF-chain checks in HARDWARE.md, stage the
+reviewed helper and reference. Stop the prior RF process before constructing an
+overlay. A session runs until client disconnect, Ctrl+C, failure or finite limit:
+
+```sh
+sudo -n python3 board_capture.py --exclusive-control \
+  --reference reference.npz --out last-live.npz --dac 0 --rf-mhz 3000 \
+  --sampling-freq-unit GHz --stream-bind BOARD_INTERFACE_ADDRESS \
+  --stream-port 4010 --frames 0
+```
+
+This is a separate versioned TCP session, not the old boot server's port 4000.
+Use only a trusted/direct board link: there is no application authentication or
+TLS. DACs stay disabled while waiting for a client (120-second accept deadline).
+The socket has a five-second send timeout; disconnect/failure exits through
+independent DAC-disable attempts and persists a manifest. Continuous streaming
+keeps the last capture, not an unbounded array of captures. The manifest records
+disable commands; GPIO DATA zeros do not establish physical RF-off.
+
+Session bytes: `R4X2IQ1\n`, uint32 little-endian JSON byte length, JSON metadata.
+Each frame starts with `<4sQQI`: `IQF1`, uint64 sequence, uint64 board monotonic
+nanoseconds after capture, uint32 payload bytes (262144), then eight-lane int16
+little-endian samples. Receive complex convention remains I−jQ. Captures are
+individually triggered and are not a phase-continuous RF recording.
+
+## Demonstration sequence
+
+1. Start wanted transmission with jammer RF off/disconnected. Keep the moving
+   TX at broadside, check all four ADCs, signal lock and safe headroom. Click
+   **Calibrate broadside**. Fixed baseline weights now remain frozen.
+2. With **Beamforming OFF**, move the TX. The fixed broadside trace should degrade
+   near array nulls. EVM is an error, so poorer reception usually means a higher
+   percentage and less-negative EVM in dB. A single-ADC trace gives context.
+3. Enable **Beamforming ON** and repeat the motion. Pilot-trained steering and
+   residual-covariance MVDR update once per capture; reserved OFDM pilots track
+   phase within payload. Compare fixed and adaptive traces from the same captures,
+   the active constellation/BER, and the EVM ratio in dB.
+4. Place the jammer at a distinct arrival direction and a known safe input level.
+   Run wanted-only, jammer-only and mixed cases. CW and same-carrier modulated
+   interference are separate tests. A same-angle/coherent jammer, ADC clipping,
+   insufficient SNR or rapid channel variation can defeat spatial separation.
+5. Measure update cadence, lock losses and payload EVM distribution during known
+   motion. Set an EVM target from measured stationary performance; do not claim
+   constant EVM or a maximum motion speed from the simulator.
+
+## Validation boundaries
+
+Training supplies synchronization, channel response and beam weights. Per-payload
+phase pilots are excluded from reported payload EVM/BER. A shared synchronizer
+uses the four channels to find the wanted pilot even when the fixed output has a
+deep fade; the fixed receiver still uses frozen spatial weights. This compares
+beam quality under common timing assistance, not two independently acquiring
+receiver implementations. EVM improvement is not direct jammer-power suppression.
+
+The tests cover frozen-weight null behavior near ±30° in the half-wave simulation,
+tracking with an independent modulated interferer, and fragmented versioned TCP
+frames. The dashboard renders headlessly with `--simulate --snapshot out/live.png`;
+finite processing checks use `--simulate --headless --frames 30`. No physical
+antenna results or real-time speed bound are established by those checks.

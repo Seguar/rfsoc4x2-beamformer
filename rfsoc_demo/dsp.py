@@ -58,10 +58,15 @@ def acquire(x, wave, fs=FS, cfo_limit=150e3):
                        max(3, int(np.ceil(4*cfo_limit*PERIOD/fs))+1))
     for conjugated in (False, True):
         z = x.conj() if conjugated else x
+        covariance = z[:PERIOD].T @ z[:PERIOD].conj()/PERIOD
+        covariance += np.eye(4)*max(np.trace(covariance).real*1e-6, 1e-12)
+        inverse = np.linalg.inv(covariance)
         for f in grid:
             block = z[:PERIOD]*np.exp(-2j*np.pi*f*t[:PERIOD, None])
             corr = np.fft.ifft(np.fft.fft(block, axis=0)*template.conj()[:, None], axis=0)
-            score = np.sum(abs(corr)**2, axis=1)
+            # Spatial whitening prevents a stronger modulated jammer's pilot
+            # sidelobes from winning acquisition merely through total power.
+            score = np.einsum('ni,ij,nj->n', corr.conj(), inverse, corr).real
             delay = int(np.argmax(score))
             candidate = (float(score[delay]), delay, float(f), conjugated)
             if best is None or candidate[0] > best[0]:
@@ -124,13 +129,16 @@ def demod(y, expected):
             "payload_phase_deg": np.rad2deg(phase).tolist()}, equalized
 
 
-def process(x, fs=FS):
+def process(x, fs=FS, fixed_weights=None):
     wave, symbols = reference()
     aligned, tracking = acquire(x, wave, fs)
     count = TRAIN*(NFFT+CP)
     w, mrc, a, condition = weights(aligned[:count], wave[:count])
     metrics, constellations = {}, {}
-    for name, vector in {"adc0": np.eye(4)[0], "mrc": mrc, "mvdr": w}.items():
+    vectors = {"adc0": np.eye(4)[0], "mrc": mrc, "mvdr": w}
+    if fixed_weights is not None:
+        vectors['fixed'] = np.asarray(fixed_weights)
+    for name, vector in vectors.items():
         metrics[name], constellations[name] = demod(aligned @ vector.conj(), symbols)
     tracking.update(channel_gain=abs(a).tolist(),
                     channel_phase_deg=np.rad2deg(np.angle(a/a[0])).tolist(),
@@ -139,6 +147,15 @@ def process(x, fs=FS):
     return {"tracking": tracking, "metrics": metrics,
             "input_peak_components": np.maximum(abs(x.real).max(axis=0), abs(x.imag).max(axis=0)).tolist(),
             "input_rail_fraction": np.mean((abs(x.real) >= 32767) | (abs(x.imag) >= 32767), axis=0).tolist()}, constellations
+
+
+def calibrate_fixed(x, fs=FS):
+    """One wanted-only broadside capture fixes baseline weights until recalibrated."""
+    wave, _ = reference()
+    aligned, _ = acquire(x, wave, fs)
+    count = TRAIN*(NFFT+CP)
+    _, mrc, _, _ = weights(aligned[:count], wave[:count])
+    return mrc
 
 
 def simulate(seed=7, shared_path=False, cfo=42000, delay=793):

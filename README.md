@@ -8,6 +8,18 @@ boot overlay and `vsa_rfsoc` sample conventions; no FPGA build is required.
 simulated distinct-path jammer is rejected. No live RF performance is claimed.
 See [validation](docs/VALIDATION.md) and [agent instructions](AGENTS.md).
 
+The [real-time demo](docs/LIVE_DEMO.md) adds live fixed-versus-adaptive EVM,
+beamforming ON/OFF, broadside calibration and a moving-array simulation:
+
+```sh
+python -m rfsoc_demo.live --simulate
+python -m rfsoc_demo.live --host BOARD_ADDRESS
+```
+
+Target antenna silkscreen is 5.2 GHz; spacing and RF response are unmeasured.
+The current 2–4.2 GHz passives need replacement or characterization for that
+later antenna test. Initial conducted loopback and OTA validation are separate.
+
 ```text
 DAC0 ─┐
       ZAPDQ-4 (90° hybrid) ── ZA4PD-4 ── ADC0, ADC1, ADC2, ADC3

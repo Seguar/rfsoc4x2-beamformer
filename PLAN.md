@@ -33,3 +33,12 @@ User update: MXG RF cable disconnected; all five notebook kernels belong to user
 and may be stopped for the demo. Exclusive capture is authorized. Authenticated
 preflight confirmed live board identity and matched boot hashes. New GPIO handling
 records commanded shutdown without claiming physical RF-off from DATA reads.
+
+Real-time scope clarified: fixed broadside versus adaptive EVM while moving a
+wanted transmit patch, then jammer rejection through a distinct OTA path.
+Live dashboard and framed board stream implemented; eleven host tests and a
+headless dashboard render pass. Antennas labelled 5.2 GHz; spacing/response
+unmeasured, CW versus modulated jammer undecided. Current passives specified only
+to4.2GHz; keep3GHz conducted test separate from future5.2GHz OTA validation.
+Authorized exclusive DAC0 capture delegated; hardware owner holds only the new
+private capture evidence/staged experiment, parent owns all public code.

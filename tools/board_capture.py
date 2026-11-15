@@ -10,6 +10,9 @@ import json
 from pathlib import Path
 import sys
 import time
+import socket
+import struct
+import itertools
 import numpy as np
 
 
@@ -58,6 +61,8 @@ def main():
     p.add_argument('--reference', required=True)
     p.add_argument('--out', required=True)
     p.add_argument('--frames', type=int, default=10)
+    p.add_argument('--stream-bind', help='Explicit local bind address for versioned live TCP stream')
+    p.add_argument('--stream-port', type=int, default=4010)
     p.add_argument('--rf-mhz', type=int, default=3000)
     p.add_argument('--dac', choices=['0', '1', 'both'], default='0')
     p.add_argument('--phase1', type=int, default=0)
@@ -65,8 +70,10 @@ def main():
                    help='Set only after inspecting the installed driver SamplingFreq units')
     p.add_argument('--exclusive-control', action='store_true', required=True)
     a = p.parse_args()
-    if not 2000 <= a.rf_mhz <= 4200 or not 1 <= a.frames <= 100:
-        p.error('Use 2000..4200 MHz and 1..100 frames')
+    if not 2000 <= a.rf_mhz <= 4200 or not 0 <= a.frames <= 10000:
+        p.error('Use 2000..4200 MHz and 0..10000 frames')
+    if a.frames == 0 and not a.stream_bind:
+        p.error('--frames 0 requires --stream-bind (stream until disconnect)')
     board = Path('/proc/device-tree/chosen/pynq_board').read_bytes().strip(b'\x00')
     if board != b'RFSoC4x2':
         raise RuntimeError('Wrong board identity')
@@ -83,6 +90,7 @@ def main():
     sys.path.insert(0, '/boot')
     from doa_mts import doaMtsOverlay
     overlay = None
+    listener, client = None, None
     output = Path(a.out)
     output.parent.mkdir(parents=True, exist_ok=True)
     failed = False
@@ -113,18 +121,49 @@ def main():
         overlay.dac_data_mem_write(words, overlay.dac1_player)
         overlay.da = 0
         overlay.dacPower = [int(a.dac in ('0','both')), 0, int(a.dac in ('1','both')), 0]
+        if a.stream_bind:
+            listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind((a.stream_bind, a.stream_port))
+            listener.listen(1)
+            listener.settimeout(120)
+            print(f'Waiting for demo client on port {a.stream_port}; DACs disabled', flush=True)
+            client, _ = listener.accept()
+            client.settimeout(5)
+            client.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 262144)
+            header = json.dumps({'format': 'int16le-I-minus-jQ-4ch', 'frame_bytes': 262144,
+                                 'fs_hz': 125e6, 'rf_mhz': a.rf_mhz,
+                                 'timestamp': 'board monotonic ns; not synchronized with host'}).encode()
+            client.sendall(b'R4X2IQ1\n'+struct.pack('<I', len(header))+header)
         overlay.dacs_control()
         captures = []
-        for _ in range(a.frames):
-            raw = np.asarray(overlay.get_custom_data(131072), dtype=np.int16).reshape(-1, 8).astype(float)
+        for sequence in (range(a.frames) if a.frames else itertools.count()):
+            raw_words = np.asarray(overlay.get_custom_data(131072), dtype='<i2')
+            captured_ns = time.monotonic_ns()
+            raw = raw_words.reshape(-1, 8).astype(float)
+            if client is not None:
+                body = raw_words.tobytes()
+                client.sendall(struct.pack('<4sQQI', b'IQF1', sequence, captured_ns, len(body))+body)
+                captures.clear()  # Live operation retains only the latest capture.
             captures.append(raw[:, 0::2]-1j*raw[:, 1::2])
+            manifest['frames_captured'] = sequence+1
+            if client is not None:
+                # Save one current capture on disconnect as well as clean completion.
+                last_capture = captures[-1]
             time.sleep(.1)
         np.savez_compressed(output, samples=np.stack(captures), fs=125e6)
+    except (BrokenPipeError, ConnectionResetError) as exc:
+        manifest['stream_stop'] = type(exc).__name__
+        if 'last_capture' in locals():
+            np.savez_compressed(output, samples=last_capture[None], fs=125e6)
     except BaseException as exc:
         failed = True
         manifest['experiment_error'] = f'{type(exc).__name__}: {exc}'
         raise
     finally:
+        for connection in (client, listener):
+            if connection is not None:
+                connection.close()
         if overlay is not None:
             shutdown(overlay, manifest)
         else:

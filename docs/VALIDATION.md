@@ -75,3 +75,32 @@ Eight host tests pass with these semantics; physical DAC state remains unproven.
 stopping all five notebook kernels for the demo. Those two blockers are resolved
 for the next exclusive session. Verify installed rate units, stop the authorized
 kernels/service, then run bounded DAC0 capture before calibration or both-DAC tests.
+
+## Real-time demonstration software
+
+**Test:** frozen broadside baseline versus pilot-adaptive receive weights under
+motion, including independent modulated interference, live framing and dashboard.
+
+**How:** eleven host tests total; new cases compare the same moving half-wave
+array captures with frozen and adaptive weights near ±30°, add a stronger
+independent modulated jammer, and decode fragmented framed network messages.
+The acquisition search whitens spatial covariance so strong modulated-jammer
+correlation sidelobes do not win by total power. A fifteen-frame headless dashboard
+run and an Agg PNG render exercise the live processing/display without opening
+the user's desktop. The physical board stream has not yet been exercised.
+
+**Results:** all eleven tests pass. In the moving-array fixtures the adaptive
+payload EVM remains below 3% with zero payload bit errors during the tested
+modulated interference cases; the fixed baseline exceeds 50%. These are
+simulated, flat-channel half-wave array results, not physical RF measurements.
+
+**Conclusions:** the dashboard now supports the requested real-time comparison
+and user beamforming/calibration controls. Actual update cadence, maximum motion
+speed and EVM stability remain unproven. Antenna silkscreen 5.2 GHz is user-reported;
+the present 2–4.2 GHz passives have not been validated there. Array spacing and
+MXG waveform choice remain open.
+
+**Ways to resolve:** complete the initial conducted capture, validate the RF chain
+for 5.2 GHz and measure antenna spacing, then follow LIVE_DEMO.md for stationary,
+moving and source-separated jammer tests. Record actual frame cadence, outages,
+clipping and EVM distributions rather than promising constant EVM.

@@ -1,7 +1,8 @@
 # Agent instructions
 
 Read README.md, PLAN.md and docs/HARDWARE.md before work. Read docs/VALIDATION.md
-before describing results. This repository is specifically RFSoC4x2 / xczu48dr;
+before describing results; docs/LIVE_DEMO.md defines the real-time antenna demo.
+This repository is specifically RFSoC4x2 / xczu48dr;
 ZCU216 overlays, clocks, DAC indexing and burst protocols do not apply.
 
 ## Ownership and workflow
@@ -60,6 +61,15 @@ nulled independently of the wanted signal. Keep that negative control.
 Do not label total residual reduction as jammer rejection without separate
 source captures. Validate lock, clipping, stale frames, phase drift and output
 state on hardware; software tests do not establish RF performance.
+
+For the real-time demo, keep calibrated fixed-broadside weights frozen until an
+explicit recalibration; frame-by-frame MRC is also adaptive and cannot serve as
+the beamforming-OFF baseline. Show both metrics from each same capture. User's
+antennas are labelled 5.2 GHz, spacing unknown; ±30° simulated nulls assume a
+half-wave four-element ULA. Do not relabel simulation angles as live estimates.
+CW versus modulated MXG waveform remains open. Constant EVM under rapid motion
+and physical jammer rejection require measured validation. Stream port4010 uses
+its own framed protocol, distinct from legacy4000; avoid unlimited RAM buffering.
 
 Each milestone updates docs/VALIDATION.md and PLAN.md with Test / How / Results /
 Conclusions / Ways to resolve. Report what is not proven. Keep access details in

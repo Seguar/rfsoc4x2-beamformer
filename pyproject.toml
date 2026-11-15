@@ -11,6 +11,7 @@ dependencies = ["numpy>=1.21", "scipy>=1.8", "matplotlib>=3.5"]
 
 [project.scripts]
 rfsoc-demo = "rfsoc_demo.cli:main"
+rfsoc-live = "rfsoc_demo.live:main"
 
 [tool.setuptools.packages.find]
 include = ["rfsoc_demo*"]
