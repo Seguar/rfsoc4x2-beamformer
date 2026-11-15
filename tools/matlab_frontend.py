@@ -31,13 +31,15 @@ def command(root, out, config, *, headless, frames, use_vsa):
         settings['maxFrames'] = frames
     if use_vsa:
         settings['vsa'] = dict(config.get('matlab_vsa', {}))
-        required = ('dllPath','customOfdmDllPath','typedHelperPath','fsHz','fcHz',
-                    'bandwidthHz','captureSamples','visible')
+        setx = bool(settings['vsa'].get('setupPath'))
+        required = ('dllPath','fsHz','fcHz','bandwidthHz','captureSamples','visible')
+        required += ('setupPath',) if setx else ('customOfdmDllPath','typedHelperPath')
         if any(key not in settings['vsa'] for key in required):
-            raise ValueError('matlab_vsa requires explicit SDK/helper DLLs, rates, capture size and visibility')
+            raise ValueError('matlab_vsa requires explicit SDK/setup or helper paths, rates, capture size and visibility')
         if settings['vsa']['fsHz'] != FS:
             raise ValueError('VSA setup must match the actual 125 Mcomplex/s input')
-        for key in ('dllPath', 'customOfdmDllPath', 'typedHelperPath'):
+        paths = ('dllPath', 'setupPath') if setx else ('dllPath', 'customOfdmDllPath', 'typedHelperPath')
+        for key in paths:
             if not Path(settings['vsa'][key]).is_file():
                 raise ValueError('VSA '+key+' does not exist')
         settings['vsa'].setdefault('measurementTimeoutSeconds', 3)

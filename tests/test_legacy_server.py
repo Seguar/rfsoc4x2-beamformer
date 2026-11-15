@@ -37,10 +37,11 @@ class LegacyServerTests(unittest.TestCase):
         backend = Backend()
         errors = []
         def run():
-            try:
-                server.serve_client(host, backend)
-            except Exception as error:
-                errors.append(error)
+            with host:
+                try:
+                    server.serve_client(host, backend)
+                except Exception as error:
+                    errors.append(error)
         thread = threading.Thread(target=run)
         thread.start()
         try:
@@ -64,9 +65,17 @@ class LegacyServerTests(unittest.TestCase):
                     pass
             self.assertTrue(backend.stopped.is_set(), 'stop was trapped behind stream loop')
         finally:
+            # Finish the duplex stream gracefully rather than resetting a
+            # connection that still has queued sample bytes.
+            peer.shutdown(socket.SHUT_WR)
+            peer.settimeout(2)
+            try:
+                while peer.recv(65536):
+                    pass
+            except socket.timeout:
+                pass
             peer.close()
             thread.join(3)
-            host.close()
         self.assertFalse(thread.is_alive())
         self.assertEqual(errors, [])
 

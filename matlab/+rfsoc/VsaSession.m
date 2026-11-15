@@ -1,5 +1,5 @@
 classdef VsaSession < handle
-    % Owned single-channel VSA DDC session; no Instrument Control Toolbox.
+    % Owned DirectDataSource/USR::Stream session; no Instrument Control Toolbox.
     properties (SetAccess=private)
         Config
         ConfigurationName
@@ -12,80 +12,82 @@ classdef VsaSession < handle
     end
     methods
         function obj = VsaSession(cfg)
-            required = {'dllPath','customOfdmDllPath','typedHelperPath','referencePath', ...
-                'fsHz','fcHz','bandwidthHz','captureSamples','visible'};
+            required={'dllPath','fsHz','fcHz','bandwidthHz','captureSamples','visible'};
+            setx=isfield(cfg,'setupPath') && strlength(cfg.setupPath)>0;
+            if setx
+                required=[required,{'setupPath'}];
+            else
+                required=[required,{'customOfdmDllPath','typedHelperPath','referencePath'}];
+            end
             for k=1:numel(required)
-                assert(isfield(cfg,required{k}), 'rfsoc:Config','Missing %s',required{k});
+                assert(isfield(cfg,required{k}),'rfsoc:Config','Missing %s',required{k});
             end
             validateattributes(cfg.fsHz,{'numeric'},{'scalar','real','finite','positive'});
             validateattributes(cfg.fcHz,{'numeric'},{'scalar','real','finite'});
             validateattributes(cfg.bandwidthHz,{'numeric'},{'scalar','real','finite','positive','<=',cfg.fsHz});
             validateattributes(cfg.captureSamples,{'numeric'},{'scalar','integer','>',300});
-            for name={'dllPath','customOfdmDllPath','typedHelperPath','referencePath'}
+            files={'dllPath'};
+            if setx, files=[files,{'setupPath'}];
+            else, files=[files,{'customOfdmDllPath','typedHelperPath','referencePath'}]; end
+            for name=files
                 assert(isfile(cfg.(name{1})),'rfsoc:Path','Missing %s',name{1});
             end
-            ref=rfsoc.loadReference(cfg.referencePath);
-            assert(cfg.fsHz==125e6 && ref.fsHz==cfg.fsHz && ref.nfft==256 && ...
-                ref.cp==64 && ref.train==4 && isequal(size(ref.symbols),[12 48]), ...
-                'rfsoc:Reference','Typed VSA configuration requires the exact 125MHz v2 reference.');
+            if ~setx
+                ref=rfsoc.loadReference(cfg.referencePath);
+                assert(cfg.fsHz==125e6 && ref.fsHz==cfg.fsHz && ref.nfft==256 && ...
+                    ref.cp==64 && ref.train==4 && isequal(size(ref.symbols),[12 48]), ...
+                    'rfsoc:Reference','Typed VSA configuration requires the exact 125MHz v2 reference.');
+            end
             if ~isfield(cfg,'startupTimeoutSeconds'), cfg.startupTimeoutSeconds=45; end
             if ~isfield(cfg,'measurementTimeoutSeconds'), cfg.measurementTimeoutSeconds=15; end
+            if ~isfield(cfg,'maxInputSamples'), cfg.maxInputSamples=cfg.captureSamples; end
+            validateattributes(cfg.maxInputSamples,{'numeric'},{'scalar','integer','positive','finite'});
             validateattributes(cfg.startupTimeoutSeconds,{'numeric'},{'scalar','integer','positive','finite'});
             validateattributes(cfg.measurementTimeoutSeconds,{'numeric'},{'scalar','positive','finite'});
-            obj.Config=cfg;
-            obj.ConfigurationName='DirectDataSource';
+            cfg.configurationMode="typed-v2"; if setx, cfg.configurationMode="setx"; end
+            obj.Config=cfg; obj.ConfigurationName='DirectDataSource';
             applicationTitle=['MATLAB_' char(System.Guid.NewGuid().ToString('N'))];
             NET.addAssembly(cfg.dllPath);
             try
-                % true ALWAYS starts a new instance; never call attach-only Create().
                 if ~isfield(cfg,'startupPort'), cfg.startupPort=-1; end
                 obj.App=Agilent.SA.Vsa.ApplicationFactory.Create(true,'','localhost', ...
-                    int32(cfg.startupPort),int32(cfg.startupTimeoutSeconds), ...
-                    Agilent.SA.Vsa.CreateOptions.Use64Bit);
+                    int32(cfg.startupPort),int32(cfg.startupTimeoutSeconds),Agilent.SA.Vsa.CreateOptions.Use64Bit);
                 assert(~isempty(obj.App),'rfsoc:StartupTimeout','New VSA instance did not start before timeout');
-                obj.App.IsVisible=logical(cfg.visible);
-                obj.App.Title=applicationTitle;
-                obj.Meas=obj.App.Measurements.SelectedItem;
-                obj.Meas.Pause();
+                obj.App.IsVisible=logical(cfg.visible); obj.App.Title=applicationTitle;
+                obj.Meas=obj.App.Measurements.SelectedItem; obj.Meas.Pause();
                 hw=obj.App.Hardware.Configurations.Item(obj.ConfigurationName);
                 if isempty(hw)
                     hw=obj.App.Hardware.Configurations.Create(obj.ConfigurationName);
-                    hw.Groups.Create('USR::Stream');
-                    hw.Groups.ApplyChanges();
+                    hw.Groups.Create('USR::Stream'); hw.Groups.ApplyChanges();
                 end
                 obj.Meas.SelectedAnalyzer=hw;
-                NET.addAssembly(cfg.customOfdmDllPath);
-                NET.addAssembly(cfg.typedHelperPath);
-                FinalValidation.FinalVsa.Restore(obj.Meas);
-                obj.Meas.Input.DataFrom=Agilent.SA.Vsa.DataSource.Hardware;
-                assert(obj.Meas.Input.DataFrom==Agilent.SA.Vsa.DataSource.Hardware, ...
-                    'rfsoc:Source','Hardware source readback failed');
-                obj.Input=obj.Meas.SelectedAnalyzer.Groups.Item(0).UserInput;
-                assert(~isempty(obj.Input) && obj.Input.Enabled,'rfsoc:DDC','USR::Stream unavailable (license/configuration)');
-                obj.Input.ChannelCount=int32(1);
-                s=obj.Input.Setup;
-                s.IsImmediateChangesEnabled=false;
-                s.SetFrequencyParameters(true,double(cfg.fcHz),double(cfg.fsHz),double(cfg.bandwidthHz));
-                % Capacity is not a promise to supply this many input samples.
-                s.CaptureSizeMaximum=max(8192,double(cfg.captureSamples));
-                s.IsContinuousCapable=true;
-                s.ApplyChanges();
-                obj.Meas.Frequency.Center=double(cfg.fcHz);
-                obj.Meas.Frequency.Span=double(cfg.bandwidthHz);
+                obj.configureInput();
+                if setx
+                    % Repository order: DirectDataSource first, then SETX recall.
+                    obj.App.RecallSetup(char(cfg.setupPath));
+                    % Recall embeds an analyzer; never feed the pre-recall handle.
+                    obj.Meas=obj.App.Measurements.SelectedItem; obj.Meas.Pause();
+                    obj.configureInput();
+                    assert(contains(lower(char(obj.Meas.MeasurementExtensionType.FullName)),'customofdm'), ...
+                        'rfsoc:Setup','Selected SETX did not establish Custom OFDM.');
+                else
+                    NET.addAssembly(cfg.customOfdmDllPath); NET.addAssembly(cfg.typedHelperPath);
+                    FinalValidation.FinalVsa.Restore(obj.Meas);
+                    obj.Meas.Frequency.Center=double(cfg.fcHz); obj.Meas.Frequency.Span=double(cfg.bandwidthHz);
+                    pre=ref.symbols(1:4,:).'; pilots=ref.symbols(5:12,ref.pilots).';
+                    pack=@(x)single(reshape([real(x(:)).';imag(x(:)).'],[],1));
+                    disp(char(FinalValidation.FinalVsa.Apply(obj.Meas,pack(pre),pack(pilots))));
+                end
                 obj.Meas.IsContinuous=false;
-                pre=ref.symbols(1:4,:).'; pilots=ref.symbols(5:12,ref.pilots).';
-                pack=@(x)single(reshape([real(x(:)).';imag(x(:)).'],[],1));
-                % Analyzer/rate/span changes precede the final typed OFDM setup.
-                disp(char(FinalValidation.FinalVsa.Apply(obj.Meas,pack(pre),pack(pilots))));
-            catch er
-                delete(obj); rethrow(er);
+            catch exception
+                delete(obj); rethrow(exception);
             end
         end
         function r=sendFrame(obj,x)
             t=tic;
             r=struct('evmPercent',NaN,'evmDb',NaN,'fresh',false,'status','unavailable','elapsedSeconds',0,'sentFloats',0,'requiredFloats',0);
             assert(~obj.Closed,'rfsoc:Closed','Session is closed');
-            iq=rfsoc.VsaSession.packFrame(x,obj.Config.captureSamples);
+            iq=rfsoc.VsaSession.packFrame(x,obj.Config.maxInputSamples);
             try
                 obj.Meas.Pause();
                 obj.Input.Data.ClearData();
@@ -133,14 +135,28 @@ classdef VsaSession < handle
         end
     end
     methods (Static)
-        function iq=packFrame(x,captureSamples)
+        function iq=packFrame(x,maxInputSamples)
             validateattributes(x,{'single','double'},{'vector','nonempty','finite'});
-            assert(numel(x)<=captureSamples,'rfsoc:FrameSize','Frame exceeds captureSamples');
+            assert(numel(x)<=maxInputSamples,'rfsoc:FrameSize','Frame exceeds maxInputSamples');
             iq=single(reshape([real(x(:)).';imag(x(:)).'],[],1));
             assert(all(isfinite(iq)),'rfsoc:FloatOverflow','Input overflows single precision');
         end
     end
     methods (Access=private)
+        function configureInput(obj)
+            cfg=obj.Config;
+            obj.Meas.Input.DataFrom=Agilent.SA.Vsa.DataSource.Hardware;
+            obj.Input=obj.Meas.SelectedAnalyzer.Groups.Item(0).UserInput;
+            assert(~isempty(obj.Input) && obj.Input.Enabled,'rfsoc:DDC','DirectDataSource user input unavailable');
+            obj.Input.ChannelCount=int32(1); setup=obj.Input.Setup;
+            setup.IsImmediateChangesEnabled=false;
+            setup.SetFrequencyParameters(true,double(cfg.fcHz),double(cfg.fsHz),double(cfg.bandwidthHz));
+            capacity=cfg.captureSamples;
+            if cfg.configurationMode=="typed-v2", capacity=max(8192,capacity); end
+            setup.CaptureSizeMaximum=double(capacity); setup.IsContinuousCapable=true; setup.ApplyChanges();
+            assert(double(setup.SampleRate)==cfg.fsHz && double(setup.CenterFrequency)==cfg.fcHz, ...
+                'rfsoc:Source','DirectDataSource frequency readback differs from configured input.');
+        end
         function [pct,db,status]=readEvm(obj)
             threshold=0.5;
             if isfield(obj.Config,'syncCorrThreshold'), threshold=obj.Config.syncCorrThreshold; end

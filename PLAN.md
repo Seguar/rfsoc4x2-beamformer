@@ -148,3 +148,12 @@ adapter nowselectsexistingexact-nameDirectDataSource (createsonlyifmissing,
 neverclearsgroups), uniqueOWNapp title. Nextsoleagent verifiesactualsample
 fidelity inVector mode, finalhandle/settingsidentity and sufficientsearch after
 settling, thenisolatessync/resourceconfiguration. Physicalownerunchanged.
+
+User requested repositorySETXworkflow+a1/a2, thenurgentremoteaccessandDSPdebug.
+NativeboardTailscale+DGXkeySSH independentlyverified; laptopnolongerrequired.
+DebugnowonDSP. a2 matchedFFT64ofdm_iq_100_16_4x2.setx+dac_ofdm_f_500.mat by0.9999
+preamblecorrelation. DSPmatchedSETX replayrawEVM0.0523%, sync0.999996; noise/wrong
+setupNoSync. Strictreaderstillquarantinesunnamedtrace32; notfullguardedVSAPASS.
+ParentimplementedSETXconfigurationpath andDSPconstructor/acquisitionsmokePASS,
+no typedhelperrequired when setupPath supplied. Capturecapacityvsfiniteinputlimit
+separated; no short-IQpadding/repetition. Physicalcurrentv2waveunchanged.

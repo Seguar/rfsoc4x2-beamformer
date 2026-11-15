@@ -35,6 +35,23 @@ completion alone do not establish synchronization or correct sample interpretati
 
 ## Components and conventions
 
+The repository SETX workflow is now implemented when `cfg.vsa.setupPath` is set:
+create DirectDataSource, configure its input, recall the selected SETX, reacquire
+the selected measurement/UserInput handles, then verify the input rate and center.
+It needs `dllPath` and `setupPath`; the typed helper is not required for this path.
+The experimental typed-v2 configuration remains available when no setupPath is given.
+
+The original matched pair is `vsa_rfsoc/Settings/ofdm_iq_100_16_4x2.setx` with
+`Signals/dac_ofdm_f_500.mat`. Offline preamble correlation is 0.9999. Resample its
+500MHz IQ to125MHz for the 4x2 DirectDataSource input; its OFDM system rate is
+100MHz, FFT64/CP16. This is a separate waveform from the current FFT256 v2 demo.
+Do not apply this legacy SETX to v2 captures.
+
+DSP validation of the SETX constructor and finite-data acquisition passed. Matched
+replay produced raw EVM0.0523% and sync0.999996; noise and wrong-setup controls
+reported SYNC NOT FOUND. Both matched traces retain unnamed status32, so the current
+strict EVM reader still reports unavailable. These are offline replay results.
+
 | Source | Responsibility |
 |---|---|
 | `FrameSource.m` | Exact reads, profile/rate/version/sequence checks, I−jQ decoding |
@@ -143,6 +160,14 @@ IQ trace cannot leave an earlier good summary EVM visible. Unknown status bits,
 including unnamed bit32, remain unavailable. Installed enum NoSync is 128.
 For live streams, limit VSA measurement timeout to at most four seconds; the board
 producer has a bounded send timeout. VSA starts before the capture client connects.
+
+For the user-requested SETX path, replace the typed helper/reference fields with
+`setupPath`. Input fs/center/span/capture/visibility fields remain required.
+`maxInputSamples` optionally limits the finite vector supplied, independently of
+`captureSamples` (the VSA gap-free window capacity). The DSP replay consumed57420
+floats across requests—more than one16384-complex window—using genuinely contiguous
+reference data. The adapter never pads or tiles short captures. Current live v2
+captures must retain their matching profile; SETX validation does not change RF.
 
 **Historical FFT64 Custom OFDM settings do not match current FFT256 waveform v2.**
 Validate historical waveform/setup pairs independently; filenames are insufficient.

@@ -56,6 +56,19 @@ class MatlabLauncherTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 literal(value)
 
+    def test_setx_config_needs_no_typed_helper(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out=Path(directory)
+            dll=out/'Interfaces.dll'; dll.write_bytes(b'placeholder')
+            setup=out/'test.setx'; setup.write_text('<setup/>')
+            command(out,out,{'host':'example.invalid','matlab_executable':'matlab-test',
+                'matlab_vsa':{'dllPath':str(dll),'setupPath':str(setup),'fsHz':FS,
+                    'fcHz':0,'bandwidthHz':FS,'captureSamples':16384,'visible':False}},
+                headless=True,frames=1,use_vsa=True)
+            cfg=json.loads((out/'matlab-frontend.json').read_text())['vsa']
+            self.assertEqual(cfg['setupPath'],str(setup))
+            self.assertNotIn('typedHelperPath',cfg)
+
     def test_vsa_requires_explicit_setup(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, 'requires explicit'):
