@@ -10,7 +10,7 @@ Claims hold until explicitly released, irrespective of timestamps.
 | Part | Owner | State |
 |---|---|---|
 | Repository code, docs, tests, publication | Coordinator | Software verified; live validation pending |
-| Laptop and board experiments | One delegated laptop agent | Brief under coordinator workspace; exclusive hardware owner while running |
+| Laptop and board experiments | Laptop agent released its claim | Access attempt complete; SSH/password and VISA blocked; no hardware changes |
 
 Decisions: public code repository; existing matched 4x2 overlay; no FPGA build;
 low-level waveform first; hardware-free simulation clearly labelled. Initial RF
@@ -23,3 +23,8 @@ save private evidence before hardware claims. Do not publish private inputs.
 Next: stage the reviewed helper/reference, verify board and instrument state,
 run DAC0-only low-level captures, analyze results, calibrate DAC1 and then both
 if headroom and signal lock permit. Record final DAC/MXG/service states.
+
+Checkpoint: laptop evidence received privately; no capture or live verification.
+Current DAC/MXG/service state unknown. Helper review fixes applied and eight
+host tests pass. Hardware remains pending current secure board access and MXG
+identification. No agent retains hardware ownership after this access attempt.

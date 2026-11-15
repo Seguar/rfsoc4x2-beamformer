@@ -26,3 +26,30 @@ The staged hardware helper has not yet been executed on this board.
 captures, establish receive conjugation and frequency response, calibrate hybrid
 phase, then measure held-out payload metrics and source-separated interference
 power. Record local evidence hashes and publish only reviewed summaries.
+
+## Laptop access attempt and helper corrections
+
+**Test:** live access, generator identification and preflight helper review.
+
+**How:** a laptop agent attempted authorized SSH keys and secure password
+delivery, queried candidate VISA resources, ran the same five host tests and
+compared archived boot files with the matched runtime manifest.
+
+**Results:** SSH keys rejected; password delivery timed out. MXG queries did
+not establish instrument identity or RF state. No hardware capture was made;
+no board settings, services or files were changed. Current DAC, boot service
+and MXG RF states remain unknown. Archived hashes matched; live hashes were
+not obtained. The generated reference is transmit input, not acquired ADC data.
+
+**Conclusions:** hardware testing remains blocked by access. Review identified
+missing hard clock-lock gates and fragile shutdown reporting. The helper now
+checks lock before and after sync, limits DAC words to 1200 peak, independently
+attempts both shutdown writes, retains errors/readbacks and persists status
+without masking an earlier experiment error. Sample-frequency units require
+explicit selection after driver inspection. Eight host tests pass, including
+three new mocked clock/shutdown failure checks; these do not validate driver APIs.
+
+**Ways to resolve:** obtain the current board password using secure file delivery,
+establish MXG identity and RF-off, verify installed RFdc units and AXI GPIO slice
+read API, then perform the bounded DAC0 experiment. Live lock, rates, headroom,
+hybrid calibration, EVM/BER and interference rejection remain unproven.

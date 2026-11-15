@@ -28,12 +28,20 @@ or credentials. Raw captures and run logs belong in ignored `local/`.
 ```sh
 sudo -n systemctl stop bootpy.service
 sudo -n python3 board_capture.py --exclusive-control \
-  --reference reference.npz --out dac0.npz --dac 0 --frames 10
+  --reference reference.npz --out dac0.npz --dac 0 --frames 10 \
+  --sampling-freq-unit GHz
 ```
+
+The unit above is an example only: inspect the installed RFdc implementation
+before choosing GHz, MHz or Hz. The helper requires this explicit selection
+and still rejects sample rates inconsistent with the generated waveform.
 
 7. The helper reinitializes FPGA/clocks/MTS using the existing wrapper. It checks
    runtime ADC/DAC rates against reference generation, loads low-amplitude words,
-   takes bounded captures and disables DAC GPIOs in `finally`. If construction
+   requires clock lock before and after MTS, accepts at most 1200 peak DAC words,
+   takes bounded captures and independently attempts both DAC disables in
+   `finally`. It saves shutdown errors and raw readbacks even after a failure.
+   If construction
    fails before returning an overlay, GPIO state is unknown; inspect it manually.
    If rate fields differ from the installed driver API, stop and inspect rather
    than bypassing rate validation. Do not interpret config as a frequency measurement.
