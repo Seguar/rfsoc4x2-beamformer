@@ -15,6 +15,29 @@ to 2–4.2 GHz. Extending RF range needs a reviewed hardware configuration chang
 
 ## Host dashboard
 
+Direct cable launcher (PuTTY and installed host dependencies required):
+
+```sh
+python tools/run_demo.py --config local/board.json
+```
+
+Copy `examples/board.example.json` into ignored `local/board.json` and fill the
+board address, pinned SSH host key and private password-file path. The launcher
+verifies RFSoC4x2 identity and exact matched boot hashes, refuses active notebook
+kernels, stops bootpy, stages new helper/reference files and opens the display.
+It uses DAC_A only at3GHz/peak1200; requires the confirmed20dB direct connection.
+Password values never enter the repository or command arguments. Run logs, last raw
+capture, staging hashes and shutdown manifest stay in ignored `out/live-.../`.
+The hardware helper clears both DAC RAMs and attempts both disables on normal
+exit, client disconnect, SIGTERM or SIGHUP. Physical RF-off still needs independent
+observation. The launcher leaves bootpy stopped and never modifies /boot.
+
+A finite check without opening a desktop window:
+
+```sh
+python tools/run_demo.py --config local/board.json --headless --frames 100
+```
+
 ```sh
 python -m rfsoc_demo.live --simulate
 ```
@@ -109,8 +132,9 @@ finite processing checks use `--simulate --headless --frames 30`. No physical
 antenna results or real-time speed bound are established by those checks.
 
 Current physical milestone: the direct ADC_A path has demonstrated approximately
-8.6captures/s and clean individual~3%EVM frames, alongside intermittent large
-payload errors. Stable real-time demodulation is not yet demonstrated. Distributed
-pilots estimate timing slope as well as phase, and the selected output panel shows
-the estimated timing range. Timing changes caused by an actual missing sample
-within a symbol can still produce error; retain those failures in the log.
+9captures/s with waveform2 over100liveframes, medianEVM3.79%, maximum9.98%, zeroBER
+and no acquisition failures or missing processed sequences. Distributed pilots
+estimate timing slope as well as phase, and the selected output panel shows the
+estimated timing range. Raw~100ppm sample loss still exists, so constantEVM and
+lossless capture are not claimed. The standard245.76/491.52 profile did not match
+the overlay's fixedclock ratios/mixed converter topology;500/500was restored.

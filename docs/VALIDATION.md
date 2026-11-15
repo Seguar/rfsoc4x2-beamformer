@@ -1,8 +1,9 @@
 # Validation — 2026-11-15
 
-Latest: direct capture and live transport demonstrated, but payload EVM remains
-intermittent. Version2 distributed timing pilots pass nineteen host tests and
-await hardware validation. Earlier sections preserve the validation sequence.
+Latest: waveform2 direct live demodulation measured over100frames, zeroBER/no
+pilot-lock failures; median/maxEVM3.79/9.98%. Raw timing loss persists and the
+factory-rate experiment did not produce a compatible workaround. Nineteen host
+tests pass. Earlier sections preserve the validation sequence.
 
 **Test:** waveform generation, four-channel tracking/demodulation, adaptive
 combining, collinear-path negative control and legacy sample transport.
@@ -200,3 +201,33 @@ sink's original clock constraint. Clock profile compatibility, rate metadata,
 locks/MTS and before/after raw timing loss must be validated before adopting it.
 The host reference/analyzer now accept explicit or recorded sample rates; this
 software capability does not change hardware clocks or validate a profile.
+
+## Waveform2 physical validation
+
+**Test:** fresh v2 reference, commanded3GHz/peak1200, direct20dB DAC_A/ADC_A path.
+Thirty bounded frames,100headless live frames and four full-RAM diagnostics.
+
+**How:** unchanged reviewed public helper atbd73eac, ADC0-only receiver, training
+and distributed pilots only for channel/phase/timing; no bad-frame exclusions or
+payload fit. Coordinator independently verified60file hashes, reprocessed all30
+saved bounded captures and checked all100live records. Original500/500clockprofile.
+
+**Results:** bounded min/median/p95/maxEVM2.89/3.49/8.44/8.89%, live3.34/3.79/8.55/9.98%.
+All payload BER values are zero; every frame acquired; live sequences0..99 complete.
+Median live interval110ms and host post-receipt age78ms. Raw full-RAM advance still
+99.45–100.43ppm: DSP tracking improved finite-run payload reception, not raw capture.
+
+**Conclusions:** live single-channel demodulation is demonstrated for the finite
+run. Constant EVM, lossless raw capture, motion tracking, array gain and MXG rejection
+remain unproven. Factory LMK245.76/LMX491.52was physically switched/restored with
+zeroed DAC RAMs and lock asserted, but its PL routing/MMCM ratios and mixed external/
+PLL converter topology do not match this overlay. No compatible lower-rate RF
+capture or rate-setting workaround was validated; lock alone is insufficient.
+
+**Ways to resolve:** keep the validated500/500profile for the conducted demo.
+The host launcher packages the repeatable direct test; validate its end-to-end
+startup/shutdown separately. Obtain synthesis-matched capture RTL or a supported
+clock/distribution redesign before claiming lossless capture. Later array tests
+need four RF inputs, measured spacing, a suitable5.2GHz chain and a separate jammer
+direction. Both DAC RAMs ended zero, disable commands recorded, boot service
+stopped, Jupyter running, credentials retained privately; physicalRFoff unverified.

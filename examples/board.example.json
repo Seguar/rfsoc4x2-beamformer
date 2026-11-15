@@ -1,0 +1,7 @@
+{
+  "host": "BOARD_ADDRESS",
+  "user": "xilinx",
+  "host_key": "PINNED_SSH_HOST_KEY",
+  "password_file": "PATH_TO_PRIVATE_PASSWORD_FILE",
+  "board_python": "/usr/local/share/pynq-venv/bin/python3"
+}

@@ -58,3 +58,11 @@ timing pilots and versioned receive behavior;19hosttests pass. Dedicated sole
 laptop hardware agent owns private timing-diagnostic staging/evidence only while
 running. Publiccode remains parent-owned. Credential privately retained with user
 authorization; no more unnecessary repeated password requests.
+
+V2 physical milestone: bounded30andlive100frames validated, allzeroBER/acquired;
+EVMmedian/max3.79/9.98%live. Raw100ppmadvancepersists. Factoryprofilephysically
+switched/restoredbutincompatiblewithfixedMMCM/mixedtileclocktopology; no lower-rate
+workaround adopted. Original500/500restored, DACRAMzero, bootpystopped/Jupyteractive.
+Parentverified60filehashesandreprocessed30boundedframes. Newone-command direct
+launcherreadyforfinalheadlesshardwarestartup/shutdownvalidation. Array/OTA deferred
+untiluserconnectsfourinputsandresolves5.2GHzRFchain; constantEVMnotpromised.

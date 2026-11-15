@@ -4,9 +4,10 @@ Pilot-locked OFDM demodulation, frequency/phase tracking and four-channel
 adaptive combining for the RFSoC4x2. Uses the existing `doa_rfsoc/main` matched
 boot overlay and `vsa_rfsoc` sample conventions; no FPGA build is required.
 
-**Status: software tests pass; board captures obtained, payload demodulation still
-under repair.** Initial hardware EVM is poor. The simulated distinct-path jammer
-is rejected; no working physical beamforming or interference rejection is claimed.
+**Status: direct ADC_A capture and live demodulation demonstrated with waveform2.**
+One hundred live frames had zero bit errors and no pilot-lock failures; measured
+EVM median3.79%, maximum9.98%. Raw timing loss remains, so constant EVM is not
+claimed. Physical array beamforming and MXG rejection are still unvalidated.
 See [validation](docs/VALIDATION.md) and [agent instructions](AGENTS.md).
 
 The [real-time demo](docs/LIVE_DEMO.md) adds live fixed-versus-adaptive EVM,
@@ -115,6 +116,20 @@ The AD936x bridge MXG interface is a reference for explicit VISA/SCPI control;
 this demo does not enable or reconfigure the MXG automatically.
 
 Direct cable milestone: acquired and streamed actual ADC_A samples with no
-digital rail hits and good frames near3%EVM/zeroBER, but intermittent sample
-timing changes still produce large payload errors. Stable live demodulation
-remains unresolved; version2 timing pilots have passed software tests only.
+digital rail hits. Distributed timing pilots reduced the measured EVM excursions:
+bounded30frames median/max3.49/8.89%; live100frames3.79/9.98%, allzeroBER. Raw
+sample loss still persists. The factory lower-rate profile was incompatible with
+this overlay; original500/500MHz clocks remain the validated operating profile.
+
+For a repeatable direct-cable session on the laptop, copy
+`examples/board.example.json` to ignored `local/board.json`, fill in private board
+address, pinned host key and retained password-file path, then run:
+
+```sh
+python tools/run_demo.py --config local/board.json
+```
+
+This launcher stages and verifies a fresh reference/helper, starts the board
+session and opens live ADC_A EVM. Closing the display disconnects acquisition and
+requests DAC shutdown; private output contains the shutdown manifest. The boot
+service remains stopped. See LIVE_DEMO.md for the finite headless check and limits.

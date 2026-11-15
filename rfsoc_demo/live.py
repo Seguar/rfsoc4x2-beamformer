@@ -121,7 +121,7 @@ def main():
             report.update(sequence=seq, elapsed_s=time.monotonic()-start,
                           host_age_ms=1000*(time.monotonic()-received), status='locked',
                           source='SIMULATION' if a.simulate else 'LIVE ADC',
-                          active='mvdr' if state['adaptive'] else 'fixed',
+                          active='adc0' if a.adc0_only else ('mvdr' if state['adaptive'] else 'fixed'),
                           fixed_calibration=state['calibrated'])
             if angle is not None:
                 report['simulated_angle_deg'] = angle
@@ -178,11 +178,18 @@ def main():
         calibrate = Button(fig.add_axes([.08,.065,.23,.055]), 'Calibrate broadside')
         toggle = Button(fig.add_axes([.37,.065,.23,.055]), 'Beamforming: OFF')
         jammer = Button(fig.add_axes([.66,.065,.25,.055]), 'Simulated jammer: OFF' if a.simulate else 'MXG: external control')
-        fig.text(.08,.015,'Calibrate with wanted TX at broadside and MXG RF OFF. Fixed weights remain frozen until recalibrated.', fontsize=9)
+        if a.adc0_only:
+            calibrate.label.set_text('Direct ADC_A')
+            toggle.label.set_text('Single-channel mode')
+        fig.text(.08,.015, 'Direct cable: ADC_A EVM shown immediately; no array gain is measured.' if a.adc0_only else
+                 'Calibrate with wanted TX at broadside and MXG RF OFF. Fixed weights remain frozen until recalibrated.', fontsize=9)
 
         def request_calibration(event):
-            state['calibrate'] = True
+            if not a.adc0_only:
+                state['calibrate'] = True
         def toggle_beam(event):
+            if a.adc0_only:
+                return
             state['adaptive'] = not state['adaptive']
             toggle.label.set_text('Beamforming: '+('ON' if state['adaptive'] else 'OFF'))
         def toggle_jammer(event):
@@ -213,7 +220,7 @@ def main():
             now = report['elapsed_s']
             evm_ax.set_xlim(max(0,now-25),max(5,now))
             evm_ax.relim(); evm_ax.autoscale_view(scalex=False)
-            active = 'mvdr' if state['adaptive'] else 'fixed'
+            active = report['active']
             if active in constellations:
                 z = constellations[active].ravel()
                 scale = np.sqrt(np.mean(abs(reference()[1][4:,4:])**2))

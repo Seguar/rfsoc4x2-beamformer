@@ -102,6 +102,16 @@ RF source profiles require matched LMK/LMX programming, actualRFdc-rate metadata
 NCO/MTS validation and before/after raw timing-loss measurements. Preserve failed
 records. Host `reference --fs`/capture metadata specify samples, not clock commands.
 
+The latest v2 physical run had 100 acquired live frames, zero BER and median/max
+EVM of 3.79/9.98%. Raw loss persists; do not claim constant EVM or an RTL repair.
+The stock 245.76/491.52 profile was switched and restored but is incompatible with
+the existing fixed MMCM ratios and mixed tile clocks. Keep the validated 500/500
+profile until a separately reviewed configuration is actually measured.
+The direct-cable launcher is tools/run_demo.py. Private configuration stays in
+ignored local/ or the user's private settings directory. It verifies board and
+boot hashes, stages a new reference/helper and leaves bootpy stopped. Headless
+validation must check the whole launch, finite stream and shutdown manifest.
+
 Each milestone updates docs/VALIDATION.md and PLAN.md with Test / How / Results /
 Conclusions / Ways to resolve. Report what is not proven. Keep access details in
 ignored local/ files; use secure secret cards for credentials. Do not introduce

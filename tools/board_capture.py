@@ -13,6 +13,7 @@ import time
 import socket
 import struct
 import itertools
+import signal
 import numpy as np
 
 
@@ -43,6 +44,17 @@ def shutdown(overlay, manifest):
     changes direction (InOut) or reads a software shadow (Output). Avoid both.
     """
     errors, readbacks = [], {}
+    zeroed = []
+    for name in ('dac0_player','dac1_player'):
+        if hasattr(overlay,name):
+            try:
+                getattr(overlay,name)[:] = 0
+                zeroed.append(name)
+            except Exception as exc:
+                errors.append(f'{name} clear: {type(exc).__name__}: {exc}')
+    if zeroed:
+        time.sleep(.003)  # Allow an active player to consume zeros before disable.
+    manifest['dac_ram_zero_writes'] = zeroed
     for name in ('dac0_enable', 'dac1_enable'):
         try:
             getattr(overlay, name).off()
@@ -95,6 +107,10 @@ def settled_capture(overlay):
 
 
 def main():
+    def interrupted(signum, frame):
+        raise SystemExit(f'Capture interrupted by signal {signum}')
+    for signum in (signal.SIGTERM, getattr(signal,'SIGHUP',signal.SIGTERM)):
+        signal.signal(signum,interrupted)
     p = argparse.ArgumentParser()
     p.add_argument('--reference', required=True)
     p.add_argument('--out', required=True)
