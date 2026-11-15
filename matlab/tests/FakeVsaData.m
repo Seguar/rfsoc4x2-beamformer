@@ -1,5 +1,7 @@
 classdef FakeVsaData < handle
  properties
+ Indicator=''
+ IndicatorReason=''
  Status=0
  Evm=3
  Correlation=0.9

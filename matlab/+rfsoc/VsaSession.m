@@ -85,7 +85,7 @@ classdef VsaSession < handle
         end
         function r=sendFrame(obj,x)
             t=tic;
-            r=struct('evmPercent',NaN,'evmDb',NaN,'fresh',false,'status','unavailable','elapsedSeconds',0,'sentFloats',0,'requiredFloats',0);
+            r=struct('evmPercent',NaN,'evmDb',NaN,'fresh',false,'status','unavailable','elapsedSeconds',0,'sentFloats',0,'requiredFloats',0,'quality',struct());
             assert(~obj.Closed,'rfsoc:Closed','Session is closed');
             iq=rfsoc.VsaSession.packFrame(x,obj.Config.maxInputSamples);
             try
@@ -112,7 +112,7 @@ classdef VsaSession < handle
                     pause(0.01);
                 end
                 if r.fresh
-                    [r.evmPercent,r.evmDb,r.status]=obj.readEvm();
+                    [r.evmPercent,r.evmDb,r.status,r.quality]=obj.readEvm();
                 elseif strcmp(r.status,'unavailable')
                     r.status='measurement timeout or no observed pending-to-done transition';
                 end
@@ -157,10 +157,12 @@ classdef VsaSession < handle
             assert(double(setup.SampleRate)==cfg.fsHz && double(setup.CenterFrequency)==cfg.fcHz, ...
                 'rfsoc:Source','DirectDataSource frequency readback differs from configured input.');
         end
-        function [pct,db,status]=readEvm(obj)
+        function [pct,db,status,quality]=readEvm(obj)
             threshold=0.5;
             if isfield(obj.Config,'syncCorrThreshold'), threshold=obj.Config.syncCorrThreshold; end
-            [pct,db,status]=rfsoc.readVsaEvm(obj.Meas,true,threshold);
+            allow32=obj.Config.configurationMode=="setx" && ...
+                isfield(obj.Config,'allowSetxStatus32') && logical(obj.Config.allowSetxStatus32);
+            [pct,db,status,quality]=rfsoc.readVsaEvm(obj.Meas,true,threshold,allow32);
         end
     end
 end

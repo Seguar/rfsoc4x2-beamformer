@@ -10,7 +10,7 @@ Claims hold until explicitly released, irrespective of timestamps.
 | Part | Owner | State |
 |---|---|---|
 | Repository code, docs, tests, publication | Coordinator | MATLAB software and direct live path validated; VSA/array remain pending |
-| Laptop and board experiments | Running MATLAB demo owns hardware | Claim HELD until its launcher finishes shutdown; no competing overlay owner |
+| Laptop and board experiments | Coordinator; no new overlay operation | Previous MATLAB frontend exited; capture child defunct, five notebook kernels present; audit before live handover |
 
 ## Initial plan and historical checkpoints
 
@@ -157,3 +157,24 @@ setupNoSync. Strictreaderstillquarantinesunnamedtrace32; notfullguardedVSAPASS.
 ParentimplementedSETXconfigurationpath andDSPconstructor/acquisitionsmokePASS,
 no typedhelperrequired when setupPath supplied. Capturecapacityvsfiniteinputlimit
 separated; no short-IQpadding/repetition. Physicalcurrentv2waveunchanged.
+
+
+## DSP SETX warning policy — 2026-11-15
+
+**Test / How:** Matched repository waveform, DirectDataSource and SETX recall;
+two positive/noise/positive/wrong-SETX cycles, finite contiguous offline IQ.
+**Results:** Eight fresh acquisitions; four matched positives 0.0523% EVM,
+−65.63dB, correlation0.999996; four negatives rejected. Twenty-four simulated
+reader cases pass; default policy remains strict.
+**Conclusions:** Explicit SETX-only `allowSetxStatus32` permits unnamed bit32
+with warning metadata while rejecting all other status bits and fault indicators.
+No live RF VSA or physical array/MXG claim.
+**Ways to resolve:** Validate the complete adapter in two owned VSA instances,
+then audit hardware ownership and provide a matching legacy-waveform capture path.
+
+Full `VsaSession` follow-up: two separately owned VSA instances each completed
+positive → noise → positive with fresh results, successful disposal and exit0.
+Four matched positives retained the explicit bit32 warning; two noise frames
+were unavailable. No disconnect reproduced in this bounded test. Independent
+Python audit of the eight probe and six adapter records passed. Live RF VSA and
+physical beamforming remain pending.

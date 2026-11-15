@@ -321,3 +321,30 @@ VSA CustomOFDM configuration and Input.DataFrom Hardware versus Recording, then
 obtain a valid positive control with noise/wrong-setup rejection. Later connect
 and calibrate the array before physical beamforming claims. Raw capture timing
 loss is unchanged by this host refactor.
+
+
+## DSP matched SETX replay and guarded status policy — 2026-11-15
+
+**Test:** Offline DirectDataSource synchronization with the repository FFT64 SETX
+and matched 500MHz waveform resampled to125MHz; no board or RF writes.
+**How:** Two positive/noise/positive/wrong-SETX cycles in a new owned VSA session,
+finite original samples, no repetition or padding. Reader contract adds simulated
+known-fault, unclassified-bit, indicator, measurement-error and stale controls.
+**Results:** Eight fresh acquisitions. Four matched positives: EVM0.0523031%
+(−65.6294dB), sync0.999996. Noise sync0.102962 and wrong-setup sync0.147488 were
+rejected with NoSync. MATLAB batch exited0 with completion sentinel; 24 simulated
+reader cases and 28 Python host tests pass.
+**Conclusions:** Offline matched replay works under an explicit SETX warning
+policy. Bit32 remains vendor-unclassified, recorded in quality/status and shown
+in the GUI; it has not been redefined as a named enum. Default strict behavior
+still rejects it. All other nonzero bits and vendor fault indicators are rejected.
+**Ways to resolve:** Finish two-instance adapter repeatability and matching live
+legacy-waveform acquisition. These results do not validate live VSA, antenna
+tracking, jammer rejection, or repair capture sample loss.
+
+Full `VsaSession` follow-up: two separately owned VSA instances each completed
+positive → noise → positive with fresh results, successful disposal and exit0.
+Four matched positives retained the explicit bit32 warning; two noise frames
+were unavailable. No disconnect reproduced in this bounded test. Independent
+Python audit of the eight probe and six adapter records passed. Live RF VSA and
+physical beamforming remain pending.

@@ -73,6 +73,9 @@ app=struct('Figure',fig,'Timer',tick,'Source',source);
                 vs=vsa.sendFrame(result.vsaSignal);
                 if vs.fresh && isfinite(vs.evmPercent)
                     status.Text=[status.Text,sprintf(' | VSA %.2f dB (%.2f%%)',vs.evmDb,vs.evmPercent)];
+                    if isfield(vs,'quality') && isfield(vs.quality,'unclassifiedBits') && vs.quality.unclassifiedBits~=0
+                        status.Text=[status.Text,' [vendor trace bit 32 unclassified]'];
+                    end
                 else
                     status.Text=[status.Text,' | VSA unavailable: ',char(vs.status)];
                 end

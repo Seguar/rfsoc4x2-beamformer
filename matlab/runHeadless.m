@@ -12,7 +12,7 @@ if cfg.useVsa
 end
 source=rfsoc.FrameSource(cfg);
 sourceGuard=onCleanup(@()delete(source)); %#ok<NASGU>
-locked=0; vsaValid=0; evm=nan(1,cfg.maxFrames);
+locked=0; vsaValid=0; vsaWarnings=0; evm=nan(1,cfg.maxFrames);
 fid=fopen(cfg.logPath,'a'); assert(fid>=0,'rfsoc:Log','Cannot open metrics log.');
 fileGuard=onCleanup(@()fclose(fid));
 for k=1:cfg.maxFrames
@@ -26,6 +26,9 @@ for k=1:cfg.maxFrames
         locked=locked+1; evm(k)=result.metric.evmPercent;
         if ~isempty(vsa)
             record.vsa=vsa.sendFrame(result.vsaSignal);
+            if isfield(record.vsa.quality,'unclassifiedBits') && record.vsa.quality.unclassifiedBits~=0
+                vsaWarnings=vsaWarnings+1;
+            end
             vsaValid=vsaValid+double(record.vsa.fresh && isfinite(record.vsa.evmPercent));
         end
     catch exception
@@ -35,7 +38,7 @@ for k=1:cfg.maxFrames
 end
 report=struct('frames',cfg.maxFrames,'lockedFrames',locked, ...
     'allFramesLocked',locked==cfg.maxFrames,'evmPercent',evm, ...
-    'vsaRequested',cfg.useVsa,'validVsaFrames',vsaValid);
+    'vsaRequested',cfg.useVsa,'validVsaFrames',vsaValid,'vsaWarningFrames',vsaWarnings);
 disp(jsonencode(report));
 assert(report.allFramesLocked,'rfsoc:Validation','Some frames failed; inspect ALL log records.');
 assert(~cfg.useVsa || vsaValid==cfg.maxFrames, ...

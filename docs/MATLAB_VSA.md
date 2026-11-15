@@ -6,18 +6,19 @@ and exports stay unchanged. The readable frontend is `matlab/runBeamformingDemo.
 
 ## Validation status
 
-26 Python host tests pass, including stream controls and launcher config filtering.
+28 Python host tests pass, including stream controls and launcher config filtering.
 MATLAB differential CFO/EVM/BER, noise rejection, all twelve beamformer modes,
 iterative-loading endpoint/isotropic controls and strict transport checks pass.
 A fresh 100-frame physical MATLAB DAC_B → 20 dB → ADC_D run locked every frame
 with zero BER. EVM min/median/p95/max: 2.88/3.31/7.30/8.30%; median −29.61 dB.
-The MATLAB GUI was left visible with advancing sequences. This is conducted
+The MATLAB GUI advanced during validation and has since exited. This is conducted
 single-channel evidence, not physical array tracking or jammer rejection.
 
-New VSA startup works with explicit localhost port and Use64Bit, but valid VSA
-EVM/lock remains unproven. Fresh replay can return tiny raw EVM even with NoSync.
-Seven simulated guarded-reader cases pass; they do not establish a real VSA
-positive control. The hidden localhost MATLAB GUI campaign passed clean IQ,
+New VSA startup works with explicit localhost port and Use64Bit. Matched offline
+SETX replay now passes with an explicit warning policy for unnamed trace bit32;
+noise and wrong-SETX controls are rejected. Live RF VSA validation remains pending.
+Twenty-four simulated guarded-reader cases also pass. Tiny raw EVM without sync
+remains insufficient for acceptance. The hidden localhost MATLAB GUI campaign passed clean IQ,
 noise rejection, pause clearing, explicit history labelling and socket/close cleanup.
 
 The laptop has MATLAB R2026a Update 5 and VSA interfaces 30.40.333.0. Signal,
@@ -29,8 +30,8 @@ Use the **DirectDataSource hardware analyzer**, as specified by the user, with
 `USR::Stream` input. Custom OFDM and DDC option entries report `IsValid=false`
 while Educational Version is valid. Those entries alone do not establish
 DirectDataSource availability. The exact-name analyzer accepted external user-input
-IQ and completed acquisitions without a vendor license-denial error. Valid Custom
-OFDM synchronization/EVM remains unproven. Input consumption and measurement
+IQ and completed acquisitions without a vendor license-denial error. Matched offline Custom OFDM synchronization/EVM is established with a trace-bit
+warning; live RF synchronization remains unproven. Input consumption and measurement
 completion alone do not establish synchronization or correct sample interpretation.
 
 ## Components and conventions
@@ -48,9 +49,14 @@ The original matched pair is `vsa_rfsoc/Settings/ofdm_iq_100_16_4x2.setx` with
 Do not apply this legacy SETX to v2 captures.
 
 DSP validation of the SETX constructor and finite-data acquisition passed. Matched
-replay produced raw EVM0.0523% and sync0.999996; noise and wrong-setup controls
-reported SYNC NOT FOUND. Both matched traces retain unnamed status32, so the current
-strict EVM reader still reports unavailable. These are offline replay results.
+replay produced EVM0.0523% (−65.63dB) and sync0.999996; two positive/noise/positive/
+wrong-setup cycles passed. Noise and wrong setup reported SYNC NOT FOUND. Both
+matched traces retain unnamed status32. The default reader remains strict; explicitly
+setting `allowSetxStatus32=true` in a SETX session permits only bit32, with an
+unclassified warning in the status, GUI and result quality. Every other nonzero
+bit, measurement error or trace indicator is rejected. Freshness, same-summary
+normalized sync correlation and percent units remain mandatory. This policy does
+not assign bit32 a vendor meaning or establish live RF performance.
 
 | Source | Responsibility |
 |---|---|
@@ -157,7 +163,8 @@ finite frames. Timeout, insufficient input or missing valid EVM gives unavailabl
 The reader requires fresh acquisition, both IQ and summary statuses zero, and
 normalized `Ch1SyncCorr` from that same summary ≥ configurable 0.5. A later invalid
 IQ trace cannot leave an earlier good summary EVM visible. Unknown status bits,
-including unnamed bit32, remain unavailable. Installed enum NoSync is 128.
+including unnamed bit32, remain unavailable by default. The explicit SETX warning
+policy above is the sole exception. Installed enum NoSync is 128.
 For live streams, limit VSA measurement timeout to at most four seconds; the board
 producer has a bounded send timeout. VSA starts before the capture client connects.
 

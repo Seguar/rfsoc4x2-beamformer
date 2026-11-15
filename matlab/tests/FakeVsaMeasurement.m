@@ -1,5 +1,6 @@
 classdef FakeVsaMeasurement < handle
  properties
+ Status=struct('MeasurementError','')
  Iq
  Summary
  end
