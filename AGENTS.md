@@ -77,7 +77,7 @@ CW versus modulated MXG waveform remains open. Constant EVM under rapid motion
 and physical jammer rejection require measured validation. Stream port4010 uses
 its own framed protocol, distinct from legacy4000; avoid unlimited RAM buffering.
 
-Current user cabling: DAC_A → BW-S20W2+ 20dB attenuator → ADC_A, DAC_B unused.
+Current user-confirmed cabling: DAC_B → BW-S20W2+ 20dB attenuator → ADC_D; DAC_A unused.
 Use --adc0-only in host analyze/live until all ADC channels have wanted RF again;
 this direct diagnostic cannot establish beamforming gain. The earlier combined
 captures had unwanted delayed reference copies and poor EVM; keep them labelled
@@ -121,7 +121,8 @@ antenna/MXG tests require the user's later cabling and RF-chain decisions.
 Connector correction: logical dac0/RFdc tile0 is printed DAC_B (tile228), logical
 dac1/RFdc tile2 is DAC_A (tile230). Earlier direct-test DAC_A text was a labelling
 error. Default launcher output is DAC_B; --dac-port A selects the other output.
-Use captured RX stream numbers until physical receive letters are verified.
+The user confirmed the current receive connector is ADC_D, matching capture stream0.
+Other receive connector mappings still need checking before the array demo.
 EVM is normalized error, not an absolute received-power indicator. Show RX level
 and capture freshness. Signal loss/staleness must clear all current good values;
 keep old traces only as explicitly labelled history.

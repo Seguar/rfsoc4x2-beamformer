@@ -124,7 +124,7 @@ def main():
                     ready.set()
     thread = threading.Thread(target=reader,daemon=True)
     thread.start()
-    print(f'Starting direct DAC_{dac_port} -> 20 dB -> ADC stream 0 session...',flush=True)
+    print(f'Starting direct DAC_{dac_port} -> 20 dB -> ADC_D (stream 0) session...',flush=True)
     try:
         deadline = time.monotonic()+120
         while not ready.wait(.25):

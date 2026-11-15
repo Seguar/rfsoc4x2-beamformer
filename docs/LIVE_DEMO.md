@@ -9,6 +9,10 @@ direct-loopback reports were incorrect: the default selected transmitter was
 DAC_B. The user has confirmed the cable is on DAC_B. See the
 [board manual, page6](https://www.realdigital.org/downloads/d6a7543b5033e5dadde272a48bcb5090.pdf).
 
+The user explicitly confirmed the current path is DAC_B → 20dB → ADC_D. ADC_D is
+capture stream0; keep that receive selection. Earlier ADC_A labels were wrong.
+Other printed receive mappings remain to be checked before the array test.
+
 The launcher now accepts `--dac-port B` (default) or `--dac-port A`, matching the
 printed transmit labels. It adds the selected connector to stream metadata and
 the live title. Receive channels are labelled by captured stream number until

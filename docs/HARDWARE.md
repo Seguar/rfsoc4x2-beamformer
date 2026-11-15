@@ -1,6 +1,6 @@
 # Bounded live loopback procedure
 
-Current direct test: DAC_A → BW-S20W2+ (20dB) → ADC_A, DAC_B unused. Generate
+Current user-confirmed direct test: DAC_B → BW-S20W2+ (20dB) → ADC_D, DAC_A unused. Generate
 the corrected mode3/IMR2 reference and analyze with `--adc0-only`; this is a
 single-channel demodulation test, not array evidence.
 

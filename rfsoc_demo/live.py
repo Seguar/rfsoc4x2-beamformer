@@ -172,7 +172,7 @@ def main():
         fig.subplots_adjust(bottom=.18, top=.86, hspace=.45, wspace=.45)
         source = 'SIMULATION — half-wave array' if a.simulate else 'LIVE ADC — geometry not inferred'
         if a.adc0_only:
-            source += ' | RX stream 0: no beamforming gain'
+            source += ' | RX ADC_D (stream 0): no beamforming gain'
         if receiver:
             source += ' | TX '+receiver.metadata.get('dac_connector','DAC connector unverified')
         title = fig.suptitle(source+' | waiting for pilot lock', fontsize=12)
@@ -197,7 +197,7 @@ def main():
         toggle = Button(fig.add_axes([.37,.065,.23,.055]), 'Beamforming: OFF')
         jammer = Button(fig.add_axes([.66,.065,.25,.055]), 'Simulated jammer: OFF' if a.simulate else 'MXG: external control')
         if a.adc0_only:
-            calibrate.label.set_text('Direct ADC stream 0')
+            calibrate.label.set_text('Direct ADC_D (RX0)')
             toggle.label.set_text('Single-channel mode')
         fig.text(.08,.015, 'Direct cable: stream 0 EVM and received level shown; no array gain is measured.' if a.adc0_only else
                  'Calibrate with wanted TX at broadside and MXG RF OFF. Fixed weights remain frozen until recalibrated.', fontsize=9)
