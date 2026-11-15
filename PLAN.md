@@ -140,3 +140,11 @@ config; 27hosttestsPASS. ExternalVSApositive remainsunproven. USER clarified
 thatactualanalyzer acceptance andread-onlyinspectsrelatedexistingGUIconfiguration;
 genericDDCoption IsValid=false alone isnotadecisiveDirectDataSourceblock.
 PhysicalMATLABsessioncontinuesholdinghardware; no competingownerauthorized.
+
+DirectDataSource probe: exact-nameconfiguration accepts userIQ and completes;
+no vendorlicense-denialerror. V2 clean/noise/wrongCP remain guardedunavailable;
+clean hascarrier-lockfailure, controlsNoSync. 60evidencehashes delivered. Parent
+adapter nowselectsexistingexact-nameDirectDataSource (createsonlyifmissing,
+neverclearsgroups), uniqueOWNapp title. Nextsoleagent verifiesactualsample
+fidelity inVector mode, finalhandle/settingsidentity and sufficientsearch after
+settling, thenisolatessync/resourceconfiguration. Physicalownerunchanged.

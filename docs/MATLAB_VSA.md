@@ -28,11 +28,10 @@ RAB PC in the new core requires Optimization; other core modes use linear algebr
 Use the **DirectDataSource hardware analyzer**, as specified by the user, with
 `USR::Stream` input. Custom OFDM and DDC option entries report `IsValid=false`
 while Educational Version is valid. Those entries alone do not establish
-DirectDataSource availability; actual analyzer acceptance is under test. Keysight's
-[Demo License documentation](https://helpfiles.keysight.com/csg/89600B/Webhelp/Subsystems/licensing/content/demolicense.htm)
-limits Demo input to built-in simulation/vendor recordings and excludes input
-from external hardware or other programs. A plausible vendor-recording EVM is
-therefore insufficient evidence that the external-IQ workflow is available.
+DirectDataSource availability. The exact-name analyzer accepted external user-input
+IQ and completed acquisitions without a vendor license-denial error. Valid Custom
+OFDM synchronization/EVM remains unproven. Input consumption and measurement
+completion alone do not establish synchronization or correct sample interpretation.
 
 ## Components and conventions
 
@@ -131,9 +130,11 @@ patch label provides no spacing calibration. Keep 3 GHz for this conducted test.
 VSA requires `cfg.useVsa=true` and explicit `cfg.vsa` fields `dllPath`,
 `customOfdmDllPath`, `typedHelperPath`, `referencePath`, `fsHz`, `fcHz`,
 `bandwidthHz`, `captureSamples`, `visible`. The launcher generates `referencePath`.
-Manual MATLAB callers supply it explicitly. The adapter creates a new
-instance and unique USR::Stream configuration; never attaches to unrelated instances
-or deletes global instrument handles. Capture size counts complex samples;
+Manual MATLAB callers supply it explicitly. The adapter creates a new application
+with a unique title and selects its exact-name DirectDataSource configuration. If
+missing, it creates that configuration with USR::Stream. Existing groups are not
+cleared; unrelated instances and global instrument handles remain untouched.
+Capture size counts complex samples;
 RequiredSamples counts floats, two per complex sample. No padding/repetition of
 finite frames. Timeout, insufficient input or missing valid EVM gives unavailable.
 The reader requires fresh acquisition, both IQ and summary statuses zero, and

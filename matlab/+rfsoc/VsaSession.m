@@ -33,7 +33,8 @@ classdef VsaSession < handle
             validateattributes(cfg.startupTimeoutSeconds,{'numeric'},{'scalar','integer','positive','finite'});
             validateattributes(cfg.measurementTimeoutSeconds,{'numeric'},{'scalar','positive','finite'});
             obj.Config=cfg;
-            obj.ConfigurationName=['MATLAB_' char(System.Guid.NewGuid().ToString('N'))];
+            obj.ConfigurationName='DirectDataSource';
+            applicationTitle=['MATLAB_' char(System.Guid.NewGuid().ToString('N'))];
             NET.addAssembly(cfg.dllPath);
             try
                 % true ALWAYS starts a new instance; never call attach-only Create().
@@ -43,12 +44,15 @@ classdef VsaSession < handle
                     Agilent.SA.Vsa.CreateOptions.Use64Bit);
                 assert(~isempty(obj.App),'rfsoc:StartupTimeout','New VSA instance did not start before timeout');
                 obj.App.IsVisible=logical(cfg.visible);
-                obj.App.Title=obj.ConfigurationName;
+                obj.App.Title=applicationTitle;
                 obj.Meas=obj.App.Measurements.SelectedItem;
                 obj.Meas.Pause();
-                hw=obj.App.Hardware.Configurations.Create(obj.ConfigurationName);
-                hw.Groups.Create('USR::Stream');
-                hw.Groups.ApplyChanges();
+                hw=obj.App.Hardware.Configurations.Item(obj.ConfigurationName);
+                if isempty(hw)
+                    hw=obj.App.Hardware.Configurations.Create(obj.ConfigurationName);
+                    hw.Groups.Create('USR::Stream');
+                    hw.Groups.ApplyChanges();
+                end
                 obj.Meas.SelectedAnalyzer=hw;
                 NET.addAssembly(cfg.customOfdmDllPath);
                 NET.addAssembly(cfg.typedHelperPath);
