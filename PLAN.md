@@ -241,3 +241,11 @@ no live native-VSA/EVM, physical DOA or editable refactored `.mlapp` is establis
 interface, run and screenshot original MATLAB UI plus owned native VSA, and create
 an editable App Designer artifact consistently if needed. a2 restarted after its
 advertised quota reset; only a2 owns board/VSA writes.
+
+
+Original UI/nativeVSA firstlive path demonstrated, but firstbaseline noise gate
+FAILED (blank14 correlation0.542 passed0.5). Positive medianEVM4.5633%, one27.5547%
+frame retained; all-channel fullRAMtransfer2.2–4.7s failsdefault2sfreshness.
+a2solehardware/VSAowner follow-up validatesprofile0.9+reference-lock andsmaller
+actual-channelpayload. Parentdoesnotintegratethisbackendasvalidatedyet. a1bounded
+privateAppDesignerpackagingresearchindependent, noboard/VSA. See latestVALIDATION.

@@ -411,3 +411,28 @@ no live native-VSA/EVM, physical DOA or editable refactored `.mlapp` is establis
 interface, run and screenshot original MATLAB UI plus owned native VSA, and create
 an editable App Designer artifact consistently if needed. a2 restarted after its
 advertised quota reset; only a2 owns board/VSA writes.
+
+
+## Original UI → native VSA: first bounded live test — 2026-11-15
+
+**Test:** Matched legacy FFT64 waveform through conducted DAC_B →20dB→ADC_D,
+full contiguous ADC RAM, original MATLAB UI and a newly owned native VSA.
+**How:** Three orientation captures plus21 original-UI frames (16 wave,5 blank),
+explicitly truncated DAC loop at peak1200; burst-phase analysis selects a genuine
+contiguous window clear of its boundary. ADC125Mcomplex/s andDAC500Mcomplex/s.
+The existing0.5 VSA summary-correlation guard was retained for the live baseline.
+**Results:** All16 wave frames yielded fresh correlated summaries (sync0.991–0.992).
+EVM median4.5633%; one frame reached27.5547% and remains in the record. Four blanks
+were rejected, but blank sequence14 passed at sync0.541988 with EVM1687.768%.
+Transfer age was2.2–4.7s with allfour full-RAM channels; the private runner needed
+a6s age limit. A9s pause cleared the original UI. Both DAC RAMs were zeroed and
+DACoff commanded without errors; helper and owned VSA exited, boot files unchanged.
+**Conclusions:** Original-UI/native-VSA transport and live positive demodulation
+work, but the noise-rejection gate FAILED and default2s freshness was not met.
+Offline replay using0.9 correlation rejected the5 saved blanks; this is not a
+new live validation. Raw capture sample loss remains unresolved.
+**Ways to resolve:** Apply a profile-specific0.9 summary-correlation guard plus
+independent wanted-reference lock, preserve vendor raw values and all failures,
+reduce direct-mode payload or use a verified faster path, and repeat held-out
+live wave/blank/pause controls before a durable user launch. Do not raise the
+stale deadline and call that a latency improvement. No physical DOA/MXG claim.
