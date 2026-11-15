@@ -34,7 +34,9 @@ python -m rfsoc_demo.live --host BOARD_ADDRESS --port 4010
 
 For the current direct DAC_A/20dB/ADC_A diagnostic add `--adc0-only`; all array
 channels must be connected before claiming beamforming improvement. Regenerate
-reference NPZ files after the mode3 IMR fix (500Mcomplex/s DAC input).
+reference NPZ files after the mode3 IMR fix (500Mcomplex/s DAC input) and distributed
+pilot update (waveform_version2). Stream metadata selects the matching receiver;
+untagged historical streams use waveform1, never a silent new pilot layout.
 
 The default log is `out/live.jsonl`. Live RF samples are labelled LIVE ADC, with
 no inferred angle. The receive worker drains the socket and keeps at most two
@@ -105,3 +107,10 @@ tracking with an independent modulated interferer, and fragmented versioned TCP
 frames. The dashboard renders headlessly with `--simulate --snapshot out/live.png`;
 finite processing checks use `--simulate --headless --frames 30`. No physical
 antenna results or real-time speed bound are established by those checks.
+
+Current physical milestone: the direct ADC_A path has demonstrated approximately
+8.6captures/s and clean individual~3%EVM frames, alongside intermittent large
+payload errors. Stable real-time demodulation is not yet demonstrated. Distributed
+pilots estimate timing slope as well as phase, and the selected output panel shows
+the estimated timing range. Timing changes caused by an actual missing sample
+within a symbol can still produce error; retain those failures in the log.

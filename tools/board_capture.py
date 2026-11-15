@@ -16,6 +16,26 @@ import itertools
 import numpy as np
 
 
+def fixed_output_flag(overlay, name, gpio):
+    description = getattr(gpio, 'description', None)
+    if description and 'C_ALL_OUTPUTS' in description.get('parameters', {}):
+        return int(description['parameters']['C_ALL_OUTPUTS'])
+    key = 'control/gpio_control/axi_gpio_'+name.replace('_enable','')
+    metadata = getattr(overlay, 'ip_dict', {}).get(key, {}).get('parameters', {})
+    if 'C_ALL_OUTPUTS' in metadata:
+        return int(metadata['C_ALL_OUTPUTS'])
+    # Installed AxiGPIO lacks description on this board. Use the matched HWH,
+    # which was independently hash-checked before the experiment.
+    import xml.etree.ElementTree as ET
+    modules = [m for m in ET.parse('/boot/doa_mts.hwh').iter('MODULE') if m.get('FULLNAME') == '/'+key]
+    if len(modules) != 1:
+        raise RuntimeError('Ambiguous GPIO metadata: '+name)
+    values = [p.get('VALUE') for p in modules[0].iter('PARAMETER') if p.get('NAME') == 'C_ALL_OUTPUTS']
+    if len(values) != 1:
+        raise RuntimeError('Missing GPIO fixed-output configuration: '+name)
+    return int(values[0])
+
+
 def shutdown(overlay, manifest):
     """Disable both DACs; register observations cannot prove physical RF-off.
 
@@ -36,7 +56,7 @@ def shutdown(overlay, manifest):
             data = int(gpio.read(channel._channel * 8))
             tri = int(gpio.read(channel._channel * 8 + 4))
             shadow = (int(channel._val) >> pin._start) & pin._mask
-            all_outputs = int(gpio.description.get('parameters', {}).get('C_ALL_OUTPUTS', 0))
+            all_outputs = fixed_output_flag(overlay, name, gpio)
             readbacks[name] = {'data_register': data, 'tri_register': tri,
                                'command_shadow': shadow, 'all_outputs': all_outputs}
             if (not all_outputs and (tri >> pin._start) & pin._mask) or shadow:
@@ -99,13 +119,15 @@ def main():
         words = data['dac_words']
         if 'dac_complex_fs' not in data or float(data['dac_complex_fs']) != 500e6:
             raise ValueError('Regenerate reference with mode3 IMR2, 500 Mcomplex/s input metadata')
+        if 'waveform_version' not in data or int(data['waveform_version']) != 2:
+            raise ValueError('Regenerate version2 reference with distributed timing pilots')
     if words.dtype != np.dtype('int16') or words.shape != (65536,) or np.max(np.abs(words.astype(float))) > 1200:
         raise ValueError('Initial live helper requires 65536 int16 DAC words with peak <= 1200')
     manifest = {'board': board.decode(), 'rf_mhz': a.rf_mhz, 'dac': a.dac,
                 'phase1_deg': a.phase1, 'fs_assumed_hz': 125e6, 'frames': a.frames,
                 'wrapper_sha256': hashlib.sha256(Path('/boot/doa_mts.py').read_bytes()).hexdigest(),
                 'reference_sha256': hashlib.sha256(Path(a.reference).read_bytes()).hexdigest(),
-                'dac_off_verified': False}
+                'dac_off_verified': False, 'waveform_version': 2}
     # Import has OLED side effects; constructor programs FPGA, clocks and MTS.
     sys.path.insert(0, '/boot')
     from doa_mts import doaMtsOverlay
@@ -145,6 +167,8 @@ def main():
         load_selected_dacs(overlay, words, a.dac)
         manifest['inactive_dac_ram_zeroed'] = True
         manifest['capture_settle_seconds'] = .003
+        manifest['adc_ram_words'] = len(overlay.adc_capture)
+        manifest['dac_ram_words'] = [len(overlay.dac0_player), len(overlay.dac1_player)]
         overlay.da = 0
         overlay.dacPower = [int(a.dac in ('0','both')), 0, int(a.dac in ('1','both')), 0]
         if a.stream_bind:
@@ -159,6 +183,7 @@ def main():
             client.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 262144)
             header = json.dumps({'format': 'int16le-I-minus-jQ-4ch', 'frame_bytes': 262144,
                                  'fs_hz': 125e6, 'rf_mhz': a.rf_mhz,
+                                 'waveform_version': 2,
                                  'timestamp': 'board monotonic ns; not synchronized with host'}).encode()
             client.sendall(b'R4X2IQ1\n'+struct.pack('<I', len(header))+header)
         overlay.dacs_control()
@@ -173,15 +198,20 @@ def main():
                 captures.clear()  # Live operation retains only the latest capture.
             captures.append(raw[:, 0::2]-1j*raw[:, 1::2])
             manifest['frames_captured'] = sequence+1
+            # Bounded diagnostics even for an indefinitely running live demo.
+            recent = manifest.setdefault('recent_captures', [])
+            recent.append({'sequence': sequence, 'monotonic_ns': captured_ns,
+                           'sha256': hashlib.sha256(raw_words.tobytes()).hexdigest()})
+            del recent[:-64]
             if client is not None:
                 # Save one current capture on disconnect as well as clean completion.
                 last_capture = captures[-1]
             time.sleep(.1)
-        np.savez_compressed(output, samples=np.stack(captures), fs=125e6)
+        np.savez_compressed(output, samples=np.stack(captures), fs=125e6, waveform_version=2)
     except (BrokenPipeError, ConnectionResetError) as exc:
         manifest['stream_stop'] = type(exc).__name__
         if 'last_capture' in locals():
-            np.savez_compressed(output, samples=last_capture[None], fs=125e6)
+            np.savez_compressed(output, samples=last_capture[None], fs=125e6, waveform_version=2)
     except BaseException as exc:
         failed = True
         manifest['experiment_error'] = f'{type(exc).__name__}: {exc}'

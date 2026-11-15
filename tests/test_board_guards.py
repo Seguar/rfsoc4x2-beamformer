@@ -1,6 +1,6 @@
 import types
 import unittest
-from tools.board_capture import shutdown, require_lock, load_selected_dacs, settled_capture
+from tools.board_capture import shutdown, require_lock, load_selected_dacs, settled_capture, fixed_output_flag
 from unittest.mock import patch
 import numpy as np
 
@@ -78,3 +78,9 @@ class BoardGuards(unittest.TestCase):
         with patch('tools.board_capture.time.sleep', side_effect=lambda delay: events.append('settle')):
             settled_capture(o)
         self.assertEqual(events, ['trigger', 'settle', 'copy'])
+
+    def test_gpio_metadata_fallback_without_description(self):
+        o = types.SimpleNamespace(ip_dict={'control/gpio_control/axi_gpio_dac0':
+                                          {'parameters': {'C_ALL_OUTPUTS': '1'}}})
+        gpio = types.SimpleNamespace()
+        self.assertEqual(fixed_output_flag(o,'dac0_enable',gpio),1)

@@ -50,3 +50,11 @@ User changed wiring to DAC_A→BW-S20W2+20dB→ADC_A. Source inspection found ex
 mode3 IMR2, capture-trigger OR into both DAC players, and missing da0 settle wait.
 Parent integrated500Mcomplex/s reference, inactive-RAM zeroing, settle wait and
 ADC0-only analysis/live mode.15host tests pass; corrected direct capture pending.
+
+Direct test milestone: fresh ADC_A frames and liveTCP8.62captures/s demonstrated,
+but intermittent EVM errors remain (good~3%, badup65.55%).59filehashes verified.
+Rootoffline sees~1sample advances insidebadpayloads. Waveform2 adds distributed
+timing pilots and versioned receive behavior;19hosttests pass. Dedicated sole
+laptop hardware agent owns private timing-diagnostic staging/evidence only while
+running. Publiccode remains parent-owned. Credential privately retained with user
+authorization; no more unnecessary repeated password requests.

@@ -1,8 +1,8 @@
 # Validation — 2026-11-15
 
-Latest: conducted captures obtained with poor EVM; subsequent IMR/reference,
-unused-DAC and capture-settle fixes pass fifteen host tests but await a new
-physical capture. Earlier sections preserve the sequence of validation limits.
+Latest: direct capture and live transport demonstrated, but payload EVM remains
+intermittent. Version2 distributed timing pilots pass nineteen host tests and
+await hardware validation. Earlier sections preserve the validation sequence.
 
 **Test:** waveform generation, four-channel tracking/demodulation, adaptive
 combining, collinear-path negative control and legacy sample transport.
@@ -142,3 +142,36 @@ IP parameters, handling unimplemented TRI registers. Fifteen host tests pass,
 including source-selection, capture-order and ADC0-only checks. User now connected
 DAC_A → BW-S20W2+20dB → ADC_A; repeat a bounded DAC0-only test and analyze with
 --adc0-only. Corrected hardware EVM, streaming and OTA behavior remain unproven.
+
+## Direct ADC_A capture and live transport
+
+**Test:** user-connected DAC_A → BW-S20W2+20dB → ADC_A, commanded3GHz/peak1200;
+DAC_B RAM zero, MXG disconnected. Three ten-frame capture runs and two thirty-frame
+headless live sessions; original waveform1 and ADC0-only receiver.
+
+**How:** runtime checks confirm ADC125Mcomplex/s and mode3 DAC500Mcomplex/s, both
+clock-lock reads1. Source/capture files remain private. Coordinator independently
+verified all59 delivered file hashes and reprocessed the saved capture with the
+historical waveform version. Diagnostic10ms settling was also attempted.
+
+**Results:** all bounded frames acquired the pilot. Good frames show approximately
+3%EVM and zero payload bit errors. Intermittent live errors reach65.55%EVM and
+BER0.159. No digital rail hits; largest observed ADC_A I/Q component333codes.
+One live session records contiguous sequence0–29,8.62captures/s and47–109ms host
+post-receipt age.32 instrumented raw frame hashes differ.10ms wait does not cure
+payload errors. Boot service ended failed/no process, Jupyter running/zero kernels,
+own server stopped, bothDAC disable commands recorded; physical RF-off unverified.
+
+**Conclusions:** acquisition, fresh-frame transport and intermittent demodulation
+work. Stable reception is unresolved. Diagnostic fits using the full known waveform
+show a roughly one-sample advance within some bad payloads, with clean initial
+training. These fits are for fault location, not reported EVM. The old adjacent
+pilots estimate common phase but poorly constrain timing phase slope.
+
+**Ways to resolve:** investigate the actual matched capture/playback handshake and
+clock domains on hardware. Waveform2 distributes pilots at−21,−7,+7,+21 and fits
+common phase plus frequency-linear phase per payload symbol, excluding pilots from
+EVM/BER. Version tags prevent reinterpretation of old captures. Nineteen host tests
+cover timing drift, corrupted payload remaining visible, within-symbol sample loss
+remaining visible, and installed GPIO metadata fallback. The new timing tracker
+does not repair arbitrary missing samples and has not yet passed a physical test.

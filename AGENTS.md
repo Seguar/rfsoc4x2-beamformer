@@ -84,6 +84,17 @@ captures had unwanted delayed reference copies and poor EVM; keep them labelled
 failed demodulation evidence. All-output GPIO cores lack a meaningful TRI register;
 read C_ALL_OUTPUTS from IP parameters rather than hardcoding it.
 
+Waveform2 uses pilot bins−21,−7,+7,+21 for phase AND timing-slope tracking;
+regenerate TX reference and keep waveform_version metadata in NPZ/stream/report.
+Untagged historical captures and streams use version1, with adjacent pilots and
+common-phase correction only. Never reinterpret old payload with a new pilot map.
+Tests must preserve nonzero error for corrupted evaluation data and a sample loss
+inside an FFT window. Pilot timing tracking cannot repair arbitrary sample loss.
+Live evidence currently shows~3%EVM on good single-channel frames with large
+intermittent errors; hardware cause/timing fix remain unproven. Do not call it stable.
+Working credential retention was explicitly authorized by user; keep it private
+outside repo/evidence and reuse instead of asking again after every subtask.
+
 Each milestone updates docs/VALIDATION.md and PLAN.md with Test / How / Results /
 Conclusions / Ways to resolve. Report what is not proven. Keep access details in
 ignored local/ files; use secure secret cards for credentials. Do not introduce

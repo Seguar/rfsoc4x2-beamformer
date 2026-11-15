@@ -2,10 +2,10 @@ import argparse
 import json
 from pathlib import Path
 import numpy as np
-from .dsp import FS, reference, dac_words, process, simulate
+from .dsp import FS, reference, dac_words, process, simulate, WAVEFORM_VERSION
 
 
-def save_report(frames, out, source, fs, adc0_only=False):
+def save_report(frames, out, source, fs, adc0_only=False, waveform_version=WAVEFORM_VERSION):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -15,7 +15,7 @@ def save_report(frames, out, source, fs, adc0_only=False):
     last = None
     for index, frame in enumerate(frames):
         try:
-            report, last = process(frame, fs, adc0_only=adc0_only)
+            report, last = process(frame, fs, adc0_only=adc0_only, waveform_version=waveform_version)
             report['frame'] = index
             report['status'] = 'locked'
         except ValueError as exc:
@@ -63,6 +63,7 @@ def main():
     s.add_argument('capture')
     s.add_argument('--fs', type=float, default=FS)
     s.add_argument('--adc0-only', action='store_true', help='Direct DAC_A to ADC_A diagnostic; no array gain claim')
+    s.add_argument('--waveform-version', type=int, choices=[1,2], help='Override capture metadata; untagged old captures use version1')
     s.add_argument('--out', default='out/analysis')
     s = sub.add_parser('capture-legacy')
     s.add_argument('--host', required=True)
@@ -80,14 +81,17 @@ def main():
         path.parent.mkdir(parents=True, exist_ok=True)
         wave, symbols = reference()
         np.savez(path, wave=wave, symbols=symbols, dac_words=dac_words(wave, a.peak), fs=FS,
-                 dac_complex_fs=500e6, dac_datapath_mode=3, dac_imr_factor=2)
+                 dac_complex_fs=500e6, dac_datapath_mode=3, dac_imr_factor=2,
+                 waveform_version=WAVEFORM_VERSION)
         print(path)
     elif a.command == 'analyze':
         with np.load(a.capture, allow_pickle=False) as data:
             x = data['samples']
+            version = int(data['waveform_version']) if 'waveform_version' in data else 1
         if x.ndim == 2:
             x = x[None]
-        save_report(x, a.out, 'HARDWARE CAPTURE (provenance supplied separately)', a.fs, a.adc0_only)
+        save_report(x, a.out, 'HARDWARE CAPTURE (provenance supplied separately)', a.fs, a.adc0_only,
+                    a.waveform_version or version)
     else:
         from .transport import capture
         path = Path(a.out)

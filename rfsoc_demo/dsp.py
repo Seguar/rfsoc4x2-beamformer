@@ -4,15 +4,20 @@ import numpy as np
 FS = 125e6  # HWH: ADC 5 GS/s / 40; verify runtime before hardware use.
 NFFT, CP, TRAIN, PAYLOAD, PERIOD = 256, 64, 4, 8, 4096
 BINS = np.r_[np.arange(-24, 0), np.arange(1, 25)] % NFFT
+WAVEFORM_VERSION = 2
+PILOT_INDEX = np.array([3, 17, 30, 44])  # signed FFT bins -21, -7, +7, +21
 
 
-def reference(seed=42):
+def reference(seed=42, version=WAVEFORM_VERSION):
+    if version not in (1, 2):
+        raise ValueError('Unsupported waveform version')
     rng = np.random.default_rng(seed)
     q = lambda shape: ((2*rng.integers(0, 2, shape)-1) +
                        1j*(2*rng.integers(0, 2, shape)-1))/np.sqrt(2)
     pilot = q((len(BINS),))
     symbols = np.vstack([np.tile(pilot, (TRAIN, 1)), q((PAYLOAD, len(BINS)))])
-    symbols[TRAIN:, :4] = pilot[:4]  # Reserved pilots track payload common phase.
+    pilots = np.arange(4) if version == 1 else PILOT_INDEX
+    symbols[TRAIN:, pilots] = pilot[pilots]
     freq = np.zeros((TRAIN+PAYLOAD, NFFT), complex)
     freq[:, BINS] = symbols
     time = np.fft.ifft(freq, axis=1)
@@ -108,7 +113,7 @@ def weights(x, pilot, loading=0.01):
     return w, mrc, a, float(np.linalg.cond(r))
 
 
-def demod(y, expected):
+def demod(y, expected, waveform_version=WAVEFORM_VERSION):
     span = NFFT+CP
     blocks = y[:(TRAIN+PAYLOAD)*span].reshape(-1, span)[:, CP:]
     bins = np.fft.fft(blocks, axis=1)[:, BINS]
@@ -117,23 +122,35 @@ def demod(y, expected):
         raise ValueError("Pilot channel estimate has a zero")
     equalized = bins[TRAIN:]/h
     target = expected[TRAIN:]
-    phase = np.angle(np.sum(equalized[:, :4]*target[:, :4].conj(), axis=1))
-    equalized *= np.exp(-1j*phase[:, None])
-    equalized, target = equalized[:, 4:], target[:, 4:]
+    pilots = np.arange(4) if waveform_version == 1 else PILOT_INDEX
+    data = np.ones(len(BINS), dtype=bool)
+    data[pilots] = False
+    if waveform_version == 1:
+        phase = np.angle(np.sum(equalized[:, pilots]*target[:, pilots].conj(), axis=1))
+        slope = np.zeros(PAYLOAD)
+    else:
+        signed_bins = np.where(BINS > NFFT//2, BINS-NFFT, BINS)
+        errors = np.unwrap(np.angle(equalized[:, pilots]*target[:, pilots].conj()), axis=1)
+        basis = np.c_[np.ones(4), signed_bins[pilots]]
+        phase, slope = np.linalg.lstsq(basis, errors.T, rcond=None)[0]
+    signed_bins = np.where(BINS > NFFT//2, BINS-NFFT, BINS)
+    equalized *= np.exp(-1j*(phase[:, None]+slope[:, None]*signed_bins))
+    equalized, target = equalized[:, data], target[:, data]
     # Training gain only: no fit to payload, no decision-directed EVM reduction.
     error = equalized-target
     evm = float(np.sqrt(np.mean(abs(error)**2)/np.mean(abs(target)**2)))
     ber = float(np.mean(np.stack([equalized.real > 0, equalized.imag > 0]) !=
                         np.stack([target.real > 0, target.imag > 0])))
     return {"evm_percent": 100*evm, "ber": ber,
-            "payload_phase_deg": np.rad2deg(phase).tolist()}, equalized
+            "payload_phase_deg": np.rad2deg(phase).tolist(),
+            "payload_timing_shift_samples": (slope*NFFT/(2*np.pi)).tolist()}, equalized
 
 
-def process(x, fs=FS, fixed_weights=None, adc0_only=False):
+def process(x, fs=FS, fixed_weights=None, adc0_only=False, waveform_version=WAVEFORM_VERSION):
     if adc0_only:
         x = x.copy()
         x[:, 1:] = 0
-    wave, symbols = reference()
+    wave, symbols = reference(version=waveform_version)
     aligned, tracking = acquire(x, wave, fs)
     count = TRAIN*(NFFT+CP)
     w, mrc, a, condition = weights(aligned[:count], wave[:count])
@@ -142,22 +159,23 @@ def process(x, fs=FS, fixed_weights=None, adc0_only=False):
     if fixed_weights is not None:
         vectors['fixed'] = np.asarray(fixed_weights)
     for name, vector in vectors.items():
-        metrics[name], constellations[name] = demod(aligned @ vector.conj(), symbols)
+        metrics[name], constellations[name] = demod(aligned @ vector.conj(), symbols, waveform_version)
     tracking.update(channel_gain=abs(a).tolist(),
                     channel_phase_deg=np.rad2deg(np.angle(a/a[0])).tolist(),
                     covariance_condition=condition,
                     weight_norm=float(np.linalg.norm(w)))
-    return {"tracking": tracking, "metrics": metrics, 'receive_mode': 'ADC0 only' if adc0_only else 'four-channel',
+    return {"tracking": tracking, "metrics": metrics, 'waveform_version': waveform_version,
+            'receive_mode': 'ADC0 only' if adc0_only else 'four-channel',
             "input_peak_components": np.maximum(abs(x.real).max(axis=0), abs(x.imag).max(axis=0)).tolist(),
             "input_rail_fraction": np.mean((abs(x.real) >= 32767) | (abs(x.imag) >= 32767), axis=0).tolist()}, constellations
 
 
-def calibrate_fixed(x, fs=FS, adc0_only=False):
+def calibrate_fixed(x, fs=FS, adc0_only=False, waveform_version=WAVEFORM_VERSION):
     """One wanted-only broadside capture fixes baseline weights until recalibrated."""
     if adc0_only:
         x = x.copy()
         x[:, 1:] = 0
-    wave, _ = reference()
+    wave, _ = reference(version=waveform_version)
     aligned, _ = acquire(x, wave, fs)
     count = TRAIN*(NFFT+CP)
     _, mrc, _, _ = weights(aligned[:count], wave[:count])

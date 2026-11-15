@@ -8,7 +8,7 @@ import socket
 import threading
 import time
 import numpy as np
-from .dsp import FS, PERIOD, reference, process, calibrate_fixed
+from .dsp import FS, PERIOD, reference, process, calibrate_fixed, WAVEFORM_VERSION
 from .transport import receive_session, receive_frame
 
 
@@ -89,6 +89,7 @@ def main():
         p.error('--frames must be positive')
     receiver = None if a.simulate else Receiver(a.host, a.port)
     fs = FS if receiver is None else float(receiver.metadata['fs_hz'])
+    waveform_version = WAVEFORM_VERSION if receiver is None else int(receiver.metadata.get('waveform_version',1))
     log_path = Path(a.log)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     state = {'fixed': None, 'adaptive': False, 'jammer': False, 'index': 0,
@@ -113,10 +114,10 @@ def main():
         state['received'] = received
         try:
             if state['calibrate']:
-                state['fixed'] = calibrate_fixed(x, fs, a.adc0_only)
+                state['fixed'] = calibrate_fixed(x, fs, a.adc0_only, waveform_version)
                 state['calibrated'] = f'capture {seq}'
                 state['calibrate'] = False
-            report, constellation = process(x, fs, state['fixed'], a.adc0_only)
+            report, constellation = process(x, fs, state['fixed'], a.adc0_only, waveform_version)
             report.update(sequence=seq, elapsed_s=time.monotonic()-start,
                           host_age_ms=1000*(time.monotonic()-received), status='locked',
                           source='SIMULATION' if a.simulate else 'LIVE ADC',
@@ -217,7 +218,9 @@ def main():
                 z = constellations[active].ravel()
                 scale = np.sqrt(np.mean(abs(reference()[1][4:,4:])**2))
                 scatter.set_offsets(np.c_[z.real,z.imag]/scale)
-                iq_ax.set_title(f'{active}: EVM {report["metrics"][active]["evm_percent"]:.2f}% | BER {report["metrics"][active]["ber"]:.4g}')
+                metric = report['metrics'][active]
+                timing = metric['payload_timing_shift_samples']
+                iq_ax.set_title(f'{active}: EVM {metric["evm_percent"]:.2f}% | BER {metric["ber"]:.4g}\nPilot timing {min(timing):+.2f}…{max(timing):+.2f} samples')
             else:
                 scatter.set_offsets(np.empty((0,2)))
                 iq_ax.set_title('Calibrate broadside before fixed-beam comparison')

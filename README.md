@@ -90,7 +90,9 @@ RF-off must be checked separately through board access.
   Each triggered capture reacquires; there is no assumed continuous sample time.
 - Training fits the steering vector and residual covariance. Regularized MVDR
   weights stay fixed through payload. Training also supplies per-bin equalization;
-  reserved payload pilots track common phase. Payload EVM and BER exclude pilots.
+  version2 payload pilots at FFT bins−21,−7,+7,+21 track common phase and timing
+  phase slope. Payload EVM and BER exclude pilots. Version1 used adjacent pilots
+  and common-phase tracking only; do not mix waveform versions.
 - EVM is reference RMS error, with training-derived gain. It is not WLAN-standard
   compliance, decision-directed EVM, dBm, or a direct jammer-suppression measurement.
   Initial receiver model assumes a flat spatial response over the occupied band.
@@ -111,3 +113,8 @@ RF-off must be checked separately through board access.
 Instrument endpoints, credentials and raw measurements stay in ignored `local/`.
 The AD936x bridge MXG interface is a reference for explicit VISA/SCPI control;
 this demo does not enable or reconfigure the MXG automatically.
+
+Direct cable milestone: acquired and streamed actual ADC_A samples with no
+digital rail hits and good frames near3%EVM/zeroBER, but intermittent sample
+timing changes still produce large payload errors. Stable live demodulation
+remains unresolved; version2 timing pilots have passed software tests only.
