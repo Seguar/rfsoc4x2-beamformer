@@ -118,6 +118,9 @@ RAM clears and disable commands. GUI clicks are not tested. No hardware session
 owns the board after validation; keep final states in the run evidence. Further
 antenna/MXG tests require the user's later cabling and RF-chain decisions.
 
+EVM must be shown in both dB and percent (user
+request): EVM(dB)=20log10(EVM(%)/100). Store evm_db and evm_percent in metrics;
+represent exact-zero error as null in JSON and -inf dB in the display.
 Each milestone updates docs/VALIDATION.md and PLAN.md with Test / How / Results /
 Conclusions / Ways to resolve. Report what is not proven. Keep access details in
 ignored local/ files; use secure secret cards for credentials. Do not introduce

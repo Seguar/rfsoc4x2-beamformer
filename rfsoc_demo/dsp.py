@@ -141,7 +141,8 @@ def demod(y, expected, waveform_version=WAVEFORM_VERSION):
     evm = float(np.sqrt(np.mean(abs(error)**2)/np.mean(abs(target)**2)))
     ber = float(np.mean(np.stack([equalized.real > 0, equalized.imag > 0]) !=
                         np.stack([target.real > 0, target.imag > 0])))
-    return {"evm_percent": 100*evm, "ber": ber,
+    return {"evm_percent": 100*evm, "evm_db": float(20*np.log10(evm)) if evm > 0 else None,
+            "ber": ber,
             "payload_phase_deg": np.rad2deg(phase).tolist(),
             "payload_timing_shift_samples": (slope*NFFT/(2*np.pi)).tolist()}, equalized
 

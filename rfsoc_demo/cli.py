@@ -30,8 +30,12 @@ def save_report(frames, out, source, fs, adc0_only=False, waveform_version=WAVEF
     fig, axes = plt.subplots(1, 3, figsize=(13, 3.8))
     for name, marker in [('adc0', 'o'), ('mrc', 's'), ('mvdr', '^')]:
         axes[0].plot([r['frame'] for r in locked],
-                     [r['metrics'][name]['evm_percent'] for r in locked], marker=marker, label=name)
-    axes[0].set(xlabel='Capture index', ylabel='Held-out payload EVM (%)', title=source)
+                     [r['metrics'][name]['evm_db'] for r in locked], marker=marker, label=name)
+    axes[0].set(xlabel='Capture index', ylabel='Held-out payload EVM (dB)', title=source)
+    percent_axis = axes[0].secondary_yaxis('right', functions=(
+        lambda db: 100*np.power(10., np.asarray(db)/20),
+        lambda pct: 20*np.log10(np.maximum(np.asarray(pct),1e-300)/100)))
+    percent_axis.set_ylabel('EVM (%)')
     axes[0].legend()
     axes[1].plot([r['frame'] for r in locked], [r['tracking']['cfo_hz']/1000 for r in locked], 'o-')
     axes[1].set(xlabel='Capture index', ylabel='Pilot CFO (kHz)', title='Independent capture tracking')

@@ -73,3 +73,7 @@ One-line output-path fix applied publicly. Median/max EVM 3.89/9.73%, zero BER,
 all locks. No hardware agent retains ownership. The direct demonstration is ready
 to launch; graphical interactions remain untested. Physical array/MXG tests stay
 open until the user's later antenna setup; raw sample loss remains documented.
+
+User requested EVM in dB as well as percent. Live/static plots now use a dB axis
+with a percent axis, current EVM shows both, and metrics include evm_db. Host tests
+and headless renders pass; no new hardware run is required for the unit display.

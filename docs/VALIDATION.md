@@ -258,3 +258,12 @@ RF-off, capture-loss repair, antenna tracking and MXG rejection are not establis
 the live ADC_A display. Preserve the 20 dB direct cable and use the private config.
 Close the display to end its capture session. Before array work, resolve the
 5.2 GHz RF chain, connect all four receive inputs and measure antenna spacing.
+
+## EVM units in the display
+
+**Test:** show EVM in dB alongside percent and preserve both in saved metrics.
+**How:** convert RMS error with 20log10(EVM(%)/100); render the live and static
+plots headlessly with a secondary percent axis.
+**Results:** all 19 host tests pass; rendered labels and JSON fields checked.
+**Conclusions:** this is a display/reporting change; receiver processing is unchanged.
+**Ways to resolve:** update the laptop checkout and restart the display to use it.

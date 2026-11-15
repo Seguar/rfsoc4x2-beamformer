@@ -66,8 +66,13 @@ reference NPZ files after the mode3 IMR fix (500Mcomplex/s DAC input) and distri
 pilot update (waveform_version2). Stream metadata selects the matching receiver;
 untagged historical streams use waveform1, never a silent new pilot layout.
 
-The default log is `out/live.jsonl`. Live RF samples are labelled LIVE ADC, with
-no inferred angle. The receive worker drains the socket and keeps at most two
+The default log is `out/live.jsonl`. EVM is shown in dB and percent.
+The time plot uses dB on the left and percent on the
+right; the current constellation title shows both. JSON metrics include `evm_db`
+and `evm_percent`, with EVM(dB)=20log10(EVM(%)/100); more-negative dB means less
+error. Exact zero error is displayed as -inf dB and serialized as null in JSON.
+Live RF samples are labelled LIVE ADC, with no inferred angle.
+The receive worker drains the socket and keeps at most two
 complete frames, dropping old display frames. The dashboard processes the newest
 frame every nominal 100 ms. Actual cadence depends on acquisition, network, DSP
 and rendering; host age is measured after receipt and excludes unknown network

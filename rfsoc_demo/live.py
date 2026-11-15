@@ -156,7 +156,7 @@ def main():
         from matplotlib.animation import FuncAnimation
         from matplotlib.widgets import Button
         fig, axes = plt.subplots(2, 2, figsize=(12, 7))
-        fig.subplots_adjust(bottom=.18, top=.86, hspace=.45, wspace=.3)
+        fig.subplots_adjust(bottom=.18, top=.86, hspace=.45, wspace=.45)
         source = 'SIMULATION — half-wave array' if a.simulate else 'LIVE ADC — geometry not inferred'
         if a.adc0_only:
             source += ' | ADC_A ONLY: no beamforming gain'
@@ -164,8 +164,11 @@ def main():
         evm_ax, iq_ax, phase_ax, cfo_ax = axes.ravel()
         lines = {name: evm_ax.plot([], [], label=label)[0] for name, label in
                  [('fixed','Fixed broadside'), ('mvdr','Adaptive MVDR'), ('adc0','ADC0')]}
-        evm_ax.set(xlabel='Time (s)', ylabel='Payload RMS EVM (%)', title='Same capture, separate receive weights')
-        evm_ax.set_yscale('log')
+        evm_ax.set(xlabel='Time (s)', ylabel='Payload RMS EVM (dB)', title='Same capture, separate receive weights')
+        evm_percent_axis = evm_ax.secondary_yaxis('right', functions=(
+            lambda db: 100*np.power(10., np.asarray(db)/20),
+            lambda pct: 20*np.log10(np.maximum(np.asarray(pct),1e-300)/100)))
+        evm_percent_axis.set_ylabel('EVM (%)')
         evm_ax.legend()
         scatter = iq_ax.scatter([], [], s=6, alpha=.6)
         iq_ax.set(xlim=(-2,2), ylim=(-2,2), xlabel='I / reference RMS', ylabel='Q / reference RMS')
@@ -216,7 +219,7 @@ def main():
             history.append(report)
             for name, line in lines.items():
                 rows = [r for r in history if name in r['metrics']]
-                line.set_data([r['elapsed_s'] for r in rows], [r['metrics'][name]['evm_percent'] for r in rows])
+                line.set_data([r['elapsed_s'] for r in rows], [r['metrics'][name]['evm_db'] for r in rows])
             now = report['elapsed_s']
             evm_ax.set_xlim(max(0,now-25),max(5,now))
             evm_ax.relim(); evm_ax.autoscale_view(scalex=False)
@@ -227,7 +230,8 @@ def main():
                 scatter.set_offsets(np.c_[z.real,z.imag]/scale)
                 metric = report['metrics'][active]
                 timing = metric['payload_timing_shift_samples']
-                iq_ax.set_title(f'{active}: EVM {metric["evm_percent"]:.2f}% | BER {metric["ber"]:.4g}\nPilot timing {min(timing):+.2f}…{max(timing):+.2f} samples')
+                db_text = f'{metric["evm_db"]:.2f}' if metric['evm_db'] is not None else '-inf'
+                iq_ax.set_title(f'{active}: EVM {db_text} dB ({metric["evm_percent"]:.2f}%) | BER {metric["ber"]:.4g}\nPilot timing {min(timing):+.2f}…{max(timing):+.2f} samples')
             else:
                 scatter.set_offsets(np.empty((0,2)))
                 iq_ax.set_title('Calibrate broadside before fixed-beam comparison')
