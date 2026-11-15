@@ -28,3 +28,8 @@ Checkpoint: laptop evidence received privately; no capture or live verification.
 Current DAC/MXG/service state unknown. Helper review fixes applied and eight
 host tests pass. Hardware remains pending current secure board access and MXG
 identification. No agent retains hardware ownership after this access attempt.
+
+User update: MXG RF cable disconnected; all five notebook kernels belong to user
+and may be stopped for the demo. Exclusive capture is authorized. Authenticated
+preflight confirmed live board identity and matched boot hashes. New GPIO handling
+records commanded shutdown without claiming physical RF-off from DATA reads.

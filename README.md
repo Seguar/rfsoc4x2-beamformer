@@ -49,7 +49,8 @@ That is a useful negative control, not a promised working cancellation case.
 Follow [the hardware procedure](docs/HARDWARE.md). A bounded board capture stages
 the reference and helper in a new directory, takes exclusive control from the
 legacy service, verifies runtime rates, captures four ADCs, then disables both
-DACs with GPIO readback. It changes volatile overlay/clock/RF settings and leaves
+DACs with disable-command and direction-register records. These do not prove
+physical RF-off: AXI GPIO output DATA reads return zero. It changes volatile overlay/clock/RF settings and leaves
 the boot files intact. Do not run it beside the existing RF process.
 
 Analyze the returned capture on the laptop:

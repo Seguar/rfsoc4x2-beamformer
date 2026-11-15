@@ -40,7 +40,10 @@ and still rejects sample rates inconsistent with the generated waveform.
    runtime ADC/DAC rates against reference generation, loads low-amplitude words,
    requires clock lock before and after MTS, accepts at most 1200 peak DAC words,
    takes bounded captures and independently attempts both DAC disables in
-   `finally`. It saves shutdown errors and raw readbacks even after a failure.
+   `finally`. It saves shutdown errors, direction registers and command shadows
+   even after a failure. It never calls PYNQ slice read(), which can change pin
+   direction. AXI GPIO output DATA reads return zero and cannot prove RF-off;
+   the manifest distinguishes `dac_off_commanded` from physical verification.
    If construction
    fails before returning an overlay, GPIO state is unknown; inspect it manually.
    If rate fields differ from the installed driver API, stop and inspect rather
@@ -59,10 +62,13 @@ and still rejects sample rates inconsistent with the generated waveform.
     distinct path compare single ADC, calibrated MRC and MVDR with independent
     payload EVM/BER and separately measured interference power. Source-on/off
     controls and topology must accompany any rejection number.
-11. Confirm DAC GPIOs off and record service state. Restarting bootpy can reload
+11. Record both disable commands and obtain independent RF-off evidence when
+    available; output-register zeros are not that evidence. Record service state. Restarting bootpy can reload
     its previous waveform/settings; restore it only if that RF state is intended.
     Keep MXG off. Record any unverified RF state prominently.
 
 Legacy acquisition is optional. The old service only reads commands before its
 stream loop. A disconnect and a fresh control connection can request stop but
 cannot prove it. No bounded-stream or DAC-beamforming commands from ZCU216 apply.
+
+Register semantics: [AMD PG144 GPIO DATA](https://docs.amd.com/api/khub/documents/0c0ItRCmnYkoHpcYUCPkEA/content).

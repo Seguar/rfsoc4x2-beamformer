@@ -28,7 +28,10 @@ credentials, raw board archives, private measurements or calibration files.
   RF settings. Do not restart it blindly at experiment end. Record its end state.
 - DAC output starts low (1200 integer peak); measure ADC headroom and spectrum
   before increasing. No inferred dBm from DAC codes. Shut down both DAC GPIOs
-  in finally and verify readback. Do not report RF-off from a TCP send alone.
+  in finally and record disable commands and direction registers. PYNQ InOut
+  slice reads change direction; Output reads use a software shadow. AXI GPIO
+  output DATA register reads return zero, so neither proves physical RF-off.
+  Record `dac_off_commanded` separately from independent RF-off observation.
 - ZAPDQ-4 is a 90-degree hybrid; calibrate DAC paths individually before both.
   The splitter/combiner band is 2.0–4.2 GHz. 3 GHz is the initial candidate;
   verify actual RF response and board front-end support before claiming it.

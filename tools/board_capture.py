@@ -14,7 +14,11 @@ import numpy as np
 
 
 def shutdown(overlay, manifest):
-    """Try both DAC disables even when one fails; retain every raw readback."""
+    """Disable both DACs; register observations cannot prove physical RF-off.
+
+    PG144 specifies zero reads for output DATA bits. PYNQ slice read() either
+    changes direction (InOut) or reads a software shadow (Output). Avoid both.
+    """
     errors, readbacks = [], {}
     for name in ('dac0_enable', 'dac1_enable'):
         try:
@@ -23,13 +27,23 @@ def shutdown(overlay, manifest):
             errors.append(f'{name} off: {type(exc).__name__}: {exc}')
     for name in ('dac0_enable', 'dac1_enable'):
         try:
-            readbacks[name] = int(getattr(overlay, name).read())
+            pin = getattr(overlay, name)
+            channel = pin._parent
+            gpio = channel._parent
+            data = int(gpio.read(channel._channel * 8))
+            tri = int(gpio.read(channel._channel * 8 + 4))
+            shadow = (int(channel._val) >> pin._start) & pin._mask
+            readbacks[name] = {'data_register': data, 'tri_register': tri,
+                               'command_shadow': shadow}
+            if (tri >> pin._start) & pin._mask or shadow:
+                errors.append(name+' disable command/direction inconsistent')
         except Exception as exc:
             errors.append(f'{name} read: {type(exc).__name__}: {exc}')
     manifest['dac_readbacks'] = readbacks
     manifest['shutdown_errors'] = errors
-    manifest['dac_off_verified'] = (not errors and len(readbacks) == 2 and
-                                     all(value == 0 for value in readbacks.values()))
+    manifest['dac_off_commanded'] = not errors and len(readbacks) == 2
+    manifest['dac_off_verified'] = False
+    manifest['dac_off_verification_note'] = 'AXI GPIO output DATA reads return zero; independent RF observation required'
 
 
 def require_lock(overlay, manifest, stage):
@@ -121,10 +135,12 @@ def main():
             print(f'Could not persist manifest: {exc}; status: {manifest}', file=sys.stderr)
             if not failed:
                 raise
-        if not manifest['dac_off_verified']:
-            print('DAC shutdown UNVERIFIED: '+str(manifest.get('shutdown_errors')), file=sys.stderr)
+        if not manifest.get('dac_off_commanded', False):
+            print('DAC disable command FAILED/UNVERIFIED: '+str(manifest.get('shutdown_errors')), file=sys.stderr)
             if not failed:
-                raise RuntimeError('DAC off readback was not verified; inspect hardware state')
+                raise RuntimeError('DAC disable command failed; inspect hardware state')
+        else:
+            print('DAC disable commanded; physical RF-off requires independent observation.', file=sys.stderr)
     print(output)
 
 

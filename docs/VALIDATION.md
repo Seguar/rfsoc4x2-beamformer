@@ -53,3 +53,25 @@ three new mocked clock/shutdown failure checks; these do not validate driver API
 establish MXG identity and RF-off, verify installed RFdc units and AXI GPIO slice
 read API, then perform the bounded DAC0 experiment. Live lock, rates, headroom,
 hybrid calibration, EVM/BER and interference rejection remain unproven.
+
+## Authenticated preflight and ownership release
+
+**Test / How:** authenticated read-only laptop checks of live board identity,
+boot hashes, service/process state and installed GPIO/RFdc source.
+
+**Results:** RFSoC4x2/aarch64 confirmed; live boot wrapper/bit/HWH hashes match.
+Eight host tests pass. Reference/helper staged without execution. Five notebook
+kernels were present; no service, overlay, clock or DAC changes were made.
+The original boot service remained running/starting. Credential files were
+deleted and absence confirmed. No ADC capture was obtained.
+
+**Conclusions:** the previous raw GPIO readback proposal would also overstate
+physical verification: AMD PG144 says output DATA bits read zero. The helper
+now avoids PYNQ direction-changing/cached reads and records register snapshots,
+command shadows and `dac_off_commanded`, while keeping `dac_off_verified=false`.
+Eight host tests pass with these semantics; physical DAC state remains unproven.
+
+**Ways to resolve:** user confirmed the MXG RF cable is disconnected and authorized
+stopping all five notebook kernels for the demo. Those two blockers are resolved
+for the next exclusive session. Verify installed rate units, stop the authorized
+kernels/service, then run bounded DAC0 capture before calibration or both-DAC tests.
