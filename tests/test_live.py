@@ -16,6 +16,16 @@ class ByteSocket:
 
 
 class LiveTests(unittest.TestCase):
+    def test_adc0_direct_mode_ignores_unconnected_channels(self):
+        x, _ = array_fixture(0)
+        rng = np.random.default_rng(77)
+        x[:,1:] = 1000*(rng.standard_normal(x[:,1:].shape)+1j*rng.standard_normal(x[:,1:].shape))
+        result, _ = process(x, adc0_only=True)
+        self.assertEqual(result['receive_mode'], 'ADC0 only')
+        self.assertLess(result['metrics']['adc0']['evm_percent'], 3)
+        self.assertAlmostEqual(result['metrics']['adc0']['evm_percent'],
+                               result['metrics']['mvdr']['evm_percent'], places=8)
+
     def test_frozen_broadside_and_moving_transmitter(self):
         fixed = calibrate_fixed(array_fixture(0)[0])
         saved = fixed.copy()

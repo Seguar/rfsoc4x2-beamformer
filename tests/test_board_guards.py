@@ -1,13 +1,15 @@
 import types
 import unittest
-from tools.board_capture import shutdown, require_lock
+from tools.board_capture import shutdown, require_lock, load_selected_dacs, settled_capture
+from unittest.mock import patch
+import numpy as np
 
 
 class Pin:
     def __init__(self, fail=False):
         self.fail, self.disabled = fail, False
         self._start, self._mask = 0, 1
-        gpio = types.SimpleNamespace(read=lambda offset: 0)
+        gpio = types.SimpleNamespace(read=lambda offset: 0, description={'parameters': {'C_ALL_OUTPUTS': 0}})
         self._parent = types.SimpleNamespace(_parent=gpio, _channel=0, _val=1)
 
     def off(self):
@@ -46,3 +48,33 @@ class BoardGuards(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'unlocked'):
             require_lock(o, status, 'after_sync')
         self.assertEqual(status['clock_lock_readbacks']['after_sync'], 0)
+
+    def test_fixed_output_tri_ignored_without_claiming_physical_off(self):
+        o = types.SimpleNamespace(dac0_enable=Pin(), dac1_enable=Pin())
+        for pin in (o.dac0_enable, o.dac1_enable):
+            pin._parent._parent.description['parameters']['C_ALL_OUTPUTS'] = 1
+            pin._parent._parent.read = lambda offset: 0xffffffff if offset == 4 else 0
+        status = {}
+        shutdown(o, status)
+        self.assertTrue(status['dac_off_commanded'])
+        self.assertFalse(status['dac_off_verified'])
+
+    def test_capture_trigger_cannot_play_unselected_waveform(self):
+        o = types.SimpleNamespace(dac0_player=np.zeros(8, dtype=np.int16),
+                                  dac1_player=np.ones(8, dtype=np.int16))
+        o.dac_data_mem_write = lambda words, mem: mem.__setitem__(slice(None), words)
+        words = np.arange(8, dtype=np.int16)
+        load_selected_dacs(o, words, '0')
+        np.testing.assert_array_equal(o.dac0_player, words)
+        np.testing.assert_array_equal(o.dac1_player, 0)
+
+    def test_ram_copy_follows_settle(self):
+        events = []
+        class Memory:
+            def __getitem__(self, index):
+                events.append('copy')
+                return np.arange(16, dtype=np.int16)
+        o = types.SimpleNamespace(trigger_capture=lambda: events.append('trigger'), adc_capture=Memory())
+        with patch('tools.board_capture.time.sleep', side_effect=lambda delay: events.append('settle')):
+            settled_capture(o)
+        self.assertEqual(events, ['trigger', 'settle', 'copy'])

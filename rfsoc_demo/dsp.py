@@ -23,20 +23,20 @@ def reference(seed=42):
 
 
 def dac_words(wave, peak=1200):
-    """DAC is 1 Gcomplex/s (10 GS/s / 10), eight times ADC rate.
+    """Mode3 DAC is 500 Mcomplex/s (10 GS/s / 10 / IMR2), four times ADC.
 
-    Periodic Fourier interpolation preserves a seamless 32768-complex-sample
-    RAM loop. TX positive Q follows vsa_rfsoc Functions/sigPrepare.m.
+    Periodic Fourier interpolation gives 16384 complex samples, repeated twice
+    to fill the 32768-complex-sample RAM. TX positive Q follows sigPrepare.m.
     Actual RF sideband/conjugation must be established from live correlation.
     """
     from scipy.signal import resample
     if not 0 < peak <= 16383:
         raise ValueError("DAC peak must be in 1..16383")
-    tx = resample(wave, len(wave)*8)
+    tx = resample(wave, len(wave)*4)
     tx *= peak/max(np.max(np.abs(tx.real)), np.max(np.abs(tx.imag)))
     out = np.empty(tx.size*2, dtype='<i2')
     out[0::2], out[1::2] = np.rint(tx.real), np.rint(tx.imag)
-    return out
+    return np.tile(out, 2)
 
 
 def acquire(x, wave, fs=FS, cfo_limit=150e3):
@@ -129,7 +129,10 @@ def demod(y, expected):
             "payload_phase_deg": np.rad2deg(phase).tolist()}, equalized
 
 
-def process(x, fs=FS, fixed_weights=None):
+def process(x, fs=FS, fixed_weights=None, adc0_only=False):
+    if adc0_only:
+        x = x.copy()
+        x[:, 1:] = 0
     wave, symbols = reference()
     aligned, tracking = acquire(x, wave, fs)
     count = TRAIN*(NFFT+CP)
@@ -144,13 +147,16 @@ def process(x, fs=FS, fixed_weights=None):
                     channel_phase_deg=np.rad2deg(np.angle(a/a[0])).tolist(),
                     covariance_condition=condition,
                     weight_norm=float(np.linalg.norm(w)))
-    return {"tracking": tracking, "metrics": metrics,
+    return {"tracking": tracking, "metrics": metrics, 'receive_mode': 'ADC0 only' if adc0_only else 'four-channel',
             "input_peak_components": np.maximum(abs(x.real).max(axis=0), abs(x.imag).max(axis=0)).tolist(),
             "input_rail_fraction": np.mean((abs(x.real) >= 32767) | (abs(x.imag) >= 32767), axis=0).tolist()}, constellations
 
 
-def calibrate_fixed(x, fs=FS):
+def calibrate_fixed(x, fs=FS, adc0_only=False):
     """One wanted-only broadside capture fixes baseline weights until recalibrated."""
+    if adc0_only:
+        x = x.copy()
+        x[:, 1:] = 0
     wave, _ = reference()
     aligned, _ = acquire(x, wave, fs)
     count = TRAIN*(NFFT+CP)

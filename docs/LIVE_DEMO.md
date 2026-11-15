@@ -32,6 +32,10 @@ For actual ADC samples from the new versioned stream:
 python -m rfsoc_demo.live --host BOARD_ADDRESS --port 4010
 ```
 
+For the current direct DAC_A/20dB/ADC_A diagnostic add `--adc0-only`; all array
+channels must be connected before claiming beamforming improvement. Regenerate
+reference NPZ files after the mode3 IMR fix (500Mcomplex/s DAC input).
+
 The default log is `out/live.jsonl`. Live RF samples are labelled LIVE ADC, with
 no inferred angle. The receive worker drains the socket and keeps at most two
 complete frames, dropping old display frames. The dashboard processes the newest

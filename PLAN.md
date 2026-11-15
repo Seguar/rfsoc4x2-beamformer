@@ -42,3 +42,11 @@ unmeasured, CW versus modulated jammer undecided. Current passives specified onl
 to4.2GHz; keep3GHz conducted test separate from future5.2GHz OTA validation.
 Authorized exclusive DAC0 capture delegated; hardware owner holds only the new
 private capture evidence/staged experiment, parent owns all public code.
+
+Latest capture checkpoint: DAC0/DAC1 each10frames obtained, no rail hits, but
+poor EVM prevents a working demodulation/combining claim. Hardware owner released
+claim; Jupyter0kernels, bootpy no process/failed state, DAC disables commanded.
+User changed wiring to DAC_A→BW-S20W2+20dB→ADC_A. Source inspection found extra
+mode3 IMR2, capture-trigger OR into both DAC players, and missing da0 settle wait.
+Parent integrated500Mcomplex/s reference, inactive-RAM zeroing, settle wait and
+ADC0-only analysis/live mode.15host tests pass; corrected direct capture pending.

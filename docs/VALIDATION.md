@@ -1,5 +1,9 @@
 # Validation — 2026-11-15
 
+Latest: conducted captures obtained with poor EVM; subsequent IMR/reference,
+unused-DAC and capture-settle fixes pass fifteen host tests but await a new
+physical capture. Earlier sections preserve the sequence of validation limits.
+
 **Test:** waveform generation, four-channel tracking/demodulation, adaptive
 combining, collinear-path negative control and legacy sample transport.
 
@@ -104,3 +108,37 @@ MXG waveform choice remain open.
 for 5.2 GHz and measure antenna spacing, then follow LIVE_DEMO.md for stationary,
 moving and source-separated jammer tests. Record actual frame cadence, outages,
 clipping and EVM distributions rather than promising constant EVM.
+
+## First physical captures and receiver correction
+
+**Test:** conducted DAC0 and DAC1 paths separately, ten captures per path. This
+used the common combiner/splitter wiring before the user changed to a direct cable.
+
+**How:** authenticated exclusive board run; matched live boot hashes and clock
+lock confirmed. Runtime ADC5GHz/40=125Mcomplex/s, DAC10GHz/interpolation10 with
+datapath3/IMR2=500Mcomplex/s input. The first1Gcomplex/s reference was wrong.
+A corrected private reference produced ten distinct acquired frames per DAC.
+
+**Results:** no digital rail hits; maximum I/Q component peaks573 codes(DAC0),
+626(DAC1). Original receiver MVDR payload EVM remained87.9–148.1%(DAC0) and
+80.4–1076.2%(DAC1), with substantial bit errors. These are failed demodulation
+results, not a working RF demonstration. No combined-DAC calibration/run occurred.
+Jupyter ended running with zero kernels; bootpy had no process and systemd
+failed/failed state. Both DAC disables were commanded; physical RF-off unverified.
+
+**Conclusions:** IMR2 must be included in waveform generation. Further source
+inspection found the matched HWH ORs ADC trigger into both DAC enables. The old
+helper loaded both DAC memories; therefore low GPIO enable did not ensure a
+single-waveform capture. An offline diagnostic of DAC0 frame0 finds reference
+copies at914 and69samples; fitting two copies reduces normalized residual from
+0.708 to0.195. This fit uses the full known waveform, including payload, ONLY for
+diagnosis; it is not a valid demodulation/EVM claim. In addition, wrapper da0
+reads RAM without a completion wait, so capture tearing must be excluded.
+
+**Ways to resolve:** regenerated reference uses4:1 resampling to16384 complex
+samples repeated twice in DAC RAM. Helper verifies IMR2 rates, zeros the unused
+DAC memory and waits3ms after capture trigger. C_ALL_OUTPUTS is read from actual
+IP parameters, handling unimplemented TRI registers. Fifteen host tests pass,
+including source-selection, capture-order and ADC0-only checks. User now connected
+DAC_A → BW-S20W2+20dB → ADC_A; repeat a bounded DAC0-only test and analyze with
+--adc0-only. Corrected hardware EVM, streaming and OTA behavior remain unproven.

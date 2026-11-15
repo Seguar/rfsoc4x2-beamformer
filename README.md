@@ -4,8 +4,9 @@ Pilot-locked OFDM demodulation, frequency/phase tracking and four-channel
 adaptive combining for the RFSoC4x2. Uses the existing `doa_rfsoc/main` matched
 boot overlay and `vsa_rfsoc` sample conventions; no FPGA build is required.
 
-**Status: software prototype verified; hardware validation pending.** The
-simulated distinct-path jammer is rejected. No live RF performance is claimed.
+**Status: software tests pass; board captures obtained, payload demodulation still
+under repair.** Initial hardware EVM is poor. The simulated distinct-path jammer
+is rejected; no working physical beamforming or interference rejection is claimed.
 See [validation](docs/VALIDATION.md) and [agent instructions](AGENTS.md).
 
 The [real-time demo](docs/LIVE_DEMO.md) adds live fixed-versus-adaptive EVM,
@@ -78,9 +79,11 @@ RF-off must be checked separately through board access.
 
 ## Signal and metrics
 
-- ADC 125 Mcomplex/s; DAC 1 Gcomplex/s, based on recovered HWH; runtime verification
-  required. Fourier interpolation supplies the 8:1 ratio.
-- A 4096-sample ADC period fills 32768 complex DAC samples / 65536 int16 RAM words.
+- ADC 125 Mcomplex/s; mode3 DAC input 500 Mcomplex/s: 10 GS/s / interpolation10 /
+  additional IMR2. Runtime checks include that extra stage. The old 1 Gcomplex/s
+  reference was incorrect; regenerate it. Fourier interpolation uses a 4:1 ratio.
+- A 4096-sample ADC period becomes 16384 complex DAC samples, repeated twice to
+  fill 32768 complex RAM samples / 65536 int16 words.
   OFDM uses 256-point FFT, 64-sample cyclic prefix, 48 occupied bins, four training
   symbols and eight QPSK payload symbols, with four phase pilots per payload symbol.
 - Pilot-only delay/CFO acquisition searches ±150 kHz and both conjugations.

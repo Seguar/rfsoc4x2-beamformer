@@ -36,9 +36,10 @@ def shutdown(overlay, manifest):
             data = int(gpio.read(channel._channel * 8))
             tri = int(gpio.read(channel._channel * 8 + 4))
             shadow = (int(channel._val) >> pin._start) & pin._mask
+            all_outputs = int(gpio.description.get('parameters', {}).get('C_ALL_OUTPUTS', 0))
             readbacks[name] = {'data_register': data, 'tri_register': tri,
-                               'command_shadow': shadow}
-            if (tri >> pin._start) & pin._mask or shadow:
+                               'command_shadow': shadow, 'all_outputs': all_outputs}
+            if (not all_outputs and (tri >> pin._start) & pin._mask) or shadow:
                 errors.append(name+' disable command/direction inconsistent')
         except Exception as exc:
             errors.append(f'{name} read: {type(exc).__name__}: {exc}')
@@ -54,6 +55,23 @@ def require_lock(overlay, manifest, stage):
     manifest.setdefault('clock_lock_readbacks', {})[stage] = value
     if value != 1:
         raise RuntimeError(f'Clock tree unlocked at {stage}: {value}')
+
+
+def load_selected_dacs(overlay, words, selected):
+    """Capture trigger also enables both DAC players in the matched HWH.
+
+    Zero the unselected player's entire RAM, not just its software enable.
+    """
+    zero = np.zeros_like(words)
+    overlay.dac_data_mem_write(words if selected in ('0', 'both') else zero, overlay.dac0_player)
+    overlay.dac_data_mem_write(words if selected in ('1', 'both') else zero, overlay.dac1_player)
+
+
+def settled_capture(overlay):
+    """The wrapper's da=0 capture has no completion wait before reading RAM."""
+    overlay.trigger_capture()
+    time.sleep(.003)  # > 131 us for returned frame; verify full-RAM duration on board.
+    return np.array(overlay.adc_capture[:131072], dtype='<i2', copy=True)
 
 
 def main():
@@ -79,6 +97,8 @@ def main():
         raise RuntimeError('Wrong board identity')
     with np.load(a.reference, allow_pickle=False) as data:
         words = data['dac_words']
+        if 'dac_complex_fs' not in data or float(data['dac_complex_fs']) != 500e6:
+            raise ValueError('Regenerate reference with mode3 IMR2, 500 Mcomplex/s input metadata')
     if words.dtype != np.dtype('int16') or words.shape != (65536,) or np.max(np.abs(words.astype(float))) > 1200:
         raise ValueError('Initial live helper requires 65536 int16 DAC words with peak <= 1200')
     manifest = {'board': board.decode(), 'rf_mhz': a.rf_mhz, 'dac': a.dac,
@@ -97,16 +117,21 @@ def main():
     try:
         overlay = doaMtsOverlay('/boot/doa_mts.bit')
         overlay.dacs_off()
+        load_selected_dacs(overlay, np.zeros_like(words), '0')
         require_lock(overlay, manifest, 'initialization')
         manifest['sampling_freq_unit'] = a.sampling_freq_unit
         manifest['adc_rates_raw'] = [overlay.adc[n].BlockStatus['SamplingFreq'] for n in range(4)]
         manifest['adc_decimation'] = [overlay.adc[n].DecimationFactor for n in range(4)]
         manifest['dac_rates_raw'] = [overlay.dac[n].BlockStatus['SamplingFreq'] for n in (0, 2)]
         manifest['dac_interpolation'] = [overlay.dac[n].InterpolationFactor for n in (0, 2)]
+        manifest['dac_datapath_mode'] = [overlay.dac[n].DataPathMode for n in (0, 2)]
+        manifest['dac_imr_pass_mode'] = [overlay.dac[n].IMRPassMode for n in (0, 2)]
         factor = {'GHz': 1e9, 'MHz': 1e6, 'Hz': 1}[a.sampling_freq_unit]
         adc_fs = np.array(manifest['adc_rates_raw'])*factor/np.array(manifest['adc_decimation'])
         dac_fs = np.array(manifest['dac_rates_raw'])*factor/np.array(manifest['dac_interpolation'])
-        if not np.allclose(adc_fs, 125e6) or not np.allclose(dac_fs, 1e9):
+        manifest['dac_effective_complex_fs_hz'] = (dac_fs/2).tolist()
+        if (not np.allclose(adc_fs, 125e6) or not np.allclose(dac_fs/2, 500e6)
+                or manifest['dac_datapath_mode'] != [3, 3]):
             raise RuntimeError('Runtime rates differ from generated reference')
         overlay.centre_freq = a.rf_mhz
         overlay.nyquist_zone = 2
@@ -117,8 +142,9 @@ def main():
         overlay.configure_adcs()
         overlay.sync_tiles()
         require_lock(overlay, manifest, 'after_sync')
-        overlay.dac_data_mem_write(words, overlay.dac0_player)
-        overlay.dac_data_mem_write(words, overlay.dac1_player)
+        load_selected_dacs(overlay, words, a.dac)
+        manifest['inactive_dac_ram_zeroed'] = True
+        manifest['capture_settle_seconds'] = .003
         overlay.da = 0
         overlay.dacPower = [int(a.dac in ('0','both')), 0, int(a.dac in ('1','both')), 0]
         if a.stream_bind:
@@ -138,7 +164,7 @@ def main():
         overlay.dacs_control()
         captures = []
         for sequence in (range(a.frames) if a.frames else itertools.count()):
-            raw_words = np.asarray(overlay.get_custom_data(131072), dtype='<i2')
+            raw_words = settled_capture(overlay)
             captured_ns = time.monotonic_ns()
             raw = raw_words.reshape(-1, 8).astype(float)
             if client is not None:

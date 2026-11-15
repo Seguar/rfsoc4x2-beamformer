@@ -1,5 +1,9 @@
 # Bounded live loopback procedure
 
+Current direct test: DAC_A → BW-S20W2+ (20dB) → ADC_A, DAC_B unused. Generate
+the corrected mode3/IMR2 reference and analyze with `--adc0-only`; this is a
+single-channel demodulation test, not array evidence.
+
 One operator owns the board and instruments. Keep a local run log with UTC time,
 RF cable diagram, attenuators, RF centre, generator state, file hashes, actual
 runtime rates and service/process state before and after. Never publish endpoints
@@ -38,12 +42,18 @@ and still rejects sample rates inconsistent with the generated waveform.
 
 7. The helper reinitializes FPGA/clocks/MTS using the existing wrapper. It checks
    runtime ADC/DAC rates against reference generation, loads low-amplitude words,
-   requires clock lock before and after MTS, accepts at most 1200 peak DAC words,
+   requires clock lock before and after MTS, verifies the additional IMR2 stage
+   (500Mcomplex/s DAC input), accepts at most 1200 peak DAC words,
    takes bounded captures and independently attempts both DAC disables in
    `finally`. It saves shutdown errors, direction registers and command shadows
    even after a failure. It never calls PYNQ slice read(), which can change pin
    direction. AXI GPIO output DATA reads return zero and cannot prove RF-off;
    the manifest distinguishes `dac_off_commanded` from physical verification.
+   All-output cores may have no implemented TRI register; C_ALL_OUTPUTS controls
+   that check. The matched design ORs capture trigger into both DAC enables:
+   unused DAC RAM is zeroed, and the helper waits3ms after trigger before RAM copy.
+   The old helper loaded both buffers and read immediately; its poor-EVM captures
+   are not validation of the corrected method.
    If construction
    fails before returning an overlay, GPIO state is unknown; inspect it manually.
    If rate fields differ from the installed driver API, stop and inspect rather

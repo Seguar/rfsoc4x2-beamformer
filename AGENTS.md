@@ -37,7 +37,13 @@ credentials, raw board archives, private measurements or calibration files.
   The splitter/combiner band is 2.0–4.2 GHz. 3 GHz is the initial candidate;
   verify actual RF response and board front-end support before claiming it.
 - Verify ADC/DAC rates and interpolation/decimation at runtime. Generated
-  reference assumes 125 Mcomplex/s ADC and 1 Gcomplex/s DAC, 8:1 ratio.
+  reference assumes 125 Mcomplex/s ADC and 500 Mcomplex/s DAC input, 4:1 ratio:
+  mode3 adds IMR2 beyond interpolation10. A 16384-complex period repeats twice
+  in the32768-complex DAC RAM. Regenerate old1G reference files.
+- Matched HWH ORs ADC capture trigger into BOTH DAC player enables. Zero the
+  entire unselected DAC memory; a low software enable alone cannot prevent its
+  waveform during capture. Wait after the trigger before copying ADC RAM;
+  wrapper da0 has no completion wait. Do not call get_custom_data blindly.
 - Legacy TCP streams continuously and ignores controls while streaming.
   Receive exact byte counts. No ZCU216 `stream N` or `dacbf` commands.
 - MXG Ethernet is control, not evidence of an RF path. Query its identity/state
@@ -70,6 +76,13 @@ half-wave four-element ULA. Do not relabel simulation angles as live estimates.
 CW versus modulated MXG waveform remains open. Constant EVM under rapid motion
 and physical jammer rejection require measured validation. Stream port4010 uses
 its own framed protocol, distinct from legacy4000; avoid unlimited RAM buffering.
+
+Current user cabling: DAC_A → BW-S20W2+ 20dB attenuator → ADC_A, DAC_B unused.
+Use --adc0-only in host analyze/live until all ADC channels have wanted RF again;
+this direct diagnostic cannot establish beamforming gain. The earlier combined
+captures had unwanted delayed reference copies and poor EVM; keep them labelled
+failed demodulation evidence. All-output GPIO cores lack a meaningful TRI register;
+read C_ALL_OUTPUTS from IP parameters rather than hardcoding it.
 
 Each milestone updates docs/VALIDATION.md and PLAN.md with Test / How / Results /
 Conclusions / Ways to resolve. Report what is not proven. Keep access details in

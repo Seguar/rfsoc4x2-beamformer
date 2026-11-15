@@ -77,6 +77,7 @@ def main():
     p.add_argument('--simulate', action='store_true')
     p.add_argument('--host')
     p.add_argument('--port', type=int, default=4010)
+    p.add_argument('--adc0-only', action='store_true', help='Direct DAC_A to ADC_A test; disables other receive channels in DSP')
     p.add_argument('--log', default='out/live.jsonl')
     p.add_argument('--headless', action='store_true', help='Finite processing smoke test without opening a window')
     p.add_argument('--snapshot', help='Render dashboard to PNG with Agg, without opening a window')
@@ -93,7 +94,7 @@ def main():
     state = {'fixed': None, 'adaptive': False, 'jammer': False, 'index': 0,
              'calibrate': False, 'received': time.monotonic(), 'calibrated': None}
     if a.simulate:
-        state['fixed'] = calibrate_fixed(array_fixture(0)[0])
+        state['fixed'] = calibrate_fixed(array_fixture(0)[0], adc0_only=a.adc0_only)
         state['calibrated'] = 'simulated broadside'
     start = time.monotonic()
     history = deque(maxlen=300)
@@ -112,10 +113,10 @@ def main():
         state['received'] = received
         try:
             if state['calibrate']:
-                state['fixed'] = calibrate_fixed(x, fs)
+                state['fixed'] = calibrate_fixed(x, fs, a.adc0_only)
                 state['calibrated'] = f'capture {seq}'
                 state['calibrate'] = False
-            report, constellation = process(x, fs, state['fixed'])
+            report, constellation = process(x, fs, state['fixed'], a.adc0_only)
             report.update(sequence=seq, elapsed_s=time.monotonic()-start,
                           host_age_ms=1000*(time.monotonic()-received), status='locked',
                           source='SIMULATION' if a.simulate else 'LIVE ADC',
@@ -156,6 +157,8 @@ def main():
         fig, axes = plt.subplots(2, 2, figsize=(12, 7))
         fig.subplots_adjust(bottom=.18, top=.86, hspace=.45, wspace=.3)
         source = 'SIMULATION — half-wave array' if a.simulate else 'LIVE ADC — geometry not inferred'
+        if a.adc0_only:
+            source += ' | ADC_A ONLY: no beamforming gain'
         title = fig.suptitle(source+' | waiting for pilot lock', fontsize=12)
         evm_ax, iq_ax, phase_ax, cfo_ax = axes.ravel()
         lines = {name: evm_ax.plot([], [], label=label)[0] for name, label in

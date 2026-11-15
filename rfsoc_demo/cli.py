@@ -5,7 +5,7 @@ import numpy as np
 from .dsp import FS, reference, dac_words, process, simulate
 
 
-def save_report(frames, out, source, fs):
+def save_report(frames, out, source, fs, adc0_only=False):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -15,7 +15,7 @@ def save_report(frames, out, source, fs):
     last = None
     for index, frame in enumerate(frames):
         try:
-            report, last = process(frame, fs)
+            report, last = process(frame, fs, adc0_only=adc0_only)
             report['frame'] = index
             report['status'] = 'locked'
         except ValueError as exc:
@@ -62,6 +62,7 @@ def main():
     s = sub.add_parser('analyze')
     s.add_argument('capture')
     s.add_argument('--fs', type=float, default=FS)
+    s.add_argument('--adc0-only', action='store_true', help='Direct DAC_A to ADC_A diagnostic; no array gain claim')
     s.add_argument('--out', default='out/analysis')
     s = sub.add_parser('capture-legacy')
     s.add_argument('--host', required=True)
@@ -78,14 +79,15 @@ def main():
         path = Path(a.out)
         path.parent.mkdir(parents=True, exist_ok=True)
         wave, symbols = reference()
-        np.savez(path, wave=wave, symbols=symbols, dac_words=dac_words(wave, a.peak), fs=FS)
+        np.savez(path, wave=wave, symbols=symbols, dac_words=dac_words(wave, a.peak), fs=FS,
+                 dac_complex_fs=500e6, dac_datapath_mode=3, dac_imr_factor=2)
         print(path)
     elif a.command == 'analyze':
         with np.load(a.capture, allow_pickle=False) as data:
             x = data['samples']
         if x.ndim == 2:
             x = x[None]
-        save_report(x, a.out, 'HARDWARE CAPTURE (provenance supplied separately)', a.fs)
+        save_report(x, a.out, 'HARDWARE CAPTURE (provenance supplied separately)', a.fs, a.adc0_only)
     else:
         from .transport import capture
         path = Path(a.out)

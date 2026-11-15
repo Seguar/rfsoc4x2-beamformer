@@ -42,7 +42,8 @@ class DemoTests(unittest.TestCase):
         words = dac_words(wave)
         self.assertEqual(words.shape, (65536,))
         tx = words[::2].astype(float)+1j*words[1::2]
-        down = resample(tx, 4096)
+        np.testing.assert_array_equal(words[:32768], words[32768:])
+        down = resample(tx[:16384], 4096)
         gain = np.vdot(wave, down)/np.vdot(wave,wave)
         self.assertLess(np.linalg.norm(down/gain-wave)/np.linalg.norm(wave), .002)
 
