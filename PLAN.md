@@ -66,3 +66,10 @@ workaround adopted. Original500/500restored, DACRAMzero, bootpystopped/Jupyterac
 Parentverified60filehashesandreprocessed30boundedframes. Newone-command direct
 launcherreadyforfinalheadlesshardwarestartup/shutdownvalidation. Array/OTA deferred
 untiluserconnectsfourinputsandresolves5.2GHzRFchain; constantEVMnotpromised.
+
+Launcher milestone complete: a fresh 100-frame headless run passed startup,
+streaming, disconnect, DAC clears/off commands, retrieval and process cleanup.
+One-line output-path fix applied publicly. Median/max EVM 3.89/9.73%, zero BER,
+all locks. No hardware agent retains ownership. The direct demonstration is ready
+to launch; graphical interactions remain untested. Physical array/MXG tests stay
+open until the user's later antenna setup; raw sample loss remains documented.

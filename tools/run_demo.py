@@ -142,7 +142,7 @@ def main():
                     server.terminate()
         thread.join(timeout=3)
         for suffix in ('json','npz'):
-            subprocess.run([pscp,*common,user+'@'+host+':'+stage+'/last.'+suffix,str(out/'last.'+suffix)],
+            subprocess.run([pscp,*common,user+'@'+host+':'+stage+'/last.'+suffix,str(out/('last.'+suffix))],
                            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=30)
         print(f'Private run data: {out}. Boot service remains stopped; inspect last.json for shutdown status.')
 

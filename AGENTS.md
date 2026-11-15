@@ -112,6 +112,12 @@ ignored local/ or the user's private settings directory. It verifies board and
 boot hashes, stages a new reference/helper and leaves bootpy stopped. Headless
 validation must check the whole launch, finite stream and shutdown manifest.
 
+The launcher lifecycle now passed a fresh 100-frame headless run after the
+one-line output-path join fix: zero BER, all pilot locks, successful retrieval,
+RAM clears and disable commands. GUI clicks are not tested. No hardware session
+owns the board after validation; keep final states in the run evidence. Further
+antenna/MXG tests require the user's later cabling and RF-chain decisions.
+
 Each milestone updates docs/VALIDATION.md and PLAN.md with Test / How / Results /
 Conclusions / Ways to resolve. Report what is not proven. Keep access details in
 ignored local/ files; use secure secret cards for credentials. Do not introduce

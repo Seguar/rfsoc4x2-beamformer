@@ -38,6 +38,11 @@ A finite check without opening a desktop window:
 python tools/run_demo.py --config local/board.json --headless --frames 100
 ```
 
+The patched launcher completed this full headless lifecycle on the laptop:
+100 acquired frames, zero BER, median/max EVM 3.89/9.73%, successful raw/manifest
+retrieval and DAC shutdown commands. The graphical display has been rendered
+headlessly; interactive clicking and actual antenna behavior are not validated.
+
 ```sh
 python -m rfsoc_demo.live --simulate
 ```

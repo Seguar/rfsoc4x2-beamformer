@@ -231,3 +231,30 @@ clock/distribution redesign before claiming lossless capture. Later array tests
 need four RF inputs, measured spacing, a suitable5.2GHz chain and a separate jammer
 direction. Both DAC RAMs ended zero, disable commands recorded, boot service
 stopped, Jupyter running, credentials retained privately; physicalRFoff unverified.
+
+## One-command launcher lifecycle
+
+**Test:** complete direct-cable startup, 100-frame headless live session, disconnect,
+DAC shutdown, artifact retrieval and process cleanup on the Windows laptop.
+
+**How:** stock launcher at 1c8689e streamed correctly but failed retrieval because
+of a Path/string precedence error. A private copy with the one-line parenthesized
+path fix completed a fresh run, exit 0. The identical fix is now applied publicly.
+No graphical interaction was performed; the dashboard has been rendered with Agg.
+
+**Results:** 100 unique processed sequences, no pilot-lock failures, zero payload
+BER and no digital rail hits. EVM min/median/p95/max: 3.30/3.89/8.27/9.73%.
+Capture cadence 8.63 frames/s; median host post-receipt age 70.5 ms. Retrieval
+includes the final raw capture and manifest. Both DAC RAM clears and independent
+disable commands completed with no shutdown errors. No capture server remains;
+Jupyter runs with zero kernels; bootpy is stopped with no process; boot hashes
+are unchanged. Private configuration/password remain outside the repository.
+
+**Conclusions:** the patched finite headless lifecycle passes. Direct live EVM is
+demonstrated within the measured limits; GUI interaction, constant EVM, physical
+RF-off, capture-loss repair, antenna tracking and MXG rejection are not established.
+
+**Ways to resolve:** run the launcher from the updated laptop checkout to view
+the live ADC_A display. Preserve the 20 dB direct cable and use the private config.
+Close the display to end its capture session. Before array work, resolve the
+5.2 GHz RF chain, connect all four receive inputs and measure antenna spacing.
