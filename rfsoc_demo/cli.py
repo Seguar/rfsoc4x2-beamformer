@@ -67,7 +67,7 @@ def main():
     s = sub.add_parser('analyze')
     s.add_argument('capture')
     s.add_argument('--fs', type=float, help='Override capture sample-rate metadata')
-    s.add_argument('--adc0-only', action='store_true', help='Direct DAC_A to ADC_A diagnostic; no array gain claim')
+    s.add_argument('--adc0-only', action='store_true', help='Direct-loopback capture stream 0; no array gain claim')
     s.add_argument('--waveform-version', type=int, choices=[1,2], help='Override capture metadata; untagged old captures use version1')
     s.add_argument('--out', default='out/analysis')
     s = sub.add_parser('capture-legacy')

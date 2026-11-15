@@ -77,3 +77,9 @@ open until the user's later antenna setup; raw sample loss remains documented.
 User requested EVM in dB as well as percent. Live/static plots now use a dB axis
 with a percent axis, current EVM shows both, and metrics include evm_db. Host tests
 and headless renders pass; no new hardware run is required for the unit display.
+
+User reported cable changes still showing good EVM, then identified DAC_B.
+Confirmed naming error: logical dac0 actually feeds printed DAC_B. TX labels and
+launcher selection now use printed letters; RX labels use stream numbers until
+verified. Added RX RMS/freshness and current-metric clearing for stale/unlocked
+states.21 host tests pass. The user's live GUI requires a controlled restart.

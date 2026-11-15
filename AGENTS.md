@@ -118,6 +118,14 @@ RAM clears and disable commands. GUI clicks are not tested. No hardware session
 owns the board after validation; keep final states in the run evidence. Further
 antenna/MXG tests require the user's later cabling and RF-chain decisions.
 
+Connector correction: logical dac0/RFdc tile0 is printed DAC_B (tile228), logical
+dac1/RFdc tile2 is DAC_A (tile230). Earlier direct-test DAC_A text was a labelling
+error. Default launcher output is DAC_B; --dac-port A selects the other output.
+Use captured RX stream numbers until physical receive letters are verified.
+EVM is normalized error, not an absolute received-power indicator. Show RX level
+and capture freshness. Signal loss/staleness must clear all current good values;
+keep old traces only as explicitly labelled history.
+
 EVM must be shown in both dB and percent (user
 request): EVM(dB)=20log10(EVM(%)/100). Store evm_db and evm_percent in metrics;
 represent exact-zero error as null in JSON and -inf dB in the display.

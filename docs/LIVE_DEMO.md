@@ -1,5 +1,25 @@
 # Real-time moving-antenna demonstration
 
+## Connector naming correction
+
+The loaded overlay's `dac0` / `/dac_0/ram_play_0` feeds RFdc tile index0
+(physical tile228), which is the printed **DAC_B** connector. Its `dac1` player
+feeds tile index2 (physical230), printed **DAC_A**. Earlier DAC_A labels in the
+direct-loopback reports were incorrect: the default selected transmitter was
+DAC_B. The user has confirmed the cable is on DAC_B. See the
+[board manual, page6](https://www.realdigital.org/downloads/d6a7543b5033e5dadde272a48bcb5090.pdf).
+
+The launcher now accepts `--dac-port B` (default) or `--dac-port A`, matching the
+printed transmit labels. It adds the selected connector to stream metadata and
+the live title. Receive channels are labelled by captured stream number until
+their printed connector mapping is independently checked.
+
+Fresh capture number, age and RX0 RMS level in dBFS accompany EVM. This digital
+level is relative to32768codes, not calibrated RF dBm. EVM normalizes channel gain,
+so a weaker but decodable coupled signal can still have good EVM. On pilot loss
+or stale data, current EVM/constellation/CFO/phase are cleared; past EVM is explicitly
+labelled history. No stale good value should remain labelled as current.
+
 The target is a four-patch linear receive array on the ADCs, both DACs combined
 into one moving wanted-transmitter patch, and a separate MXG-driven jammer patch.
 The user identifies the patch silkscreen as 5.2 GHz; the antenna response and

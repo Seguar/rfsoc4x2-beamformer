@@ -148,6 +148,7 @@ def demod(y, expected, waveform_version=WAVEFORM_VERSION):
 
 
 def process(x, fs=FS, fixed_weights=None, adc0_only=False, waveform_version=WAVEFORM_VERSION):
+    input_rms = np.sqrt(np.mean(abs(x)**2,axis=0))
     if adc0_only:
         x = x.copy()
         x[:, 1:] = 0
@@ -167,6 +168,8 @@ def process(x, fs=FS, fixed_weights=None, adc0_only=False, waveform_version=WAVE
                     weight_norm=float(np.linalg.norm(w)))
     return {"tracking": tracking, "metrics": metrics, 'waveform_version': waveform_version,
             'receive_mode': 'ADC0 only' if adc0_only else 'four-channel',
+            'input_rms_codes': input_rms.tolist(),
+            'input_rms_dbfs': [float(20*np.log10(value/32768)) if value > 0 else None for value in input_rms],
             "input_peak_components": np.maximum(abs(x.real).max(axis=0), abs(x.imag).max(axis=0)).tolist(),
             "input_rail_fraction": np.mean((abs(x.real) >= 32767) | (abs(x.imag) >= 32767), axis=0).tolist()}, constellations
 

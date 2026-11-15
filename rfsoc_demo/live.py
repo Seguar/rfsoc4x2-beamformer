@@ -12,6 +12,17 @@ from .dsp import FS, PERIOD, reference, process, calibrate_fixed, WAVEFORM_VERSI
 from .transport import receive_session, receive_frame
 
 
+def unavailable_display(iq_ax, scatter, bars, cfo_ax, cfo_line, evm_ax, reason):
+    """Remove last-good CURRENT values; historical EVM may remain as history."""
+    scatter.set_offsets(np.empty((0,2)))
+    iq_ax.set_title('EVM unavailable | '+reason)
+    for bar in bars:
+        bar.set_height(np.nan)
+    cfo_line.set_data([],[])
+    cfo_ax.set_title('CFO unavailable | '+reason)
+    evm_ax.set_title('No current EVM — history only')
+
+
 def array_fixture(index, jammer=False):
     """SIMULATED half-wave ULA. Four elements null at +/-30 degrees broadside sum."""
     angle = 38*np.sin(index*.065)
@@ -77,7 +88,7 @@ def main():
     p.add_argument('--simulate', action='store_true')
     p.add_argument('--host')
     p.add_argument('--port', type=int, default=4010)
-    p.add_argument('--adc0-only', action='store_true', help='Direct DAC_A to ADC_A test; disables other receive channels in DSP')
+    p.add_argument('--adc0-only', action='store_true', help='Direct capture stream 0; disables other receive channels in DSP')
     p.add_argument('--log', default='out/live.jsonl')
     p.add_argument('--headless', action='store_true', help='Finite processing smoke test without opening a window')
     p.add_argument('--snapshot', help='Render dashboard to PNG with Agg, without opening a window')
@@ -127,7 +138,9 @@ def main():
                 report['simulated_angle_deg'] = angle
             return report, constellation
         except ValueError as exc:
+            rms = np.sqrt(np.mean(abs(x)**2,axis=0))
             return {'sequence': seq, 'elapsed_s': time.monotonic()-start,
+                    'input_rms_dbfs': [float(20*np.log10(v/32768)) if v>0 else None for v in rms],
                     'status': 'unlocked', 'reason': str(exc)}, None
 
     with log_path.open('a', buffering=1) as log:
@@ -159,7 +172,9 @@ def main():
         fig.subplots_adjust(bottom=.18, top=.86, hspace=.45, wspace=.45)
         source = 'SIMULATION — half-wave array' if a.simulate else 'LIVE ADC — geometry not inferred'
         if a.adc0_only:
-            source += ' | ADC_A ONLY: no beamforming gain'
+            source += ' | RX stream 0: no beamforming gain'
+        if receiver:
+            source += ' | TX '+receiver.metadata.get('dac_connector','DAC connector unverified')
         title = fig.suptitle(source+' | waiting for pilot lock', fontsize=12)
         evm_ax, iq_ax, phase_ax, cfo_ax = axes.ravel()
         lines = {name: evm_ax.plot([], [], label=label)[0] for name, label in
@@ -182,9 +197,9 @@ def main():
         toggle = Button(fig.add_axes([.37,.065,.23,.055]), 'Beamforming: OFF')
         jammer = Button(fig.add_axes([.66,.065,.25,.055]), 'Simulated jammer: OFF' if a.simulate else 'MXG: external control')
         if a.adc0_only:
-            calibrate.label.set_text('Direct ADC_A')
+            calibrate.label.set_text('Direct ADC stream 0')
             toggle.label.set_text('Single-channel mode')
-        fig.text(.08,.015, 'Direct cable: ADC_A EVM shown immediately; no array gain is measured.' if a.adc0_only else
+        fig.text(.08,.015, 'Direct cable: stream 0 EVM and received level shown; no array gain is measured.' if a.adc0_only else
                  'Calibrate with wanted TX at broadside and MXG RF OFF. Fixed weights remain frozen until recalibrated.', fontsize=9)
 
         def request_calibration(event):
@@ -209,17 +224,22 @@ def main():
                 age = time.monotonic()-state['received']
                 if age > 1:
                     title.set_text(source+f' | STALE {age:.1f}s | '+(receiver.error or 'no new frame'))
+                    unavailable_display(iq_ax,scatter,bars,cfo_ax,cfo_line,evm_ax,'STALE DATA')
                 return
             report, constellations = result
             log.write(json.dumps(report, allow_nan=False)+'\n')
             if report['status'] != 'locked':
-                title.set_text(source+' | UNLOCKED: '+report['reason'])
-                scatter.set_offsets(np.empty((0,2)))
+                title.set_text(source+f' | Capture {report["sequence"]} | UNLOCKED: '+report['reason'])
+                unavailable_display(iq_ax,scatter,bars,cfo_ax,cfo_line,evm_ax,'NO PILOT LOCK')
+                history.append(report)
                 return
             history.append(report)
+            evm_ax.set_title('Same capture, separate receive weights')
+            cfo_ax.set_title('Reacquired per capture')
             for name, line in lines.items():
-                rows = [r for r in history if name in r['metrics']]
-                line.set_data([r['elapsed_s'] for r in rows], [r['metrics'][name]['evm_db'] for r in rows])
+                rows = list(history)
+                line.set_data([r['elapsed_s'] for r in rows],
+                              [r.get('metrics',{}).get(name,{}).get('evm_db',np.nan) for r in rows])
             now = report['elapsed_s']
             evm_ax.set_xlim(max(0,now-25),max(5,now))
             evm_ax.relim(); evm_ax.autoscale_view(scalex=False)
@@ -237,7 +257,8 @@ def main():
                 iq_ax.set_title('Calibrate broadside before fixed-beam comparison')
             for bar, phase in zip(bars, report['tracking']['channel_phase_deg']):
                 bar.set_height(phase)
-            cfo_line.set_data([r['elapsed_s'] for r in history], [r['tracking']['cfo_hz']/1000 for r in history])
+            cfo_line.set_data([r['elapsed_s'] for r in history],
+                              [r.get('tracking',{}).get('cfo_hz',np.nan)/1000 for r in history])
             cfo_ax.relim(); cfo_ax.autoscale_view()
             angle = f' | simulated angle {report["simulated_angle_deg"]:+.1f}°' if a.simulate else ''
             improvement = ''
@@ -245,7 +266,9 @@ def main():
                 ratio = report['metrics']['fixed']['evm_percent']/max(report['metrics']['mvdr']['evm_percent'], 1e-12)
                 improvement = f' | EVM improvement {20*np.log10(max(ratio,1e-12)):+.1f} dB'
             clipped = ' | ADC RAIL HIT' if max(report['input_rail_fraction']) > 0 else ''
-            title.set_text(source+'\n'+f'Capture {report["sequence"]} | host age {report["host_age_ms"]:.0f} ms'+angle+improvement+clipped)
+            level = report['input_rms_dbfs'][0]
+            level_text = f'{level:.1f} dBFS' if level is not None else '-inf dBFS'
+            title.set_text(source+'\n'+f'Capture {report["sequence"]} | age {report["host_age_ms"]:.0f} ms | RX0 {level_text}'+angle+improvement+clipped)
         try:
             if a.snapshot:
                 for _ in range(15):

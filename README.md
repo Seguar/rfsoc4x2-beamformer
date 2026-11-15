@@ -10,6 +10,13 @@ EVM median3.79%, maximum9.98%. Raw timing loss remains, so constant EVM is not
 claimed. Physical array beamforming and MXG rejection are still unvalidated.
 See [validation](docs/VALIDATION.md) and [agent instructions](AGENTS.md).
 
+**Connector correction:** this overlay's logical `dac0` is the printed **DAC_B**;
+`dac1` is DAC_A. Earlier DAC_A wording in direct-test descriptions was incorrect.
+The launcher defaults to DAC_B (`--dac-port B`); `--dac-port A` selects DAC_A.
+The receiver is labelled by capture stream number until its printed ADC connector
+is verified. Current RX level/age are shown, and stale/unlocked data clears the
+current EVM instead of retaining a good historical number.
+
 The [real-time demo](docs/LIVE_DEMO.md) adds live fixed-versus-adaptive EVM,
 beamforming ON/OFF, broadside calibration and a moving-array simulation:
 

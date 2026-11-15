@@ -267,3 +267,16 @@ plots headlessly with a secondary percent axis.
 **Results:** all 19 host tests pass; rendered labels and JSON fields checked.
 **Conclusions:** this is a display/reporting change; receiver processing is unchanged.
 **Ways to resolve:** update the laptop checkout and restart the display to use it.
+
+## Connector labels and signal-loss display
+
+**Test / How:** compare the matched HWH transmit AXIS routes and RFdc tile indices
+with the board reference manual; exercise noise-only acquisition and clear a
+previous good EVM in a rendered signal-loss state.
+**Results:** logical dac0 maps to physical DAC_B, matching the user's correction.
+All21 host tests pass. Noise-only cases reject pilot lock; stale/unlocked display
+clears current EVM, constellation, phase and CFO. RX RMS level is now logged/shown.
+**Conclusions:** prior transmitter letter labels were wrong, not proof of a stale
+stream. Actual cable-loss behavior and the revised running GUI still need checking.
+**Ways to resolve:** restart the user's live session with the corrected connector
+metadata and freshness display, then compare fresh levels/lock during cable changes.

@@ -140,6 +140,7 @@ def main():
     if words.dtype != np.dtype('int16') or words.shape != (65536,) or np.max(np.abs(words.astype(float))) > 1200:
         raise ValueError('Initial live helper requires 65536 int16 DAC words with peak <= 1200')
     manifest = {'board': board.decode(), 'rf_mhz': a.rf_mhz, 'dac': a.dac,
+                'dac_connector': {'0':'DAC_B','1':'DAC_A','both':'DAC_A + DAC_B'}[a.dac],
                 'phase1_deg': a.phase1, 'fs_assumed_hz': 125e6, 'frames': a.frames,
                 'wrapper_sha256': hashlib.sha256(Path('/boot/doa_mts.py').read_bytes()).hexdigest(),
                 'reference_sha256': hashlib.sha256(Path(a.reference).read_bytes()).hexdigest(),
@@ -200,6 +201,7 @@ def main():
             header = json.dumps({'format': 'int16le-I-minus-jQ-4ch', 'frame_bytes': 262144,
                                  'fs_hz': 125e6, 'rf_mhz': a.rf_mhz,
                                  'waveform_version': 2,
+                                 'dac_connector': manifest['dac_connector'],
                                  'timestamp': 'board monotonic ns; not synchronized with host'}).encode()
             client.sendall(b'R4X2IQ1\n'+struct.pack('<I', len(header))+header)
         overlay.dacs_control()

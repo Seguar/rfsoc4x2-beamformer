@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the direct ADC_A demo from a host with PuTTY and private board config.
+"""Launch the direct capture-stream-0 demo using PuTTY and private board config.
 
 Stages new files, verifies known boot assets, starts one exclusive capture session
 and opens the live display (or finite headless check). Never replaces /boot.
@@ -46,11 +46,16 @@ def main():
     p.add_argument('--headless', action='store_true')
     p.add_argument('--frames', type=int, default=100)
     p.add_argument('--out', default='out')
+    p.add_argument('--dac-port',choices=['A','B'],help='Printed output connector; default private config or B')
     a = p.parse_args()
     if a.frames < 1:
         p.error('--frames must be positive')
     config = json.loads(Path(a.config).read_text(encoding='utf-8-sig'))
     host, user = config['host'], config.get('user','xilinx')
+    dac_port = a.dac_port or config.get('dac_port','B')
+    if dac_port not in ('A','B'):
+        raise ValueError('dac_port must be A or B')
+    logical_dac = {'A':'1','B':'0'}[dac_port]
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*',host) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*',user):
         raise ValueError('Use a plain hostname/IPv4 and account name')
     pwfile = Path(config['password_file']).expanduser().resolve()
@@ -105,7 +110,7 @@ def main():
     port = 4010
     command = "sudo -S -p '' env BOARD=RFSoC4x2 XILINX_XRT=/usr "+shlex.quote(board_python)+' '+shlex.quote(stage+'/board_capture.py')
     command += ' --exclusive-control --reference '+shlex.quote(stage+'/reference.npz')+' --out '+shlex.quote(stage+'/last.npz')
-    command += ' --dac 0 --rf-mhz 3000 --sampling-freq-unit GHz --stream-bind '+shlex.quote(host)+' --stream-port '+str(port)+' --frames 0'
+    command += ' --dac '+logical_dac+' --rf-mhz 3000 --sampling-freq-unit GHz --stream-bind '+shlex.quote(host)+' --stream-port '+str(port)+' --frames 0'
     ready = threading.Event()
     server = subprocess.Popen([*ssh,command],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
     server.stdin.write(password_input)
@@ -119,7 +124,7 @@ def main():
                     ready.set()
     thread = threading.Thread(target=reader,daemon=True)
     thread.start()
-    print('Starting direct DAC_A -> 20 dB -> ADC_A session...',flush=True)
+    print(f'Starting direct DAC_{dac_port} -> 20 dB -> ADC stream 0 session...',flush=True)
     try:
         deadline = time.monotonic()+120
         while not ready.wait(.25):
