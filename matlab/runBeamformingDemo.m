@@ -4,6 +4,7 @@ function app = runBeamformingDemo(cfg)
 if nargin==0, cfg=rfsoc.defaultConfig(); end
 ref=rfsoc.loadReference(cfg.referencePath);
 assert(ref.fsHz==cfg.fsHz,'rfsoc:Rate','Reference sample rate mismatch.');
+cfg.latestOnly=true; % display skips queued frames; transport validation stays strict
 source=[]; vsa=[]; fixedWeights=[]; tick=[]; frameCount=0;
 history=zeros(0,3); started=tic; lastFrame=tic; lastResult=[];
 fig=uifigure('Name','RFSoC4x2 MATLAB + VSA','Position',[100 100 1150 740]);
@@ -30,8 +31,8 @@ if cfg.directOnly
 end
 fig.CloseRequestFcn=@closeApp;
 try
-    source=rfsoc.FrameSource(cfg);
     if cfg.useVsa, vsa=rfsoc.VsaSession(cfg.vsa); end
+    source=rfsoc.FrameSource(cfg);
     tick=timer('ExecutionMode','fixedSpacing','Period',0.05, ...
         'BusyMode','drop','TimerFcn',@update,'ErrorFcn',@timerError);
     start(tick);
@@ -78,6 +79,7 @@ app=struct('Figure',fig,'Timer',tick,'Source',source);
                     record.beamformer.desiredResponse=struct('real',real(response),'imag',imag(response));
                 end
                 record.sequence=char(string(frame.sequence)); record.hostAgeSeconds=toc(lastFrame);
+                record.skippedDisplayFrames=frame.skippedDisplayFrames;
                 fid=fopen(cfg.logPath,'a'); assert(fid>=0,'Cannot open metrics log.');
                 cleanup=onCleanup(@() fclose(fid)); fprintf(fid,'%s\n',jsonencode(record)); clear cleanup;
             end

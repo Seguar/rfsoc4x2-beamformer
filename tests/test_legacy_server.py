@@ -3,6 +3,7 @@ import importlib.util
 from pathlib import Path
 import socket
 import threading
+import time
 import unittest
 import numpy as np
 
@@ -51,7 +52,17 @@ class LegacyServerTests(unittest.TestCase):
                 received.extend(peer.recv(16-len(received)))
             self.assertEqual(received, np.arange(8, dtype='<i2').tobytes())
             peer.sendall(b'dataStream 0\n')
-            self.assertTrue(backend.stopped.wait(2), 'stop was trapped behind stream loop')
+            # A streaming client keeps consuming queued frames until stop takes
+            # effect. Otherwise a fast fake capture can fill send buffers before
+            # control arrives and intentionally hit the bounded send timeout.
+            deadline = time.monotonic()+2
+            peer.settimeout(.05)
+            while not backend.stopped.is_set() and time.monotonic() < deadline:
+                try:
+                    peer.recv(65536)
+                except socket.timeout:
+                    pass
+            self.assertTrue(backend.stopped.is_set(), 'stop was trapped behind stream loop')
         finally:
             peer.close()
             thread.join(3)

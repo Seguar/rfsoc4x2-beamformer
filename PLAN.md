@@ -96,3 +96,14 @@ pass. Exact waveform reference and Python differential fixture generated private
 MATLAB execution, new UI and VSA streaming/EVM remain pending. The first newly
 owned VSA instance timed out during startup; packing tests passed. Original binary
 apps and deployed boot assets remain unchanged.
+
+MATLAB laptop gate: differential CFO/EVM/BER, noise rejection and eleven beamformers
+passed; strict core gate failed DL ITER MVDR. Original root equation squared the
+wrong term and used the multiplier instead of reciprocal loading. Corrected from
+Li/Stoica/Wang's equations, added isotropic closed-form and residual checks; full
+MATLAB rerun pending. Local TCP fragmentation/IQ/sequence/error controls passed.
+Owned VSA startup succeeds with explicit port/Use64Bit and disposes normally;
+replay completes fresh but trace status32 prevents a valid EVM/lock claim. Sole
+laptop agent now investigates waveform/setup compatibility; no board handover yet.
+Parent added MATLAB launcher/headless lifecycle and bounded UI backlog draining;
+new MATLAB source is staged for its next execution check, not yet live-validated.

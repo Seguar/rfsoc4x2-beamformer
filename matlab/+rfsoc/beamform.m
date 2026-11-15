@@ -60,20 +60,32 @@ switch cfg.algorithm
         info.loading=cfg.loading;
         w=(r+max(cfg.loading,floorValue)*eye(m))\a;
     case "DL ITER MVDR"
-        % Nondegenerate ellipsoid loading equations retained from the newer app.
-        % epsilon is now an explicit user-selected uncertainty parameter.
+        % Spherical robust Capon root: sum |z|^2/(1+lambda*d)^2 = epsilon.
+        % Li/Stoica/Wang, https://doi.org/10.1109/TSP.2003.812831
+        % The old app squared eigenvalues instead of the whole denominator,
+        % then used lambda as loading; the loading is its reciprocal.
         e=cfg.uncertainty^2;
         assert(e>0 && e<norm(a)^2,'rfsoc:Feasibility','Invalid ellipsoid radius.');
         z=u'*a; lo=(norm(a)-sqrt(e))/(max(d)*sqrt(e));
         hi=min((norm(a)-sqrt(e))/(min(d)*sqrt(e)), ...
             sqrt(sum(abs(z).^2./d.^2)/e));
         assert(hi>=lo,'rfsoc:Feasibility','Empty iterative-loading interval.');
-        equation=@(lambda) sum(abs(z).^2./(1+lambda*d.^2))-e;
-        if equation(lo)*equation(hi)>0
+        equation=@(lambda) sum(abs(z).^2./(1+lambda*d).^2)-e;
+        tolerance=1e-12*max(e,norm(a)^2);
+        if abs(equation(lo))<=tolerance
+            lambda=lo;
+        elseif abs(equation(hi))<=tolerance
+            lambda=hi;
+        elseif equation(lo)*equation(hi)>0
             error('rfsoc:Solver','Iterative-loading equation has no bracketed solution.');
+        else
+            [lambda,~,flag,output]=fzero(equation,[lo hi]);
+            assert(flag>0,'rfsoc:Solver','Iterative-loading root did not converge.');
+            info.iterations=output.iterations;
         end
-        lambda=fzero(equation,[lo hi]); info.loading=lambda;
-        w=(r+lambda*eye(m))\a;
+        info.loading=1/lambda;
+        info.rootResidual=abs(equation(lambda));
+        w=(r+info.loading*eye(m))\a;
     case "QCB"
         assert(cfg.mismatchDeg>0 && cfg.loadingGrowth>1 && cfg.gamma>0, ...
             'rfsoc:Qcb','QCB requires positive width/loading and growth >1.');

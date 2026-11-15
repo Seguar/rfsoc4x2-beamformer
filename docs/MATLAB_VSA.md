@@ -6,10 +6,14 @@ and exports stay unchanged. The readable frontend is `matlab/runBeamformingDemo.
 
 ## Validation status
 
-23 Python host tests pass, including stop during streaming in the refactored boot
-loop. MATLAB execution and the new UI are pending laptop validation. VSA adapter
-packing/rejection tests passed, but new-instance startup timed out. No VSA EVM,
-working historical waveform/setup pair or MATLAB live RF result is established.
+Python host tests pass, including stop during streaming and MATLAB launcher config
+filtering. MATLAB differential CFO/EVM/BER and noise rejection passed; eleven modes
+passed. Iterative loading failed its original root check and has since been
+corrected against the source equations; its complete MATLAB gate needs rerunning.
+Fragmented localhost transport and framing/sequence rejection passed. New VSA
+startup works with explicit localhost port and Use64Bit; fresh replay completes
+but returns trace status 32, so no valid VSA EVM/lock is established. The new UI
+and MATLAB live RF workflow remain pending.
 The current Python DAC_B → 20 dB → ADC_D demo is separate evidence.
 
 The laptop has MATLAB R2026a Update 5 and VSA interfaces 30.40.333.0. Signal,
@@ -46,13 +50,22 @@ failures produce unavailable results rather than silently changing algorithms.
 | RVL | Loading `d + gamma/d`, equivalent to `R + gamma R⁻¹` |
 | RAB PC | PC-derived uncertainty, real-variable worst-case constrained optimization |
 | DL MVDR | Loading relative to mean covariance power |
-| DL ITER MVDR | Ellipsoid loading equation with explicit uncertainty and bracketed root |
+| DL ITER MVDR | Spherical robust Capon loading with explicit uncertainty and bracketed root |
 | QCB | Two-edge quadratic constraints and iterative sector loading |
 
 Corrections include consistent conjugation/response normalization, measured
 spacing instead of hard-coded half-wave geometry, scalar QCB covariance scaling,
 real optimization variables and explicit iterative-loading uncertainty. These
 intentionally change legacy outputs; performance equivalence is not claimed.
+
+Iterative loading follows the scalar equation in Li, Stoica and Wang,
+[On Robust Capon Beamforming and Diagonal Loading](https://doi.org/10.1109/TSP.2003.812831).
+The denominator is `(1+lambda*d).^2`, not `1+lambda*d.^2`, and actual diagonal
+loading is `1/lambda`. Bounds and equations are also given in the authors'
+[derivation, equations 25–28 and 34](https://patents.google.com/patent/US6798380B2/en).
+`uncertainty` is the absolute steering-vector error radius; squared radius is
+epsilon. Output is normalized to unit nominal response, as in the other loaded
+MVDR modes. Failure to bracket or satisfy the root is reported, never suppressed.
 
 Tracking identifies the wanted DAC from its pilot instead of choosing the strongest
 jammer peak. Angle needs measured spacing or a calibrated manifold describing the
@@ -81,6 +94,20 @@ cfg.referencePath = fullfile(repoRoot,'out','matlab-reference.mat');
 app = runBeamformingDemo(cfg);
 ```
 
+The launcher now supports a finite MATLAB check and the MATLAB window:
+
+```powershell
+py -3.11 tools/run_demo.py --config PRIVATE_CONFIG --frontend matlab --headless --frames 100
+py -3.11 tools/run_demo.py --config PRIVATE_CONFIG --frontend matlab
+```
+
+Set `matlab_executable` in the private config if MATLAB is absent from PATH.
+`--vsa` additionally requires a complete `matlab_vsa` config with a matching
+waveform/setup. SSH credentials are never forwarded to MATLAB. Headless runs
+log every frame and fail their gate on missing locks or requested VSA EVM.
+The graphical frontend drains queued frames and records how many it skips.
+Transport validation keeps every frame by default.
+
 The framed capture helper must be ready for one client. Orderly release of the
 Python display ends its existing helper; start a fresh owned capture before MATLAB
 connects. Never run simultaneous overlay owners. MATLAB does not configure RF;
@@ -94,6 +121,8 @@ instance and unique USR::Stream configuration; never attaches to unrelated insta
 or deletes global instrument handles. Capture size counts complex samples;
 RequiredSamples counts floats, two per complex sample. No padding/repetition of
 finite frames. Timeout, insufficient input or missing valid EVM gives unavailable.
+For live streams, limit VSA measurement timeout to at most four seconds; the board
+producer has a bounded send timeout. VSA starts before the capture client connects.
 
 **Historical FFT64 Custom OFDM settings do not match current FFT256 waveform v2.**
 Validate historical waveform/setup pairs independently; filenames are insufficient.

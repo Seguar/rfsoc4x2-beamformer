@@ -30,7 +30,10 @@ classdef VsaSession < handle
             NET.addAssembly(cfg.dllPath);
             try
                 % true ALWAYS starts a new instance; never call attach-only Create().
-                obj.App=Agilent.SA.Vsa.ApplicationFactory.Create(true,'','',int32(-1),int32(cfg.startupTimeoutSeconds));
+                if ~isfield(cfg,'startupPort'), cfg.startupPort=-1; end
+                obj.App=Agilent.SA.Vsa.ApplicationFactory.Create(true,'','localhost', ...
+                    int32(cfg.startupPort),int32(cfg.startupTimeoutSeconds), ...
+                    Agilent.SA.Vsa.CreateOptions.Use64Bit);
                 assert(~isempty(obj.App),'rfsoc:StartupTimeout','New VSA instance did not start before timeout');
                 obj.App.IsVisible=logical(cfg.visible);
                 obj.App.Title=obj.ConfigurationName;
@@ -124,6 +127,7 @@ classdef VsaSession < handle
 
                 try
                     d=obj.Meas.MeasurementData(char(traces.Item(k).DataName));
+                    if isempty(d), continue; end
                     guard=onCleanup(@()d.Dispose());
                     if int32(d.Status)~=0
                         status=['EVM unavailable: trace status ' char(d.Status.ToString())];

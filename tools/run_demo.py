@@ -44,10 +44,14 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--config', required=True, help='Private JSON; see examples/board.example.json')
     p.add_argument('--headless', action='store_true')
+    p.add_argument('--frontend', choices=['python','matlab'], default='python')
+    p.add_argument('--vsa', action='store_true', help='Enable explicit matching VSA setup with MATLAB frontend')
     p.add_argument('--frames', type=int, default=100)
     p.add_argument('--out', default='out')
     p.add_argument('--dac-port',choices=['A','B'],help='Printed output connector; default private config or B')
     a = p.parse_args()
+    if a.vsa and a.frontend != 'matlab':
+        p.error('--vsa requires --frontend matlab')
     if a.frames < 1:
         p.error('--frames must be positive')
     config = json.loads(Path(a.config).read_text(encoding='utf-8-sig'))
@@ -68,6 +72,11 @@ def main():
     run_id = datetime.now().strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:6]
     out = Path(a.out).resolve()/('live-'+run_id)
     out.mkdir(parents=True)
+    matlab_client = None
+    if a.frontend == 'matlab':
+        from tools.matlab_frontend import command
+        matlab_client = command(ROOT, out, config, headless=a.headless,
+                                frames=a.frames, use_vsa=a.vsa)
     stage = '/home/'+user+'/rfsoc-demo-'+run_id
     board_python = config.get('board_python','/usr/local/share/pynq-venv/bin/python3')
 
@@ -130,9 +139,9 @@ def main():
         while not ready.wait(.25):
             if server.poll() is not None or time.monotonic()>deadline:
                 raise RuntimeError('Board capture did not become ready; see '+str(out/'board.log'))
-        client = [sys.executable,'-m','rfsoc_demo.live','--host',host,'--port',str(port),
-                  '--adc0-only','--log',str(out/'live.jsonl')]
-        if a.headless:
+        client = matlab_client or [sys.executable,'-m','rfsoc_demo.live','--host',host,'--port',str(port),
+                                   '--adc0-only','--log',str(out/'live.jsonl')]
+        if a.headless and matlab_client is None:
             client += ['--headless','--frames',str(a.frames)]
         subprocess.run(client,cwd=ROOT,check=True)
     finally:

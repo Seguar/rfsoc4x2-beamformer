@@ -44,6 +44,25 @@ classdef FrameSource < handle
             end
         end
         function frame=next(self)
+            frame=self.readFrame(); skipped=0; deadline=tic;
+            if self.Config.latestOnly && self.Config.profile=="demo-framed"
+                while double(self.Client.Available)>=24+self.Config.frameSamples*16
+                    assert(skipped<128 && toc(deadline)<self.Config.timeoutSeconds, ...
+                        'rfsoc:Freshness','Cannot drain queued display frames within deadline.');
+                    frame=self.readFrame(); skipped=skipped+1;
+                end
+            end
+            frame.skippedDisplayFrames=skipped;
+        end
+        function delete(self)
+            if ~isempty(self.Stream), self.Stream.Close(); self.Stream=[]; end
+            if ~isempty(self.Client), self.Client.Close(); self.Client=[]; end
+            % This closes acquisition only. RF shutdown belongs to board owner.
+            % Legacy firmware cannot acknowledge an in-stream stop command.
+        end
+    end
+    methods (Access=private)
+        function frame=readFrame(self)
             cfg=self.Config;
             sequence=self.Counter; timestamp=uint64(0);
             if cfg.profile=="demo-framed"
@@ -65,20 +84,13 @@ classdef FrameSource < handle
                 'sequence',sequence,'timestampNs',timestamp,'receivedUtc',datetime('now','TimeZone','UTC'));
             self.LastSequence=sequence; self.Counter=self.Counter+1;
         end
-        function delete(self)
-            if ~isempty(self.Stream), self.Stream.Close(); self.Stream=[]; end
-            if ~isempty(self.Client), self.Client.Close(); self.Client=[]; end
-            % This closes acquisition only. RF shutdown belongs to board owner.
-            % Legacy firmware cannot acknowledge an in-stream stop command.
-        end
-    end
-    methods (Access=private)
         function bytes=readExact(self,count)
             buffer=NET.createArray('System.Byte',count);
             offset=0; deadline=tic;
             while offset<count
                 assert(toc(deadline)<self.Config.timeoutSeconds, ...
                     'rfsoc:Timeout','Incomplete frame before deadline.');
+                self.Stream.ReadTimeout=int32(max(1,1000*(self.Config.timeoutSeconds-toc(deadline))));
                 got=self.Stream.Read(buffer,int32(offset),int32(count-offset));
                 assert(got>0,'rfsoc:Disconnected','Stream disconnected.');
                 offset=offset+double(got);

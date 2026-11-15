@@ -26,7 +26,7 @@ rng(17); n=8192;
 s=(randn(n,1)+1j*randn(n,1))/sqrt(2);
 j=(randn(n,1)+1j*randn(n,1))/sqrt(2);
 x=s*a.'+10*j*jammer.'+0.1*(randn(n,4)+1j*randn(n,4));
-rows=struct([]);
+rows=struct('algorithm',{},'desiredGain',{},'jammerGain',{},'iterations',{});
 for algorithm=rfsoc.algorithmNames()
     cfg.algorithm=algorithm;
     [y,w,info]=rfsoc.beamform(x,cfg,a);
@@ -35,10 +35,20 @@ for algorithm=rfsoc.algorithmNames()
         assert(abs(w'*a-1)<1e-7,'Conjugation/desired-gain failure: %s',algorithm);
     end
     if algorithm=="LCMV", assert(abs(w'*jammer)<1e-7,'LCMV null constraint failed.'); end
+    if algorithm=="DL ITER MVDR"
+        assert(info.rootResidual<1e-8,'Iterative loading equation residual too large.');
+        assert(info.loading>0,'Iterative loading must be positive.');
+    end
     rows(end+1)=struct('algorithm',algorithm,'desiredGain',abs(w'*a), ...
         'jammerGain',abs(w'*jammer),'iterations',info.iterations); %#ok<AGROW>
 end
 assert(rows(3).jammerGain<rows(1).jammerGain/10,'MVDR failed jammer suppression.');
+% Isotropic covariance has equal root bounds and an independent closed form.
+cfg.algorithm="DL ITER MVDR";
+[~,~,isotropic]=rfsoc.beamform(2*eye(4),cfg,a);
+expectedLoading=cfg.uncertainty/(norm(a)-cfg.uncertainty);
+assert(abs(isotropic.loading-expectedLoading)<1e-10,'Closed-form loading mismatch.');
+assert(isotropic.rootResidual<1e-10,'Isotropic root residual too large.');
 % Geometry and invalid constraints cannot be hidden behind a fallback.
 bad=cfg; bad.spacingM=NaN; rejected=false;
 try, rfsoc.steering(bad,0); catch, rejected=true; end

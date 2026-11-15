@@ -270,6 +270,9 @@ plots headlessly with a secondary percent axis.
 
 ## Connector labels and signal-loss display
 
+See also [MATLAB/VSA validation status](MATLAB_VSA.md). Python live results below
+do not establish MATLAB frontend or VSA demodulator behavior.
+
 **Test / How:** compare the matched HWH transmit AXIS routes and RFdc tile indices
 with the board reference manual; exercise noise-only acquisition and clear a
 previous good EVM in a rendered signal-loss state.
