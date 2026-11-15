@@ -11,11 +11,9 @@ end
 [aligned,tracking,a]=rfsoc.acquire(x,ref,cfg.fsHz);
 training=aligned(1:ref.train*(ref.nfft+ref.cp),:);
 angleDeg=cfg.angleDeg;
-if ~cfg.directOnly && cfg.tracking
-    grid=-89:cfg.scanStepDeg:89; manifold=rfsoc.steering(cfg,grid);
-    score=abs(manifold'*a).^2./sum(abs(manifold).^2,1).';
-    [~,best]=max(score); angleDeg=grid(best);
-end
+% DOA is evaluated even with tracking disabled; steering remains independent.
+spatial=rfsoc.spatialView(training,zeros(4,1),a,cfg,fixedWeights);
+if spatial.available && cfg.tracking, angleDeg=spatial.wantedAngleDeg; end
 cfg.angleDeg=angleDeg;
 if cfg.directOnly
     w=zeros(4,1); w(cfg.activeChannel)=1;
@@ -26,6 +24,11 @@ else
     if ~cfg.tracking, wanted=rfsoc.steering(cfg,cfg.angleDeg); end
     [~,w,info]=rfsoc.beamform(training,cfg,wanted);
 end
+if spatial.available
+    manifold=rfsoc.steering(cfg,spatial.anglesDeg);
+    power=abs(w'*manifold).^2;
+    spatial.patternDb=10*log10(max(power/max(max(power),eps),1e-8));
+end
 selected=aligned*conj(w);
 [metric,constellation]=rfsoc.demodulate(selected,ref);
 baselineMetric=[];
@@ -34,7 +37,7 @@ if ~isempty(fixedWeights)
 end
 result=struct('metric',metric,'baselineMetric',baselineMetric, ...
     'constellation',constellation,'weights',w,'beamformer',info, ...
-    'tracking',tracking,'angleDeg',angleDeg,'pilotManifold',a, ...
+    'tracking',tracking,'angleDeg',angleDeg,'pilotManifold',a,'spatial',spatial, ...
     'inputRmsDbfs',20*log10(inputRms/32768), ...
     'vsaSignal',selected/32768,'status',"locked");
 end

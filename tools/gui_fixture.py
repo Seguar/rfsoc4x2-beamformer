@@ -13,6 +13,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--reference', required=True)
     parser.add_argument('--directory', required=True, help='Fresh handshake/output directory')
+    parser.add_argument('--angle-deg', type=float, help='SIMULATED half-wave ULA wanted angle')
     args = parser.parse_args()
     directory = Path(args.directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -22,10 +23,12 @@ def main():
     wave = np.tile(loadmat(args.reference)['wave'].ravel(), 4)
     rng = np.random.default_rng(9015)
 
+    manifold = np.ones(4) if args.angle_deg is None else np.exp(-1j*np.pi*np.arange(4)*np.sin(np.deg2rad(args.angle_deg)))
+
     def payload(values):
         lanes = np.empty((len(values), 8), dtype='<i2')
-        lanes[:, 0::2] = np.round(values.real[:, None]*4000)
-        lanes[:, 1::2] = np.round(-values.imag[:, None]*4000)
+        lanes[:, 0::2] = np.round((values[:, None]*manifold).real*4000)
+        lanes[:, 1::2] = np.round(-(values[:, None]*manifold).imag*4000)
         return lanes.tobytes()
 
     with socket.socket() as server:

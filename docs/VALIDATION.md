@@ -348,3 +348,26 @@ Four matched positives retained the explicit bit32 warning; two noise frames
 were unavailable. No disconnect reproduced in this bounded test. Independent
 Python audit of the eight probe and six adapter records passed. Live RF VSA and
 physical beamforming remain pending.
+
+
+## DOA spectrum and receive pattern — 2026-11-15
+
+**Test:** Add spatial diagnostics to the new MATLAB frontend, including clearing
+current plots on loss/pause. No board or instrument writes.
+**How:** Training-covariance Beamscan/MVDR/MUSIC spectra and independent wanted
+pilot angle; normalized selected-weight/frozen-baseline array responses. Seeded
+four-element half-wave ULA tests at +18/−34 degrees, scalar pattern comparison,
+±30-degree broadside nulls, unknown-spacing rejection and manifold coverage bounds.
+Hidden GUI campaigns exercise direct and simulated-array modes over localhost.
+**Results:** `RFSOC_SPATIAL_PASS`, all existing core/12-beamformer checks pass,
+both `RFSOC_SIMULATED_GUI_PASS` sentinels and final MATLAB exit0. Direct-mode
+plots remain unavailable; array curves populate and clear on noise/pause. All28
+Python host tests pass. Two initial GUI fixture launches failed due to Windows
+script execution policy and SSH child lifetime; using a hidden scheduled task for
+the private fixture resolved the launch issues without changing test criteria.
+**Conclusions:** DOA and receive-pattern functions are implemented and verified
+with simulation, including current-data clearing. Spectral peaks may be interferers;
+the pilot identifies the wanted DAC independently. Tracking can be disabled while
+DOA continues. No physical angle accuracy or antenna pattern has been measured.
+**Ways to resolve:** Measure spacing, verify channel order, calibrate all four
+channels and validate OTA angles before labelling geometry-model angles physical.

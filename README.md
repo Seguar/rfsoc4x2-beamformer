@@ -146,3 +146,11 @@ This launcher stages and verifies a fresh reference/helper, starts the board
 session and opens live ADC_A EVM. Closing the display disconnects acquisition and
 requests DAC shutdown; private output contains the shutdown manifest. The boot
 service remains stopped. See LIVE_DEMO.md for the finite headless check and limits.
+
+
+The MATLAB frontend also shows a selectable Beamscan/MVDR/MUSIC DOA spectrum,
+pilot-based wanted-DAC angle, and the normalized receive pattern of the selected
+weights versus the frozen baseline. Set measured `spacingM` and correct `fcHz`
+(or supply a calibrated manifold) before array mode. These are geometry-model
+plots, not measured antenna radiation patterns; direct-cable mode leaves them
+unavailable. Loss of lock or stale capture clears current spatial plots.

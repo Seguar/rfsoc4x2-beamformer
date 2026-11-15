@@ -248,3 +248,29 @@ control parsing. ZCU216 `stream N` and `dacbf` are rejected.
 This loop is staged source, not deployed firmware. Do not overwrite `/boot`, install
 startup services or create a second owner. Preserve matched FPGA/clock/wrapper assets.
 Legacy raw TCP and the framed demo on port 4010 remain separate profiles.
+
+
+## DOA and receive pattern
+
+`spatialView.m` computes Beamscan, diagonally loaded MVDR or MUSIC spectra from
+training samples. `sourceCount` configures MUSIC's signal-subspace rank and the
+maximum number of displayed local peaks. Spectrum peaks can include interferers;
+the wanted-DAC angle is independently matched to the pilot-derived receive vector.
+DOA remains visible when wanted tracking is disabled; steering then uses the
+configured `angleDeg`. The GUI's DOA selector is independent of its beamformer.
+
+The pattern uses exactly the selected receive weights, `abs(w' * a(theta))^2`,
+normalized to its own peak. A frozen-baseline curve appears after baseline capture.
+This is an array response model, not a measured radiation pattern. Physical angles
+require the actual carrier, measured element spacing, verified channel order and
+calibration. Alternatively `manifold`/`manifoldAnglesDeg` provide a measured
+manifold; the scan is restricted to its angular coverage. Neither 5.2GHz silkscreen
+nor an assumed half-wave spacing establishes calibration.
+
+Direct mode disables DOA selection and leaves both spatial plots unavailable.
+Current curves and angle labels clear before waiting for a frame and on any
+acquisition/processing failure; EVM history remains explicitly labelled history.
+`validateSpatial` checks signed two-source DOA, pattern conjugation, broadside
+nulls, direct-mode rejection and calibrated scan bounds with simulated data.
+`validateGui(referencePath,directory,true)` checks array display and loss/pause
+clearing using `tools/gui_fixture.py --angle-deg 18` as a simulated source.
