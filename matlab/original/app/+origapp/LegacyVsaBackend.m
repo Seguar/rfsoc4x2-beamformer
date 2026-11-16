@@ -35,6 +35,21 @@ classdef LegacyVsaBackend < handle
     % owned VSA window title says UNAVAILABLE. No padding, tiling, joining,
     % payload fit or sample modification (except the configured orientation
     % conjugate). The window fed to VSA is one contiguous boundary-free run.
+    %
+    % v3 (cfg.wireMode = "window4", helper --wire-mode window4): magic R4X2IQ3,
+    % frames IQZ3/IQL3 + extension (window start row, SHA256 of the full capture
+    % and of the selected window, board selection time, bounded JSON summary),
+    % END3. The wire carries ALL FOUR measured streams as one contiguous
+    % 32768-row window of the same full-RAM capture, selected on the board to
+    % exclude the legacy DAC loop boundary. next() returns 32768-by-4 measured
+    % samples, availableChannels [1 1 1 1]; the host re-checks every frame
+    % independently (per-stream wanted-reference lock, boundary/jump-free
+    % blocks, window SHA, a repeated capture SHA is stale) and reports
+    % signalChannels (stream lock >= lockThreshold). vsaSend accepts either a
+    % raw measured column or the app's combined (weighted) output of the SAME
+    % frame (info.kind/sequence); the input kind and raw-stream vs combined
+    % locks are logged separately. Zero-padded buffers are refused.
+    % The stream mode must equal cfg.wireMode; there is no silent switch.
     properties (SetAccess = private)
         Config
         Metadata = struct()
@@ -51,6 +66,14 @@ classdef LegacyVsaBackend < handle
         DisplayLog = strings(0,1)
         PrefetchHold = false
         WarmupSeconds = zeros(1,0)
+        N = 131072                 % wire samples per stream (v2 131072, v3 32768)
+        FRAME_BYTES = 4*131072
+        AVAILABLE = logical([1 0 0 0])
+        FORMAT = "int16le-IQ-1ch-fullram-v2"
+        WireMode = "adc-d-fullram"
+        LastMeasured4 = []         % v3: measured N-by-4 (I - jQ)/2^16 of the last frame
+        LastCaptureSha = ""
+        VsaStartError = ""         % first owned-VSA start failure; never retried in this session
     end
     properties (Access = private)
         Client = []
@@ -72,14 +95,19 @@ classdef LegacyVsaBackend < handle
         Ref = []
         RefFftConj = []
         Burst = NaN
+        RefAct = []             % frame-level activity of Ref (windowActivityModel)
         Closed = false
+        Stage = 0               % 0 header, 1 v3 extension, 2 v3 extension JSON, 3 body
+        ExtBuf = []
+        ExtBytes = []
+        JsonBuf = []
     end
     properties (Constant)
-        N = 131072
+        LOOP_N = 131072         % legacy loop (= full capture) length at 125 MHz
+        WIN_N = 32768           % v3 window rows
         HEADER_BYTES = 52
-        FRAME_BYTES = 4*131072
-        AVAILABLE = logical([1 0 0 0])
-        FORMAT = "int16le-IQ-1ch-fullram-v2"
+        EXT_BYTES = 74          % <II32s32sH
+        EXT_JSON_MAX = 1024
         DRIFT = 100e-6          % allowance for board/host clock rate difference
         CODEC = "byteplane-shuffle+deflate-raw-lossless"
     end
@@ -95,7 +123,8 @@ classdef LegacyVsaBackend < handle
             d = struct('connectTimeoutSeconds',30,'lockThreshold',0.3,'minWindow',32768, ...
                 'logFile',"",'syncCorrThreshold',0.9,'vendorReadThreshold',1e-6, ...
                 'staleSeconds',2,'allowContinuous',false,'rawDir',"",'maxTimestampDelaySeconds',2, ...
-                'expectSource',"rfsoc4x2-hardware",'prefetch',true,'warmup',true);
+                'expectSource',"rfsoc4x2-hardware",'prefetch',true,'warmup',true, ...
+                'wireMode',"adc-d-fullram",'vsaStartupTimeoutSeconds',120,'frameLogFile',"");
             f = fieldnames(d);
             for k = 1:numel(f)
                 if ~isfield(cfg,f{k}), cfg.(f{k}) = d.(f{k}); end
@@ -106,16 +135,23 @@ classdef LegacyVsaBackend < handle
                 'legacy profile needs syncCorrThreshold in [0.9, 1]');
             assert(cfg.lockThreshold >= 0.3 && cfg.lockThreshold < 1, 'a2live:Config', ...
                 'legacy profile needs lockThreshold in [0.3, 1)');
+            cfg.wireMode = string(cfg.wireMode);
+            assert(any(cfg.wireMode == ["adc-d-fullram","window4"]), 'a2live:Config', ...
+                'wireMode must be "adc-d-fullram" (v2) or "window4" (v3)');
+            % VSA needs 28710 contiguous complex samples; the v3 window is 32768.
+            assert(cfg.minWindow >= 28710 && cfg.minWindow <= 131072, 'a2live:Config', 'minWindow out of range');
             obj.Config = cfg;
+            obj.setMode(cfg.wireMode);
             r = load(cfg.referenceMat);
-            assert(numel(r.ref125) == obj.N && strtrim(string(r.profile)) == "legacy-ofdm64-truncated-v1", ...
+            assert(numel(r.ref125) == obj.LOOP_N && strtrim(string(r.profile)) == "legacy-ofdm64-truncated-v1", ...
                 'a2live:Reference', 'Wrong legacy reference');
             obj.Ref = r.ref125(:); obj.Burst = double(r.burst125);
             obj.RefFftConj = conj(fft(obj.Ref));
+            obj.RefAct = origapp.windowActivityModel(obj.Ref);
         end
 
-        function m = availableChannels(obj) %#ok<MANU>
-            m = origapp.LegacyVsaBackend.AVAILABLE;
+        function m = availableChannels(obj)
+            m = obj.AVAILABLE;
         end
 
         function open(obj)
@@ -132,9 +168,13 @@ classdef LegacyVsaBackend < handle
             obj.Client = c; obj.Stream = c.GetStream();
             obj.Hdr = NET.createArray('System.Byte', obj.HEADER_BYTES);
             obj.Body = NET.createArray('System.Byte', obj.FRAME_BYTES + 36 + 8192);
+            obj.ExtBuf = NET.createArray('System.Byte', obj.EXT_BYTES);
+            obj.JsonBuf = NET.createArray('System.Byte', obj.EXT_JSON_MAX);
             obj.Stream.ReadTimeout = int32(10000);
             magic = obj.readBlocking(8);
-            assert(isequal(magic(:).', uint8(['R4X2IQ2' newline])), 'a2live:Protocol', 'Wrong magic (need helper v2)');
+            want = ifelse(obj.WireMode == "window4", 'R4X2IQ3', 'R4X2IQ2');
+            assert(isequal(magic(:).', uint8([want newline])), 'a2live:Protocol', ...
+                'Wrong magic (wireMode %s needs helper %s)', obj.WireMode, want);
             n = double(typecast(obj.readBlocking(4),'uint32'));
             assert(n < 65536, 'a2live:Protocol', 'Oversized header');
             md = jsondecode(native2unicode(obj.readBlocking(n).','UTF-8'));
@@ -160,12 +200,22 @@ classdef LegacyVsaBackend < handle
             if ~obj.Pending, obj.sendRequest(); end
             while true
                 obj.updateStale();
-                if ~obj.InBody, target = obj.Hdr; need = obj.HEADER_BYTES;
-                else, target = obj.Body; need = obj.BodyNeed; end
+                switch obj.Stage
+                    case 0, target = obj.Hdr; need = obj.HEADER_BYTES;
+                    case 1, target = obj.ExtBuf; need = obj.EXT_BYTES;
+                    case 2, target = obj.JsonBuf; need = obj.BodyNeedJson();
+                    otherwise, target = obj.Body; need = obj.BodyNeed;
+                end
                 if obj.Got == need
-                    if ~obj.InBody
-                        if obj.headerComplete(), return; end   % END2
+                    if obj.Stage == 0
+                        if obj.headerComplete(), return; end   % END2/END3
                         continue
+                    elseif obj.Stage == 1
+                        obj.extensionComplete(); continue
+                    elseif obj.Stage == 2
+                        obj.ExtBytes = [obj.ExtBytes; reshape(uint8(obj.JsonBuf), [], 1)];
+                        obj.ExtBytes = obj.ExtBytes(1:obj.EXT_BYTES + need);
+                        obj.Stage = 3; obj.Got = 0; continue
                     end
                     break
                 end
@@ -191,18 +241,28 @@ classdef LegacyVsaBackend < handle
 
         function vsaReset(obj, request)
             assert(request.fs == 125e6, 'a2live:Vsa', 'Legacy profile needs fs 125 MHz');
-            assert(request.dataChan == obj.N, 'a2live:Vsa', 'dataChan must be %d (full-RAM contiguous capture)', obj.N);
+            assert(request.dataChan == obj.N, 'a2live:Vsa', 'dataChan must be %d (%s)', obj.N, obj.WireMode);
             setx = string(request.setupFile);
             if strlength(setx) == 0, setx = string(obj.Config.setupPath); end
             assert(isfile(setx) && origapp.LegacyVsaBackend.sha256(setx) == string(obj.Config.setupSha256), ...
                 'a2live:Vsa', 'SETX is not the matched FFT64 setup');
             if ~isempty(obj.Session) && isvalid(obj.Session), return; end   % owned session kept
+            % A failed start can leave the started VSA running on the startup
+            % port; retrying would only collide with it ("port in use").
+            assert(strlength(obj.VsaStartError) == 0, 'a2live:VsaStart', ...
+                'Owned VSA start failed earlier and is not retried: %s', obj.VsaStartError);
             vc = struct('dllPath', obj.Config.dllPath, 'fsHz', 125e6, 'fcHz', 0, ...
                 'bandwidthHz', 125e6, 'captureSamples', 16384, 'visible', logical(obj.Config.visible), ...
                 'setupPath', char(setx), 'startupPort', obj.Config.vsaPort, ...
                 'maxInputSamples', obj.N, 'allowSetxStatus32', true, ...
-                'syncCorrThreshold', obj.Config.vendorReadThreshold);   % raw read; guard below
-            obj.Session = rfsoc.VsaSession(vc);
+                'syncCorrThreshold', obj.Config.vendorReadThreshold, ...   % raw read; guard below
+                'startupTimeoutSeconds', obj.Config.vsaStartupTimeoutSeconds);
+            try
+                obj.Session = rfsoc.VsaSession(vc);
+            catch er
+                obj.VsaStartError = string(er.message);
+                rethrow(er);
+            end
             obj.DisplaySupported = ismethod(obj.Session, 'setDisplayStatus');
             obj.showStatus("RFSoC native VSA [" + obj.SourceTag + "] | waiting for first frame (legacy FFT64, guard lock>=" + ...
                 obj.Config.lockThreshold + " sync>=" + obj.Config.syncCorrThreshold + ")");
@@ -224,16 +284,14 @@ classdef LegacyVsaBackend < handle
             obj.WarmupSeconds(end+1) = toc(t);
         end
 
-        function vsaSend(obj, buffer)
+        function vsaSend(obj, buffer, info)
             x = buffer(:);
-            % Only the measured stream may be analysed: a placeholder column (or
-            % any other buffer) is refused, never sent to VSA as data.
-            assert(~isempty(obj.LastMeasured) && isequal(x, obj.LastMeasured), 'a2live:Channel', ...
-                'vsaSend input is not the measured ADC_D stream (available channels [1 0 0 0])');
+            if nargin < 3, info = struct(); end
+            inputKind = obj.classifyVsaInput(x, info);
             if isempty(obj.Session) || ~isvalid(obj.Session)
                 error('a2live:Vsa','vsaSend before vsaReset (no owned VSA session)');
             end
-            assert(numel(x) == obj.N && all(isfinite(x)), 'a2live:Vsa', 'Need one full contiguous capture');
+            assert(numel(x) == obj.N && all(isfinite(x)), 'a2live:Vsa', 'Need one full contiguous capture/window');
             if obj.Config.orientation == "IplusjQ", x = conj(x); end
             A = obj.analyzeBlocks(x);
             Aother = obj.analyzeBlocks(conj(x));
@@ -311,10 +369,16 @@ classdef LegacyVsaBackend < handle
                 'vendorSync', sync, 'vendorFresh', r.fresh, 'vendorStatus', string(r.status), ...
                 'sentFloats', r.sentFloats, 'elapsedSeconds', r.elapsedSeconds, ...
                 'iqStatus', obj.field(r.quality,'iqStatus'), 'summaryStatus', obj.field(r.quality,'summaryStatus'), ...
-                'lockThreshold', obj.Config.lockThreshold, 'syncCorrThreshold', obj.Config.syncCorrThreshold);
+                'lockThreshold', obj.Config.lockThreshold, 'syncCorrThreshold', obj.Config.syncCorrThreshold, ...
+                'wireMode', obj.WireMode, 'vsaInput', inputKind, 'inputLock', lock, ...
+                'rawStreamLocks', obj.metaField(m, 'hostStreamLocks'), 'boardStreamLocks', obj.metaField(m, 'boardStreamLocks'), ...
+                'windowStart', obj.metaField(m, 'windowStart'), 'captureSha256', obj.metaField(m, 'captureSha256'), ...
+                'windowSha256', obj.metaField(m, 'windowSha256'), 'boardSelectS', obj.metaField(m, 'boardSelectS'), ...
+                'hostCheckS', obj.metaField(m, 'hostCheckS'), 'boundaryFree', obj.metaField(m, 'boundaryFree'), ...
+                'integrityReason', obj.metaField(m, 'integrityReason'));
             if isempty(obj.Log), obj.Log = e; else, obj.Log(end+1) = e; end
-            fprintf('A2VSA seq=%d phase=%s age=%.2fs lock=%.3f/%.3f win=%d..%d vendorEVM=%.4f%% sync=%.4f guard=%d %s :: %s\n', ...
-                e.sequence, e.phase, e.ageAtReceipt, lock, lockOther, w(1), w(end), r.evmPercent, sync, valid, ...
+            fprintf('A2VSA seq=%d phase=%s input=%s age=%.2fs lock=%.3f/%.3f win=%d..%d vendorEVM=%.4f%% sync=%.4f guard=%d %s :: %s\n', ...
+                e.sequence, e.phase, inputKind, e.ageAtReceipt, lock, lockOther, w(1), w(end), r.evmPercent, sync, valid, ...
                 s.reason, r.status);
             if strlength(string(obj.Config.logFile)) > 0
                 fid = fopen(obj.Config.logFile,'a'); fprintf(fid,'%s\n',jsonencode(e)); fclose(fid);
@@ -362,7 +426,8 @@ classdef LegacyVsaBackend < handle
             % by whole bursts, but its burst phase (i mod B) is not. Inside one
             % contiguous pass psi = (n - i mod B) mod B is constant (+-1 per dropped
             % sample); at the truncation boundary it jumps by B - 21047 = 6459.25.
-            N = obj.N; L = 8192; nb = N/L; B = obj.Burst;
+            N = obj.LOOP_N; L = 8192; nb = numel(x)/L; B = obj.Burst;
+            assert(nb == fix(nb) && nb >= 1, 'a2live:Window', 'Window length must be a multiple of 8192');
             lock = zeros(1,nb); psi = zeros(1,nb); loopIdx = zeros(1,nb);
             for j = 1:nb
                 xb = zeros(N,1); r = (j-1)*L + (1:L);
@@ -380,13 +445,22 @@ classdef LegacyVsaBackend < handle
             % matched loop range crosses the loop end; always drop the last block.
             wraps = find(loopIdx + L > N);
             excl = unique([jumps, jumps + 1, wraps, nb]);
+            if obj.WireMode == "window4"
+                % v3: the board already excluded the capture's last block. The
+                % legacy loop is burst-periodic (bursts correlate ~0.98), so the
+                % block loop index - and the "matched range crosses the loop end"
+                % rule - is ambiguous by whole bursts (live false rejections);
+                % only the burst-phase jumps (psi), which a real wrap (6459) or
+                % a loss always produces, mark a boundary.
+                excl = unique([jumps, jumps + 1]);
+            end
             A = struct('medianLock', median(lock), 'lock', lock, 'loopIdx', loopIdx, ...
                 'psi', psi, 'dpsi', d, 'jumps', jumps, 'wraps', wraps, 'boundaryBlocks', excl, ...
                 'jumpSizes', d(jumps), 'blockLen', L);
         end
 
         function [win, note] = chooseWindow(obj, A)
-            N = obj.N; L = A.blockLen; nb = N/L;
+            N = numel(A.lock)*A.blockLen; L = A.blockLen; nb = N/L;
             if A.medianLock < obj.Config.lockThreshold
                 win = (1:N).'; note = 'unlocked: whole capture from start (negative control), boundary unknown'; return
             end
@@ -406,7 +480,7 @@ classdef LegacyVsaBackend < handle
                     obj.Config.minWindow, mat2str(A.jumps));
             end
             win = ((best(1)-1)*L + 1 : (best(2)-1)*L).';
-            unexpected = A.jumpSizes(abs(abs(A.jumpSizes) - (5*obj.Burst - N)) > 300);
+            unexpected = A.jumpSizes(abs(abs(A.jumpSizes) - (5*obj.Burst - obj.LOOP_N)) > 300);
             note = sprintf('blocks %d..%d, jumps %s (sizes %s), wraps %s, excluded %s%s', best(1), best(2)-1, ...
                 mat2str(A.jumps), mat2str(round(A.jumpSizes)), mat2str(A.wraps), mat2str(A.boundaryBlocks), ...
                 repmat(' UNEXPECTED-JUMP', 1, ~isempty(unexpected) || numel(A.jumps) > 1));
@@ -416,7 +490,11 @@ classdef LegacyVsaBackend < handle
             % Offline replay of a genuine stored capture (measured column only)
             % through the same guard; no board. x = ADC counts, I - 1j*Q.
             obj.SourceTag = "OFFLINE REPLAY - NOT LIVE";
-            obj.LastMeasured = x(:)/2^16;
+            if size(x,2) == 4
+                obj.LastMeasured4 = x/2^16; obj.LastMeasured = x(:,1)/2^16;
+            else
+                obj.LastMeasured = x(:)/2^16;
+            end
             t = origapp.LegacyVsaBackend.now();
             obj.LastFrameMeta = struct('timestamp', t, 'sequence', sequence, 'phase', phase, ...
                 'hostRequestSent', t, 'hostReceived', t, 'boardDelayS', 0, 'anchorTimestamp', NaN, ...
@@ -424,8 +502,43 @@ classdef LegacyVsaBackend < handle
             frame = obj.LastFrameMeta;
             obj.vsaSend(obj.LastMeasured);
         end
+
+        function A = hostWindowCheck(obj, X)
+            % Independent host check of one v3 window (N-by-4, I - jQ counts):
+            % per-stream wanted-reference block locks, and sample continuity of
+            % the strongest stream by origapp.windowIntegrity (frame-timing
+            % model; covers the first/last 8192-row blocks, fails closed where
+            % the data cannot show a wrap). Same orientation as vsaSend. The
+            % 8192-block burst-phase jumps are kept only as a logged diagnostic:
+            % they are burst-label ambiguous (live seq-25 false positive) and
+            % blind inside the first/last block.
+            if obj.Config.orientation == "IplusjQ", X = conj(X); end
+            locks = zeros(1, size(X,2)); B = []; kb = 1;
+            for k = 1:size(X,2)
+                Ak = obj.analyzeBlocks(X(:,k));
+                locks(k) = Ak.medianLock;
+                if isempty(B) || Ak.medianLock > B.medianLock, B = Ak; kb = k; end
+            end
+            I = struct('ok', false, 'reason', "no stream locked", 'lagSpread', NaN, 'minCorr', NaN, ...
+                'anchorsTried', 0, 'elapsedS', 0, 'startPhase', NaN, 'endPhase', NaN);
+            if max(locks) >= obj.Config.lockThreshold
+                I = origapp.windowIntegrity(X(:,kb), obj.Ref, obj.RefFftConj, obj.Burst, obj.RefAct);
+            end
+            A = struct('streamLocks', locks, 'boundaryFree', logical(I.ok), 'integrityReason', string(I.reason), ...
+                'integrityStream', kb - 1, 'lagSpread', I.lagSpread, 'minCorr', I.minCorr, ...
+                'anchorsTried', I.anchorsTried, 'integrityS', I.elapsedS, ...
+                'startPhase', I.startPhase, 'endPhase', I.endPhase, ...
+                'legacyPsiJumps', B.jumps, 'wraps', B.wraps, 'loopIdx1', B.loopIdx(1), 'psi', B.psi);
+        end
     end
     methods (Static)
+        function ok = validWindowSummary(info)
+            % Fail closed on a selector fallback, missing or malformed JSON.
+            ok = isstruct(info) && isscalar(info) && isfield(info,'candidate');
+            if ~ok, return; end
+            c = string(info.candidate);
+            ok = isscalar(c) && ~ismissing(c) && any(c == ["before-wrap","after-wrap","nowrap","clear"]);
+        end
         function h = sha256(path)
             md = System.Security.Cryptography.SHA256.Create();
             fs = System.IO.File.OpenRead(char(path));
@@ -434,6 +547,9 @@ classdef LegacyVsaBackend < handle
         end
         function v = field(s, name)
             v = NaN; if isstruct(s) && isfield(s,name), v = s.(name); end
+        end
+        function v = metaField(s, name)
+            v = []; if isstruct(s) && isfield(s,name), v = s.(name); end
         end
         function tag = sourceTag(src)
             if src == "rfsoc4x2-hardware", tag = "LIVE HW";
@@ -481,18 +597,28 @@ classdef LegacyVsaBackend < handle
             assert(any(string(md.source) == ["rfsoc4x2-hardware","offline-fake"]) && ...
                 string(md.source) == string(obj.Config.expectSource), 'a2live:Metadata', ...
                 'Stream source "%s" differs from expected "%s"', string(md.source), string(obj.Config.expectSource));
-            assert(md.magic_version == 2 && string(md.format) == obj.FORMAT && ...
-                string(md.capture) == "full-ram-contiguous" && md.adc_ram_words == 8*obj.N && ...
+            v3 = obj.WireMode == "window4";
+            assert(md.magic_version == 2 + v3 && string(md.format) == obj.FORMAT && ...
+                string(md.capture) == "full-ram-contiguous" && md.adc_ram_words == 8*obj.LOOP_N && ...
                 md.samples_per_channel == obj.N && md.fs_hz == 125e6 && ...
                 string(md.profile) == "legacy-ofdm64-truncated-v1" && string(md.frame_header) == "<4sQQQq8sII", ...
                 'a2live:Metadata', 'Format/profile/capture metadata mismatch');
             wc = double(md.wire_channels(:).'); ac = double(md.available_channels(:).');
-            assert(isequal(wc, 0), 'a2live:Metadata', 'Wire must carry exactly stream0 (ADC_D); got %s', mat2str(wc));
+            if v3
+                assert(isfield(md,'window') && string(md.window) == "same-capture-contiguous" && ...
+                    isfield(md,'window_rows') && md.window_rows == obj.N && isfield(md,'capture_rows') && ...
+                    md.capture_rows == obj.LOOP_N && isfield(md,'frame_extension') && ...
+                    string(md.frame_extension) == "<II32s32sH" && isfield(md,'extension_json_max') && ...
+                    md.extension_json_max == obj.EXT_JSON_MAX, 'a2live:Metadata', 'v3 window metadata mismatch');
+                assert(isequal(wc, 0:3), 'a2live:Metadata', 'v3 wire must carry streams 0..3; got %s', mat2str(wc));
+            else
+                assert(isequal(wc, 0), 'a2live:Metadata', 'Wire must carry exactly stream0 (ADC_D); got %s', mat2str(wc));
+            end
             assert(isequal(ac, double(obj.AVAILABLE)), 'a2live:Metadata', ...
-                'availableChannels must be [1 0 0 0]; got %s', mat2str(ac));
+                'availableChannels must be %s; got %s', mat2str(double(obj.AVAILABLE)), mat2str(ac));
             assert(isfield(md,'compression') && any(string(md.compression) == ["none", obj.CODEC]), ...
                 'a2live:Metadata', 'Unknown wire compression');
-            assert(md.frame_bytes == 4*obj.N*numel(wc), 'a2live:Metadata', ...
+            assert(md.frame_bytes == 4*obj.N*numel(wc) && md.frame_bytes == obj.FRAME_BYTES, 'a2live:Metadata', ...
                 'frame_bytes %d differs from 4*N*channels = %d', md.frame_bytes, 4*obj.N*numel(wc));
             fp = double(md.frames_planned);
             assert(isscalar(fp) && fp >= 1 && fp == fix(fp), 'a2live:Bound', 'frames_planned invalid');
@@ -514,18 +640,19 @@ classdef LegacyVsaBackend < handle
             seq = double(typecast(h(5:12),'uint64'));
             mask = double(typecast(h(45:48),'uint32'));
             nbytes = double(typecast(h(49:52),'uint32'));
-            if kind == "END2"
-                assert(seq == obj.ExpectedSeq, 'a2live:Sequence', 'END2 count %d differs from %d frames received', seq, obj.ExpectedSeq);
+            v3 = obj.WireMode == "window4";
+            if kind == string(ifelse(v3, "END3", "END2"))
+                assert(seq == obj.ExpectedSeq, 'a2live:Sequence', 'END count %d differs from %d frames received', seq, obj.ExpectedSeq);
                 obj.Ended = true; obj.Pending = false; ended = true;
                 obj.updateStale(true);
                 return
             end
             z = string(obj.Metadata.compression) ~= "none";
-            assert(kind == string(ifelse(z, "IQZ2", "IQL2")), 'a2live:Protocol', 'Bad frame magic %s', kind);
+            assert(kind == string(ifelse(z, "IQZ", "IQL")) + string(2 + v3), 'a2live:Protocol', 'Bad frame magic %s', kind);
             assert(seq == obj.ExpectedSeq, 'a2live:Sequence', 'Missing/out-of-order frame: got seq %d, expected %d', seq, obj.ExpectedSeq);
             assert(obj.Metadata.continuous || seq < obj.Metadata.frames_planned, 'a2live:Bound', ...
                 'Frame %d exceeds the claimed bound of %d frames', seq, obj.Metadata.frames_planned);
-            assert(mask == 1, 'a2live:Metadata', 'Frame channel mask %d differs from metadata (1 = ADC_D)', mask);
+            assert(mask == ifelse(v3, 15, 1), 'a2live:Metadata', 'Frame channel mask %d differs from metadata', mask);
             if z
                 assert(nbytes > 36 && nbytes <= obj.FRAME_BYTES + 36 + 8192, 'a2live:Protocol', ...
                     'Compressed frame length %d out of range', nbytes);
@@ -534,6 +661,21 @@ classdef LegacyVsaBackend < handle
             end
             obj.BodyNeed = nbytes;
             obj.HdrBytes = h; obj.InBody = true; obj.Got = 0;
+            obj.Stage = ifelse(v3, 1, 3); obj.ExtBytes = [];
+        end
+
+        function extensionComplete(obj)
+            e = uint8(obj.ExtBuf); e = e(:);
+            n = double(typecast(e(73:74), 'uint16'));
+            assert(n >= 2 && n <= obj.EXT_JSON_MAX, 'a2live:Protocol', 'Frame extension JSON length %d out of range', n);
+            start = double(typecast(e(1:4), 'uint32'));
+            assert(start + obj.N <= obj.LOOP_N - 8192, 'a2live:Protocol', ...
+                'Window start row %d outside the capture (last block excluded)', start);
+            obj.ExtBytes = e; obj.Got = 0; obj.Stage = 2;
+        end
+
+        function n = BodyNeedJson(obj)
+            n = double(typecast(obj.ExtBytes(73:74), 'uint16'));
         end
 
         function frame = finishFrame(obj)
@@ -543,7 +685,7 @@ classdef LegacyVsaBackend < handle
             else
                 body = payload;
             end
-            obj.Pending = false; obj.Got = 0; obj.InBody = false;
+            obj.Pending = false; obj.Got = 0; obj.InBody = false; obj.Stage = 0;
             received = origapp.LegacyVsaBackend.now();
             seq = double(typecast(h(5:12),'uint64'));
             capMono = double(typecast(h(13:20),'uint64'));
@@ -558,19 +700,41 @@ classdef LegacyVsaBackend < handle
             assert(ts <= received, 'a2live:Timestamp', 'Acquisition timestamp after host receipt');
             obj.ExpectedSeq = seq + 1;
             w = double(typecast(body(:),'int16'));
-            w = reshape(w, 2, []).';
-            samples = zeros(obj.N, 4);
-            samples(:,1) = w(:,1) - 1j*w(:,2);      % measured ADC_D; columns 2..4 placeholders
-            obj.LastMeasured = samples(:,1)/2^16;   % what the UI hands to vsaSend for ch 1
+            v3 = obj.WireMode == "window4";
+            if v3
+                w = reshape(w, 8, []).';
+                samples = w(:,1:2:7) - 1j*w(:,2:2:8);   % four measured streams, same capture rows
+                obj.LastMeasured4 = samples/2^16;
+                obj.LastMeasured = samples(:,1)/2^16;
+            else
+                w = reshape(w, 2, []).';
+                samples = zeros(obj.N, 4);
+                samples(:,1) = w(:,1) - 1j*w(:,2);      % measured ADC_D; columns 2..4 placeholders
+                obj.LastMeasured = samples(:,1)/2^16;   % what the UI hands to vsaSend for ch 1
+            end
             obj.LastReceiptPosix = received;
             frame = struct('samples', samples, 'timestamp', ts, 'sequence', seq, ...
                 'phase', strtrim(char(h(37:44).')), 'availableChannels', obj.AVAILABLE, ...
-                'wireChannels', 0, 'wireFormat', obj.FORMAT, 'hostRequestSent', obj.RequestPosix, ...
+                'wireChannels', ifelse(v3, 0:3, 0), 'wireFormat', obj.FORMAT, 'hostRequestSent', obj.RequestPosix, ...
                 'hostReceived', received, 'boardDelayS', delay, 'requestBoundTimestamp', obj.RequestPosix + delay, ...
                 'anchorTimestamp', obj.Anchor.hostPosix + (capMono - obj.Anchor.boardMonoNs)/1e9, ...
                 'boardRealtime', boardReal);
+            if strlength(string(obj.Config.rawDir)) > 0     % every received window, also rejected ones
+                fid = fopen(fullfile(obj.Config.rawDir, sprintf('wire_%05d_%s.i16', seq, frame.phase)), 'w');
+                fwrite(fid, body, 'uint8'); fclose(fid);
+            end
+            if v3
+                try
+                    frame = obj.windowFrame(frame, body, samples);
+                catch er
+                    obj.logFrame(frame, string(er.identifier) + ": " + string(er.message));
+                    rethrow(er)
+                end
+            end
             obj.LastFrameMeta = rmfield(frame,'samples');
+            obj.logFrame(frame, "");
             obj.Delivered{end+1} = obj.LastFrameMeta;
+            if numel(obj.Delivered) > 5000, obj.Delivered(1) = []; end   % bounded history
             % Prefetch: at most ONE outstanding request. The next capture starts
             % now, so its transfer overlaps this frame's VSA processing; the
             % board still acquires only on request and the timestamp is the
@@ -582,16 +746,104 @@ classdef LegacyVsaBackend < handle
                     (obj.Metadata.continuous || seq + 1 < obj.Metadata.frames_planned)
                 obj.sendRequest();
             end
-            if strlength(string(obj.Config.rawDir)) > 0
-                fid = fopen(fullfile(obj.Config.rawDir, sprintf('wire_%05d_%s.i16', seq, frame.phase)), 'w');
-                fwrite(fid, body, 'uint8'); fclose(fid);
-            end
+        end
+
+        function logFrame(obj, frame, err)
+            % One JSON record per received frame (accepted or not), before any
+            % Controller/plot/VSA step: host verdict, reasons and provenance.
+            if strlength(string(obj.Config.frameLogFile)) == 0, return; end
+            e = rmfield(frame, intersect(fieldnames(frame), {'samples'}));
+            e.receiveError = err;
+            e.provenance = "windowStart, captureSha256, boardCandidate and boardStreamLocks are board-reported; " + ...
+                "windowSha256 (equal to the decoded bytes), hostStreamLocks and integrity are host-verified";
+            fid = fopen(obj.Config.frameLogFile, 'a'); fprintf(fid, '%s\n', jsonencode(e)); fclose(fid);
         end
 
         function sendRequest(obj)
             obj.RequestPosix = origapp.LegacyVsaBackend.now();   % before the write
             obj.Stream.Write(uint8('N'), 0, 1); obj.Pending = true;
-            obj.Got = 0; obj.InBody = false;
+            obj.Got = 0; obj.InBody = false; obj.Stage = 0;
+        end
+
+        function setMode(obj, mode)
+            obj.WireMode = string(mode);
+            if obj.WireMode == "window4"
+                obj.N = obj.WIN_N; obj.AVAILABLE = true(1,4); obj.FORMAT = "int16le-IQ-4ch-window-v3";
+                obj.FRAME_BYTES = 16*obj.WIN_N;
+            else
+                obj.N = obj.LOOP_N; obj.AVAILABLE = logical([1 0 0 0]); obj.FORMAT = "int16le-IQ-1ch-fullram-v2";
+                obj.FRAME_BYTES = 4*obj.LOOP_N;
+            end
+        end
+
+        function frame = windowFrame(obj, frame, body, samples)
+            % v3 extension: start row, SHA256 of the full capture and of the
+            % window; the window SHA must equal the decoded bytes (lossless,
+            % same window); a repeated full-capture SHA is a stale frame.
+            e = obj.ExtBytes;
+            start = double(typecast(e(1:4), 'uint32'));
+            selUs = double(typecast(e(5:8), 'uint32'));
+            fullSha = lower(string(reshape(dec2hex(e(9:40))', 1, [])));
+            winSha = e(41:72);
+            md = System.Security.Cryptography.SHA256.Create();
+            d = uint8(md.ComputeHash(body(:))); d = d(:);
+            assert(isequal(d, winSha(:)), 'a2live:Protocol', 'Window SHA256 differs from the decoded window');
+            assert(fullSha ~= obj.LastCaptureSha, 'a2live:Stale', 'Repeated full-capture SHA256 (stale capture)');
+            obj.LastCaptureSha = fullSha;
+            info = struct();
+            try
+                info = jsondecode(native2unicode(e(75:end).', 'UTF-8'));
+            catch
+            end
+            t = tic;
+            A = obj.hostWindowCheck(samples);
+            frame.windowStart = start;
+            frame.captureSha256 = fullSha;
+            frame.windowSha256 = lower(string(reshape(dec2hex(winSha)', 1, [])));
+            frame.boardSelectS = selUs/1e6;
+            frame.boardInfo = info;
+            frame.boardStreamLocks = obj.metaField(info, 'stream_locks');
+            frame.hostStreamLocks = A.streamLocks;
+            frame.signalChannels = A.streamLocks >= obj.Config.lockThreshold;
+            summaryOK = origapp.LegacyVsaBackend.validWindowSummary(info);
+            frame.boundaryFree = logical(A.boundaryFree && summaryOK && ...
+                max(A.streamLocks) >= obj.Config.lockThreshold);
+            frame.boardSummaryOk = summaryOK;
+            cand = obj.metaField(info, 'candidate');
+            if ischar(cand) || (isstring(cand) && isscalar(cand)), frame.boardCandidate = string(cand); else, frame.boardCandidate = "missing"; end
+            frame.integrityReason = A.integrityReason;
+            frame.integrityStream = A.integrityStream;
+            frame.integrityLagSpread = A.lagSpread;
+            frame.integrityMinCorr = A.minCorr;
+            frame.integrityS = A.integrityS;
+            frame.legacyPsiJumps = A.legacyPsiJumps;
+            frame.selectionProvenance = "board-reported window start, capture SHA and selector; host-verified window SHA, stream locks and sample continuity (windowIntegrity)";
+            frame.hostCheckS = toc(t);
+        end
+
+        function kind = classifyVsaInput(obj, x, info)
+            % v2: only the measured ADC_D stream. v3: a raw measured column of
+            % the last frame, or the app's combined output of that same frame.
+            if obj.WireMode ~= "window4"
+                assert(~isempty(obj.LastMeasured) && isequal(x, obj.LastMeasured), 'a2live:Channel', ...
+                    'vsaSend input is not the measured ADC_D stream (available channels [1 0 0 0])');
+                kind = "raw-ADC_D";
+                return
+            end
+            assert(~isempty(obj.LastMeasured4) && numel(x) == obj.N, 'a2live:Channel', ...
+                'vsaSend before a v3 frame or wrong length');
+            for k = 1:4
+                if isequal(x, obj.LastMeasured4(:,k)), kind = "raw-stream" + (k-1); return, end
+            end
+            assert(isstruct(info) && isfield(info,'kind') && any(string(info.kind) == ["combined","weighted-channel"]) && ...
+                isfield(info,'sequence') && isequal(info.sequence, obj.LastFrameMeta.sequence), 'a2live:Channel', ...
+                'vsaSend input is neither a measured stream nor the combined output of the current frame');
+            z = x == 0; run = 0; longest = 0;
+            for k = 1:numel(z)
+                if z(k), run = run + 1; longest = max(longest, run); else, run = 0; end
+            end
+            assert(longest < 256, 'a2live:Channel', 'Zero-padded VSA input refused (%d zero samples in a row)', longest);
+            kind = string(info.kind);
         end
 
         function updateTheta(obj, bound, hostT)

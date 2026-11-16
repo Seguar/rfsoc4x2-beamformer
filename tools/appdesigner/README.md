@@ -37,3 +37,25 @@ ComponentCodeGenerator, regenerates both component blocks from the model, splice
 them into the edited source and saves model and code together.
 `verify_mlapp_ext(root, export)` (fresh process) checks the result; it prints
 `VERIFY_MLAPP_EXT_COMPLETE`. Same R2026a internal-API caveats as above.
+
+## Property changes to existing components (responsive layout)
+
+`build_mlapp_resp(root, sourceExport, baseExport)` starts from a copy of the shipped
+151-component pair (`root/work/VSA_rfsoc_base_copy.mlapp`), calibrates every
+generator byte-exactly on it (component blocks, uifigure block, two-panel reflow
+rule in `reflowCode.m`), applies only the rows of `uiModifySpec.m` (old value
+asserted), regenerates the affected code and saves model and export together.
+`verify_mlapp_resp(root, export)` (fresh process) requires that exactly those
+properties differ (plus the figure sizes derived from Position) and prints
+`VERIFY_MLAPP_RESP_COMPLETE`.
+
+## Property changes to existing components (responsive layout)
+
+`build_mlapp_resp(root, sourceExport, baseExport)` starts from a copy of the shipped
+151-component pair (`root/work/VSA_rfsoc_base_copy.mlapp`), calibrates every
+generator byte-exactly on it (component blocks, uifigure block, two-panel reflow
+rule in `reflowCode.m`), applies only the rows of `uiModifySpec.m` (old value
+asserted), regenerates the affected code and saves model and export together.
+`verify_mlapp_resp(root, export)` (fresh process) requires that exactly those
+properties differ (plus the figure sizes derived from Position) and prints
+`VERIFY_MLAPP_RESP_COMPLETE`.

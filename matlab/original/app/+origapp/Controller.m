@@ -11,6 +11,9 @@ classdef Controller < handle
         Sent = strings(0,1)         % commands actually handed to backend.send
         IsOpen = false
         ConsecutiveErrors = 0
+        BoundaryFrames = 0         % intact frames with invalid sample continuity
+        ExpiredFrames = 0          % frames too old after processing
+        NoSignalFrames = 0          % intact frames rejected for missing wanted signal (not errors)
         TotalErrors = 0
         FramesAccepted = 0
         LastFrameTime = NaN         % posix seconds of the last accepted frame
@@ -115,6 +118,21 @@ classdef Controller < handle
                 assert(obj.Config.directOnly || all(m), 'origapp:Channels', ...
                     'Array mode needs 4 measured channels; backend reports %s.', mat2str(m));
             end
+            if ~obj.Config.directOnly && isfield(raw,'signalChannels')
+                % Backend's independent per-stream wanted-reference lock: a
+                % blank, dead or missing stream must not enter DOA/beamforming.
+                sc = raw.signalChannels;
+                assert(islogical(sc) && isequal(size(sc),[1 4]), 'origapp:Channels', ...
+                    'signalChannels must be a 1-by-4 logical mask.');
+                assert(all(sc), 'origapp:NoSignal', ...
+                    'No wanted-signal lock on stream(s) %s: array DOA/pattern unavailable.', mat2str(find(~sc)-1));
+            end
+            if isfield(raw,'boundaryFree')
+                assert(islogical(raw.boundaryFree) && isscalar(raw.boundaryFree), ...
+                    'origapp:Channels','boundaryFree must be a logical scalar.');
+                assert(raw.boundaryFree, 'origapp:Boundary', ...
+                    'Capture window crosses a loop boundary or sample jump: DOA/pattern unavailable.');
+            end
             obj.LastFrameTime = t;
             frame = raw;
         end
@@ -186,10 +204,18 @@ classdef Controller < handle
             obj.Config.dataChan = n;
         end
 
-        function sent = sendVsa(obj, buffer)
+        function sent = sendVsa(obj, buffer, info)
             % Native VSA feed is backend-owned (a2). Returns false when absent.
+            % info (optional): what the buffer is (kind "combined" / "weighted-
+            % channel", frame sequence, weights) so the backend labels the VSA
+            % input truthfully; raw measured columns need no info.
             sent = origapp.Controller.hasOp(obj.Backend, "vsaSend");
-            if sent, obj.Backend.vsaSend(buffer); end
+            if ~sent, return, end
+            if nargin < 3 || isempty(info) || ~isobject(obj.Backend)
+                obj.Backend.vsaSend(buffer);
+            else
+                obj.Backend.vsaSend(buffer, info);
+            end
         end
 
         function done = vsaReset(obj, request)
@@ -203,9 +229,26 @@ classdef Controller < handle
         end
 
         function mustStop = recordFailure(obj, err)
-            obj.ConsecutiveErrors = obj.ConsecutiveErrors + 1;
             obj.TotalErrors = obj.TotalErrors + 1;
             obj.LastError = string(err.identifier) + ": " + string(err.message);
+            if string(err.identifier) == "origapp:Boundary"
+                obj.BoundaryFrames = obj.BoundaryFrames + 1;
+                mustStop = false;
+                return
+            elseif string(err.identifier) == "origapp:Expired"
+                obj.ExpiredFrames = obj.ExpiredFrames + 1;
+                mustStop = false;
+                return
+            end
+            if string(err.identifier) == "origapp:NoSignal"
+                % A frame that arrived intact but has no wanted signal on some
+                % stream (blank DAC phase, lost cable) is not a transport
+                % failure: the display is cleared and acquisition continues.
+                obj.NoSignalFrames = obj.NoSignalFrames + 1;
+                mustStop = false;
+                return
+            end
+            obj.ConsecutiveErrors = obj.ConsecutiveErrors + 1;
             mustStop = obj.ConsecutiveErrors >= obj.Config.maxConsecutiveErrors;
         end
 

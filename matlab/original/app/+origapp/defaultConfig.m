@@ -19,6 +19,10 @@ cfg.frameTimeoutSeconds = 1;      % bound for one backend.next call
 cfg.staleSeconds = 2;             % older frames / longer gaps clear DOA and pattern
 cfg.maxConsecutiveErrors = 5;     % then the timer stops and the backend is closed
 cfg.directOnly = true;            % conducted/direct mode: no physical DOA or pattern
+cfg.arrayLabel = "array model";   % DOA/pattern scope shown in the titles; a common
+                                  % splitter feed is "common-feed diagnostic / array model"
+cfg.cutterAllowed = true;          % false (window4 launcher): the legacy Cutter would zero-fill
+                                  % the window outside its cut; it is refused, not run
 cfg.allowBoardCommands = false;   % queued board commands are only sent when true
 cfg.sendInitialTuning = false;    % original startup 'fc .../dataChan' command; off by default
 cfg.allowInstrumentCommands = false; % signal generator (genCtrl), Arduino programming

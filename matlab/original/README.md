@@ -38,7 +38,8 @@ sequence; missing metadata is rejected. Arbitrary stream flushing was excluded
 because it can lose I/Q alignment. All endpoints, setup selections and credentials
 belong in private session configuration.
 
-The original custom DAC-file upload buttons were unwired and remain pending.
+The original custom DAC-file upload buttons were unwired. The newer-app tab now
+prepares files; actual upload remains unavailable in the current backend.
 CONTROL_MAP.md documents each original control, supported behavior and limitations.
 
 Validation (synthetic IQ only):
@@ -70,12 +71,20 @@ file, expiry or losing the launcher stops the helper. Both DAC RAM clears and of
 commands must appear in the retrieved shutdown manifest. RF-off is not independently
 observed. Existing VSA instances are never attached or closed.
 
-Only ADC_D is transported: full contiguous 131072-complex captures, losslessly
-compressed with a decoded SHA-256 check. Other columns are explicit placeholders;
-unmeasured selection and array mode are refused. DOA/pattern therefore remain
-unavailable in this launch. The matched FFT64 waveform is truncated to DAC RAM
-capacity; VSA receives contiguous windows avoiding its loop boundary, without
-padding or joining captures. The reference and setup hashes are pinned.
+The default `--receive window4` transports all four measured ADC streams as a
+32768-row contiguous window from one capture. The helper selects the window on the
+board; the host checks its digest, per-stream lock and sample-phase jumps. The
+window start and full-capture digest remain in frame metadata. The plots show a
+common-feed diagnostic through an explicit uncalibrated array model, rather than
+physical arrival angle or measured radiation pattern. Native VSA measures the
+actual weighted app output. Optional `--save-windows` keeps private raw windows.
+The board can occasionally choose a bad window; host rejection remains required.
+
+`--receive adc-d` selects the earlier 131072-sample ADC_D-only mode. Its other
+columns are explicit placeholders, so array mode and unmeasured selection are
+refused. Neither mode tiles or joins independent captures. The reference and setup
+hashes are pinned. The responsive window fits the monitor, scrolls the controls,
+and provides zoom/pan plus Autoscale/Tight; manual zoom persists across frames.
 
 Acceptance requires independent wanted-reference lock >= 0.3, native VSA sync
 >= 0.9 and acquisition age <= 2 s. Raw vendor metrics and outliers remain logged.
@@ -124,3 +133,17 @@ when a matrix is supplied. The ported legacy calibration demonstrably gives wron
 DOA on an ideal synthetic array; its stored coupling tables are diagnostic only.
 Phase/power and IQ controls remain separate. This restriction needs an independently
 validated coupling algorithm before removal.
+
+The four-stream candidate passed a bounded 27-frame hardware run: 21/24 signal
+frames passed native VSA guards, combined EVM median2.45%, with one28.1% outlier
+retained. Two stale frames and one continuous window were rejected by the VSA path; the
+latter was a burst-label artefact, corrected by the newer host continuity model. This is
+common-feed conducted evidence. The board has also shown an intermittent stream3
+dropout. A long-running four-stream session and physical array work remain pending.
+
+The reviewed host continuity model checks the entire selected window, including
+edge blocks. Boundary and expired frames clear plots/Avg with VSA on or off;
+selector fallbacks are refused. VSA's separate old block analysis can still refuse
+some continuous windows. Two later bounded gates passed24/24 and22/22 host wave
+windows; VSA valid22/24 and19/22 with EVM medians2.255% and2.382%. These are
+combined-output metrics with no same-frame single-stream gain comparison.

@@ -215,9 +215,94 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
         PortMessages = strings(0,1) % VSA_rfsoc_new port: explicit unsupported/refused/result messages
         DacPrepared = []            % last prepared custom DAC waveform (int16) and its info
         SessionCalibration = []     % last angle calibration installed in this session (model)
+        % Responsive layout / axes interaction (scale-multichannel): per axes
+        % [DOA spectrum, beam pattern] - true = limits follow the data each
+        % frame (autoscale), false = user zoom/pan is kept until Autoscale.
+        AxesFollow = [true true]
+        AxesLastSet = {[], []}      % limits last set by the app (not by the user)
+        AxesButtons = {}            % Autoscale state buttons in the axes toolbars
+        AxesSetting = false         % true while the app itself sets limits
     end
 
     methods (Access = public)
+
+        function fitFigureToScreen(app, monitor)
+            % Landscape start-up window that fits the given monitor
+            % [left bottom width height] (default: primary monitor), leaving
+            % room for the task bar and the title bar. The window stays
+            % resizable/maximisable; the left control panel scrolls when
+            % shorter than its content.
+            if nargin < 2
+                mp = get(groot, 'MonitorPositions');
+                monitor = mp(1,:);
+            end
+            f = app.RFSoCBeamformerUIFigure;
+            w = min(1180, monitor(3) - 40);
+            h = min(680, monitor(4) - 110);
+            w = max(w, 400); h = max(h, 300);
+            f.Position = [monitor(1) + round((monitor(3)-w)/2), ...
+                monitor(2) + max(50, round((monitor(4)-h)/2)), w, h];
+            app.LeftPanel.Scrollable = 'on';
+            drawnow limitrate;
+            try, scroll(app.LeftPanel, 'top'); catch, end
+        end
+
+        function setAxesFollow(app, k, follow)
+            % k = 1 DOA spectrum, 2 beam pattern. follow=true re-enables
+            % autoscale (applied immediately to the current data).
+            app.AxesFollow(k) = logical(follow);
+            if numel(app.AxesButtons) >= k && ~isempty(app.AxesButtons{k}) && isvalid(app.AxesButtons{k})
+                app.AxesButtons{k}.Value = matlab.lang.OnOffSwitchState(logical(follow));
+            end
+            if follow, applyAxesLimits(app, k, true); end
+        end
+
+        function applyAxesLimits(app, k, force)
+            % Autoscale (tight) limits from the plotted data of axes k:
+            % X = full scan axis; Y = data range with a margin (DOA spectrum
+            % normalised 0..1; pattern from its deepest null, floor -80 dB).
+            % Kept unchanged while the user zoom/pan is active unless forced.
+            if nargin < 3, force = false; end
+            if ~app.AxesFollow(k) && ~force, return; end
+            ax = app.UIAxes; if k == 2, ax = app.UIAxes2; end
+            if ~isvalid(ax), return; end
+            sa = app.scan_axis;
+            xl = [sa(1) sa(end)]; if xl(1) >= xl(2), xl = xl(1) + [-1 1]; end
+            y = [];
+            ln = findobj(ax, 'Type', 'line');
+            for j = 1:numel(ln)
+                yd = ln(j).YData; xd = ln(j).XData;
+                if numel(yd) > 2 && numel(xd) == numel(yd), y = [y yd(isfinite(yd))]; end %#ok<AGROW>
+            end
+            if k == 1
+                yl = [0 1.05];
+                if ~isempty(y), yl = [min(0, min(y)) max(1.05, max(y)*1.05)]; end
+            else
+                yl = [-30 0.5];
+                if ~isempty(y)
+                    lo = max(min(y), -80);
+                    yl = [min(-10, floor(lo/5)*5 - 3), max(0.5, max(y) + 0.5)];
+                end
+            end
+            app.AxesLastSet{k} = [xl yl];
+            app.AxesSetting = true; c = onCleanup(@() clearAxesSetting(app));
+            ax.XLim = xl; ax.YLim = yl;
+        end
+
+        function clearAxesSetting(app)
+            if isvalid(app), app.AxesSetting = false; end
+        end
+
+        function axesLimitsChanged(app, k, ~)
+            % Limits changed by anything other than applyAxesLimits (toolbar
+            % zoom/pan, scroll-wheel zoom, restore view) stop autoscale for
+            % that axes so the next frame keeps the user's view.
+            ax = app.UIAxes; if k == 2, ax = app.UIAxes2; end
+            if app.AxesSetting || ~isvalid(ax), return; end
+            cur = [ax.XLim ax.YLim]; last = app.AxesLastSet{k};
+            if ~isempty(last) && all(abs(cur - last) <= 1e-9*max(1, abs(last))), return; end
+            if app.AxesFollow(k), setAxesFollow(app, k, false); end
+        end
 
         function startAcquisition(app)
             % Explicit start (also the Reset button). Opens the injected
@@ -472,6 +557,19 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             assert(ok, 'origapp:DacBf', '%s', why);
         end
 
+        function t = calibrationLabel(app)
+            % UNCALIBRATED unless the session holds a calibration table
+            % (config tables or an angle calibration installed this session).
+            c = app.Config.calibration;
+            if ~isempty(app.SessionCalibration) || ~isempty(c.steeringCorrection) || ~isempty(c.powCalibration)
+                t = "calibrated (session tables)";
+                if ~isempty(app.SessionCalibration), t = "calibrated (this session)"; end
+            else
+                t = "UNCALIBRATED";
+            end
+            t = string(t);
+        end
+
         function evmText = evmTitle(app)
             % EVM checkbox: guarded native-VSA EVM (never a raw SCPI read here).
             evmText = '';
@@ -557,18 +655,23 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             cla(app.UIAxes); cla(app.UIAxes2);
             app.lineHandles = struct('am',[],'bs',[],'cs',[],'am2',[],'bs2',[],'cs2',[],'adac',[],'adac2',[]);
             app.plot_handle = plot(app.UIAxes, app.scan_axis, nan(size(app.scan_axis)));
+            % Initial limits as the original ([0 1], [-30 0.5]); with
+            % Autoscale on they then follow the data (applyAxesLimits).
+            app.AxesLastSet = {[app.scan_axis(1) app.scan_axis(end) 0 1], ...
+                [app.scan_axis(1) app.scan_axis(end) -30 0.5]};
+            app.AxesSetting = true;
             app.UIAxes.XLim = [app.scan_axis(1) app.scan_axis(end)];
             app.UIAxes2.XLim = [app.scan_axis(1) app.scan_axis(end)];
             app.UIAxes.YLim = [0 1];
             app.UIAxes2.YLim = [-30 0.5];
+            app.AxesSetting = false;
             app.UIAxes.LineWidth = 2.5;
             app.UIAxes2.LineWidth = 2.5;
             app.UIAxes.XLabel.String = '\Theta^o';
             app.UIAxes.YLabel.String = 'DOA Normalized Spectrum';
             app.UIAxes2.XLabel.String = '\Theta^o';
             app.UIAxes2.YLabel.String = 'Gain Pattern (dB)';
-            app.UIAxes.FontSize = 14;    % was 30: long status titles were clipped
-            app.UIAxes2.FontSize = 14;
+            scaleAxesFonts(app);    % was 30, then 14: long status titles were clipped
         end
 
         function p = frameParams(app)
@@ -624,6 +727,9 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
         end
 
         function processArray(app, frame)
+            if app.cutter && ~app.Config.cutterAllowed
+                refuseCutter(app);   % before any zero-filled buffer exists
+            end
             out = origapp.processLegacyFrame(frame.samples, frameParams(app));
             if any(isnan(out.weights))
                 error('origapp:NoSignal', 'No signal (NaN weights).');
@@ -631,9 +737,19 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             app.weights = out.weights;
             app.correct_filter = out.iqFilter;   % adaptive IQ state carries to the next frame
             app.lastRaw = out.rawData;
-            if app.vsa && ~app.Controller.sendVsa(out.vsaBuffer)
+            % VSA gets the app's actual combined (weighted, band-filtered)
+            % output of this frame, labelled as such - never a substituted stream.
+            vsaKind = "combined"; if app.ch <= 4, vsaKind = "weighted-channel"; end
+            vsaInfo = struct('kind', vsaKind, ...
+                'sequence', frame.sequence, 'channel', app.ch, 'weights', out.weights);
+            if app.vsa && ~app.Controller.sendVsa(out.vsaBuffer, vsaInfo)
                 note(app, "VSA send not available from backend");
             end
+            % VSA may block: receipt-time freshness does not establish that
+            % these samples are still current when the plots are drawn.
+            age = origapp.Controller.nowSeconds() - frame.timestamp;
+            assert(age <= app.Config.staleSeconds && age >= -0.5, 'origapp:Expired', ...
+                'Acquisition expired before plotting (age %.2f s).', age);
             app.LastResult = out;
             estimated_angle = out.estimated_angle;
             dacBfStep(app, estimated_angle);
@@ -672,8 +788,12 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                 spectrumNote = [newline '(angle-only estimator: no spectrum)'];
             end
             mirNote = ''; if mir, mirNote = ' [mirrored]'; end
-            app.UIAxes.Title.String = ['Direction of Arrival (array model)' mirNote ':' newline 'Estimated Angles = ' ...
-                num2str(showAngles) newline 'DAC Angles = ' num2str(showDac) evmTitle(app) spectrumNote];
+            % Scope label (cfg.arrayLabel): e.g. a common splitter feed is a
+            % cable diagnostic through the explicit ULA model, never a
+            % physical arrival angle. Calibration state is always shown.
+            scope = string(app.Config.arrayLabel) + ", " + calibrationLabel(app);
+            app.UIAxes.Title.String = ['DOA spectrum [' char(scope) ']' mirNote newline 'Model angle = ' ...
+                num2str(showAngles) ' deg  DAC Angles = ' num2str(showDac) evmTitle(app) spectrumNote];
             cla(app.UIAxes2);
             app.lineHandles.am2 = []; app.lineHandles.bs2 = []; app.lineHandles.cs2 = [];
             app.lineHandles.adac2 = [];
@@ -703,8 +823,10 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                 null_diff = round(showPattern(app.scan_axis == ea(1)) - min(showPattern));
             end
             app.lineHandles = L;
-            app.UIAxes2.Title.String = ['Beam Pattern [' char(app.Config.bfEngine) ' ' char(app.bf) ']' mirNote ...
-                newline 'Gain Difference = ' num2str(abs(null_diff)) ' dB'];
+            app.UIAxes2.Title.String = ['Model pattern of applied weights [' char(app.Config.bfEngine) ' ' char(app.bf) ']' mirNote ...
+                newline 'Gain Difference = ' num2str(abs(null_diff)) ' dB (array model, ' char(calibrationLabel(app)) ')'];
+            applyAxesLimits(app, 1);
+            applyAxesLimits(app, 2);
             if app.MatlabPattern
                 if app.patternCount >= app.updrate
                     openPatternFigure(app);
@@ -806,6 +928,22 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             end
         end
 
+        function refuseCutter(app)
+            % window4: the legacy Cutter keeps only its cut and zero-fills the
+            % rest of the 32768-row window; the VSA zero-padding guard would
+            % refuse every such frame. Refuse the Cutter visibly instead.
+            msg = "Cutter disabled (window4): it would zero-fill the window outside its cut; full window used";
+            app.cutter = 0;
+            if isvalid(app.CutterCheckBox)
+                app.CutterCheckBox.Value = false;
+                app.CutterCheckBox.Enable = 'off';
+                app.CutterCheckBox.Text = 'Cutter (off: window4)';
+                app.CutterCheckBox.Tooltip = char(msg);
+            end
+            note(app, msg);
+            setStatus(app, msg);
+        end
+
         function note(app, msg)
             msg = string(msg);
             if ~any(app.Notes == msg), app.Notes(end+1,1) = msg; end
@@ -817,6 +955,10 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             app.CurrentPattern = [];
             app.weights = [];
             app.lastRaw = [];
+            % Frame averaging (Avg) restarts after any invalid/stale frame, so
+            % older frames never reappear inside a later "current" pattern.
+            if ~isempty(app.p_manual_mean), app.p_manual_mean(:) = 0; end
+            if ~isempty(app.yspec_mean), app.yspec_mean(:) = 0; end
             if ~isempty(app.plot_handle) && isvalid(app.plot_handle)
                 set(app.plot_handle, 'YData', nan(size(app.scan_axis)));
             end
@@ -901,6 +1043,61 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             end
             % Called from the UIFigure ObjectBeingDestroyed listener (startupFcn).
         end
+
+        function setupAxesInteraction(app)
+            % Axes toolbar with zoom in/out, pan, data tips, restore view and
+            % export, plus "Autoscale" (state: follow the data each frame) and
+            % "Tight" (one-shot fit). Scroll-wheel zoom and drag pan are on.
+            axs = {app.UIAxes, app.UIAxes2};
+            app.AxesButtons = cell(1, 2);
+            for k = 1:2
+                ax = axs{k};
+                ax.NextPlot = 'add';   % frames update children; axes properties persist
+                tb = axtoolbar(ax, {'export', 'datacursor', 'pan', 'zoomin', 'zoomout', 'restoreview'});
+                b = axtoolbarbtn(tb, 'state', 'Icon', axIcon(app, "auto"), 'Tooltip', ...
+                    'Autoscale: follow the data each frame (off after zoom/pan)', ...
+                    'Value', 'on', 'ValueChangedFcn', @(s,~) setAxesFollow(app, k, s.Value == "on"));
+                axtoolbarbtn(tb, 'push', 'Icon', axIcon(app, "tight"), 'Tooltip', 'Tight: fit the current data once', ...
+                    'ButtonPushedFcn', @(~,~) applyAxesLimits(app, k, true));
+                app.AxesButtons{k} = b;
+                ax.Interactions = [panInteraction, zoomInteraction, dataTipInteraction];
+                ax.XAxis.LimitsChangedFcn = @(~,e) axesLimitsChanged(app, k, e);
+                ax.YAxis.LimitsChangedFcn = @(~,e) axesLimitsChanged(app, k, e);
+            end
+            addlistener(app.RFSoCBeamformerUIFigure, 'SizeChanged', @(~,~) scaleAxesFonts(app));
+            scaleAxesFonts(app);
+        end
+
+        function img = axIcon(~, kind)
+            % 16x16 RGB toolbar icons drawn here (no image files): "auto" =
+            % four-way arrows (follow data), "tight" = bracket corners.
+            m = false(16);
+            if kind == "auto"
+                m(8:9, 2:15) = true; m(2:15, 8:9) = true;
+                for d = 0:3
+                    m(8-d:9+d, 2+d) = true; m(8-d:9+d, 15-d) = true;
+                    m(2+d, 8-d:9+d) = true; m(15-d, 8-d:9+d) = true;
+                end
+            else
+                m([2 15], 2:6) = true; m([2 15], 11:15) = true; m(2:6, [2 15]) = true; m(11:15, [2 15]) = true;
+                m(6:11, 6:11) = true;
+            end
+            img = repmat(0.97, 16, 16, 3);
+            rgb = [0.1 0.3 0.7];
+            for c = 1:3
+                ch = img(:,:,c); ch(m) = rgb(c); img(:,:,c) = ch;
+            end
+        end
+
+        function scaleAxesFonts(app)
+            % Smaller axes fonts on short windows so titles/labels never take
+            % the plot area (two stacked axes share the right panel height).
+            if ~isvalid(app) || ~isvalid(app.UIAxes), return; end
+            h = app.RFSoCBeamformerUIFigure.Position(4);
+            fs = 14; if h < 820, fs = 12; end
+            if h < 640, fs = 10; end
+            app.UIAxes.FontSize = fs; app.UIAxes2.FontSize = fs;
+        end
     end
 
 
@@ -922,6 +1119,7 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             end
             applyConfig(app, cfg);
             syncControlsFromState(app);
+            if ~cfg.cutterAllowed, refuseCutter(app); end
             app.Controller = origapp.Controller(cfg);
             if cfg.sendInitialTuning
                 queueFc(app);
@@ -931,8 +1129,11 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             app.AcqTimer = timer('ExecutionMode', 'fixedSpacing', 'BusyMode', 'drop', ...
                 'Period', cfg.periodSeconds, 'Name', 'VSA_rfsoc_refactor', ...
                 'TimerFcn', @(~,~) app.tick(), 'ErrorFcn', @(t,e) app.onTimerError(t,e));
+            setupAxesInteraction(app);
             if cfg.visible
-                movegui(app.RFSoCBeamformerUIFigure, "east");
+                % Fit a landscape window to the primary screen (the design size
+                % may exceed short laptop screens); resizable/maximisable.
+                fitFigureToScreen(app);
                 app.RFSoCBeamformerUIFigure.Visible = 'on';
             else
                 % App Designer shows the figure at the end of createComponents.
@@ -986,6 +1187,10 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
 
         % Value changed function: CutterCheckBox
         function CutterCheckBoxValueChanged(app, event)
+            if app.CutterCheckBox.Value && ~app.Config.cutterAllowed
+                refuseCutter(app);
+                return
+            end
             app.cutter = app.CutterCheckBox.Value;
         end
 
@@ -1557,14 +1762,14 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             currentFigureWidth = app.RFSoCBeamformerUIFigure.Position(3);
             if(currentFigureWidth <= app.onePanelWidth)
                 % Change to a 2x1 grid
-                app.GridLayout.RowHeight = {949, 949};
+                app.GridLayout.RowHeight = {680, 680};
                 app.GridLayout.ColumnWidth = {'1x'};
                 app.RightPanel.Layout.Row = 2;
                 app.RightPanel.Layout.Column = 1;
             else
                 % Change to a 1x2 grid
                 app.GridLayout.RowHeight = {'1x'};
-                app.GridLayout.ColumnWidth = {234, '1x'};
+                app.GridLayout.ColumnWidth = {250, '1x'};
                 app.RightPanel.Layout.Row = 1;
                 app.RightPanel.Layout.Column = 2;
             end
@@ -1580,14 +1785,14 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             % Create RFSoCBeamformerUIFigure and hide until all components are created
             app.RFSoCBeamformerUIFigure = uifigure('Visible', 'off');
             app.RFSoCBeamformerUIFigure.AutoResizeChildren = 'off';
-            app.RFSoCBeamformerUIFigure.Position = [100 100 835 949];
+            app.RFSoCBeamformerUIFigure.Position = [100 100 1180 680];
             app.RFSoCBeamformerUIFigure.Name = 'RFSoC Beamformer';
             app.RFSoCBeamformerUIFigure.SizeChangedFcn = createCallbackFcn(app, @updateAppLayout, true);
             app.RFSoCBeamformerUIFigure.Scrollable = 'on';
 
             % Create GridLayout
             app.GridLayout = uigridlayout(app.RFSoCBeamformerUIFigure);
-            app.GridLayout.ColumnWidth = {234, '1x'};
+            app.GridLayout.ColumnWidth = {250, '1x'};
             app.GridLayout.RowHeight = {'1x'};
             app.GridLayout.ColumnSpacing = 0;
             app.GridLayout.RowSpacing = 0;
@@ -1598,6 +1803,7 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             app.LeftPanel = uipanel(app.GridLayout);
             app.LeftPanel.Layout.Row = 1;
             app.LeftPanel.Layout.Column = 1;
+            app.LeftPanel.Scrollable = 'on';
 
             % Create IQtoolsButton
             app.IQtoolsButton = uibutton(app.LeftPanel, 'push');

@@ -151,15 +151,26 @@ The selected original-app native launcher is tools/run_original_vsa.py, distinct
 from tools/run_demo.py (earlier FFT256 frontend). Its FFT64 profile pins the legacy
 SETX and source waveform. Keep the profile-specific lock>=0.3 and sync>=0.9 guards,
 acquisition-age limit2s, bounded decompression and decoded SHA checks. Never admit
-frames by EVM magnitude. Only ADC_D is measured by its compressed transport; three
-zero placeholder columns must never enter physical DOA or beamforming. Rebuild both
+frames by EVM magnitude. `--receive adc-d` (v2) measures only ADC_D; its three zero
+placeholder columns must never enter DOA or beamforming. Default `--receive window4`
+(v3) carries all four streams as one board-selected 32768-row window of the same
+capture; DOA/pattern are a common-feed diagnostic through the ULA model, UNCALIBRATED,
+not arrival angles. The legacy loop is burst-periodic (5 frames of 5501.25 rows per
+burst; the wrap hides in a shortened 1543-row silent gap): 8192-block correlation
+cannot tell bursts apart and its burst-phase jumps are not a valid boundary test.
+The host check is origapp.windowIntegrity (one continuous frame-timing hypothesis for
+every active and silent row, edge rules fail closed); Controller refuses
+boundaryFree=false (origapp:Boundary) in every mode, VSA on or off, and the board
+selector (fallback/none/unparsable) is never trusted. Do not weaken it to pass
+frames. Missing-signal, boundary and expired frames clear the display without stopping. Rebuild both
 editable binary and export after UI changes; native backend-only changes do not
 change the component model. Freeze source/config before final physical gates.
 
 The newer-app port adds32 components on a fifth tab (151 total), preserving the
-119 original fingerprints. Use tools/appdesigner/build_mlapp_ext.m and
+119 original controls (responsive layout later changes only three whitelisted properties). Use tools/appdesigner/build_mlapp_ext.m and
 verify_mlapp_ext.m with uiExtensionSpec.m to rebuild/check this extended pair;
-the original119-only builder is for older artifacts. Calibration coupling matrices
+the original119-only builder is for older artifacts. Property changes to existing
+components use build_mlapp_resp/verify_mlapp_resp with the uiModifySpec whitelist. Calibration coupling matrices
 from the legacy algorithm are diagnostic only: processLegacyFrame explicitly
 refuses coupling compensation after a failed known-angle simulation. Do not remove
 that block without independent validation. New IQ/phase/command/upload controls

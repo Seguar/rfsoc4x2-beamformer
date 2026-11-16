@@ -9,9 +9,12 @@ VSA for constellation/EVM. The [original-app refactor](matlab/original/README.md
 retains all119 original controls, adds32 components on a fifth tab and defaults
 to the reviewed beamformer core. See the [newer-app feature map](docs/NEW_APP_PORT.md). Synthetic
 UI/failure tests pass and the editable `.mlapp` passes headless model/code checks.
-Its integrated native-VSA backend has a bounded hardware-tested predecessor;
-[the original-app launcher](matlab/original/README.md#native-vsa-launch) is undergoing
-final lifecycle validation. Editor round-trip testing remains pending. The separate dashboard below is retained as earlier experimental work.
+The [original-app launcher](matlab/original/README.md#native-vsa-launch) and
+responsive four-stream path pass bounded hardware checks, including blank, boundary
+and display-age rejection. The latest source is awaiting its exact-head relaunch. Editor round-trip testing remains pending. The separate dashboard below is retained as earlier experimental work.
+The original-app launcher now defaults to four measured streams from one capture,
+with responsive plots, zoom/pan and Autoscale. Its DOA scale and receive pattern are
+explicitly uncalibrated common-feed/model diagnostics in the current splitter wiring.
 
 **Status: direct ADC_D capture and live demodulation demonstrated with waveform2.**
 One hundred live frames had zero bit errors and no pilot-lock failures; measured

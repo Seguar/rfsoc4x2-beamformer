@@ -301,3 +301,39 @@ DSP GUI checks exercise direct and simulated-array modes, including a no-new-fra
 callback which must preserve a still-fresh display, noise rejection, pause clearing
 and close cleanup. Cold-render tests explicitly use a5s display stale threshold;
 the production default remains1s. These are display tests, not improved RF metrics.
+
+## Four-stream window profile (window4)
+
+`tools/run_original_vsa.py --receive window4` (default) starts the original app in
+array mode with dataChan 32768, ch All, fcAnt 3 GHz and the label "common-feed
+diagnostic / array model". Native VSA receives the app's combined weighted,
+band-filtered output of the same frame (logged `vsaInput=combined`); raw-stream
+locks are logged separately. Guards unchanged: lock >= 0.3, sync >= 0.9, age <= 2 s.
+`--receive adc-d` keeps the earlier direct ADC_D profile. `--save-windows` keeps
+every received window (also refused ones) in the private run folder; `frames.jsonl`
+logs every received frame with the host verdict; `--save-captures` (validate mode)
+keeps every full-RAM capture in the helper's private stage folder.
+
+Window admission (independent of VSA and of the VSA checkbox):
+- `origapp.windowIntegrity` checks sample continuity of the strongest stream: one
+  continuous burst-phase hypothesis must explain every predicted-active run
+  (256-row chunks, plus 32/16-row edge chunks, normalised correlation >= 0.6 at the
+  tracked lag +-2 rows, +-4 across a silent gap, best of 4 burst labels) and every
+  predicted-silent row (power < 5 % of active, 16-row guards); lag spread <= 8 rows
+  (~100 ppm one-row advances pass; a 300-row loss does not). Fail-closed edge rules:
+  a window that starts within 1543+16 rows before a burst start (a wrap could hide
+  in that silent prefix), ends within 16 rows after the truncation phase, or has an
+  active edge run < 64 rows is refused. Resolution limit: a jump in the outermost
+  ~8 active rows, or wholly inside a silent prefix/suffix (no active sample
+  affected), is not visible. Median 0.02-0.05 s per window.
+- `boundaryFree` also needs a recognised selector candidate (fallback, none, missing
+  or unparsable summaries are refused) and one stream locked. Window start, capture
+  SHA, candidate and board locks are board-reported; window SHA, stream locks and
+  continuity are host-verified.
+- Controller refuses `boundaryFree=false` as `origapp:Boundary` before any VSA send
+  or plot; after VSA returns, processArray refuses an acquisition older than 2 s as
+  `origapp:Expired` before LastResult/plots/averaging. Both clear the display and the
+  Avg history and are counted separately; neither stops acquisition.
+- The legacy Cutter zero-fills outside its cut; in window4 (`cutterAllowed=false`)
+  it is refused at start-up, in its callback and before processing, with a visible
+  note; the VSA zero-padding guard is kept.

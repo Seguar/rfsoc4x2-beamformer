@@ -508,3 +508,98 @@ rejection and transfer-latency work remains with the separate backend campaign.
   Editor round trip, measured antenna calibration, live IQ-comp benefit and physical
   DOA remain unproven. Remaining unported mmW/device/autocal features and hardware
   dependencies are listed in docs/NEW_APP_PORT.md.
+
+## Responsive window + four-stream window transport (2026-11-16)
+
+- **Test:** user report "app doesn't show DOA and patterns and can't scale". Causes:
+  launcher forced directOnly with ADC_D only (three zero placeholders), and an
+  835x949 design window with fixed 949-px reflow rows that did not fit a 1646x1029
+  (175 %) or 1366x768 screen. Fix both; bounded live gates on the current common
+  feed (DAC_B logical0, peak 1200, DAC_A RAM zero, ZAPDQ-4 -> ZA4PD-4 -> 4 ADCs).
+- **How:** three whitelisted model changes (figure 1180x680, LeftPanel scrollable,
+  left column 250) rebuilt with build_mlapp_resp and checked by verify_mlapp_resp
+  (only those properties differ; export blocks, uifigure block and generated reflow
+  equal the model); start-up fit to the screen; axes toolbar zoom/pan/data tips/
+  restore plus Autoscale (follows data, off after zoom/pan) and Tight. Helper v3
+  `--wire-mode window4`: one contiguous 32768-row window of the same full capture
+  carrying all four streams (524288 bytes, same as v2), selected on the board away
+  from the loop wrap; start row, full-capture and window SHA256 in every frame.
+  Host re-checks per-stream lock, burst-phase jumps, window SHA and repeated
+  capture SHA. Array mode feeds VSA the app's combined weighted output, labelled.
+- **Results:** runScaleFixture passes 9 window sizes (incl. 1366x697 work area,
+  narrow reflow) and 6 monitors; runWindow4Fixture (offline fake stream) recovers
+  steered 20/20/-35/10 deg, rejects blank, dead stream, stale capture, corrupt
+  window SHA, wrong-frame and zero-padded VSA input, a real loop wrap (jump
+  -6459.25) and a 300-sample loss. Live gates (bounded 15/27 frames) all ended with
+  both DAC RAMs zero readback and enables off commanded, clock lock 1 every frame.
+  Final gate: 21/24 wave frames guarded-valid, combined-output VSA EVM median
+  2.45 % (2.33-28.1 %, one outlier at sync 0.937 kept), sync >= 0.9366, ages at VSA
+  done median 1.26 s; 2 frames stale (warm-up 2.82 s, 2.11 s); 1 continuous window falsely rejected by
+  the old VSA block check; blanks rejected as no wanted signal. The initial replay
+  also falsely classified that window as a wrap.
+  **Corrected interpretation:** the seq-25 refusal came from the VSA path's own
+  8192-block analysis of the combined buffer, not from the host flag (host
+  `boundaryFree` was true and nothing enforced it; the frame was still plotted and
+  averaged). Frame-timing analysis of the saved raw window shows no wrap: frames
+  0,1,2,3,4,0 at constant timing and a 2165-row silent prefix on all four streams,
+  longer than the 1543-row pre-wrap gap. The "wrap" was a burst-label artifact of the
+  block analysis (block 1 aligned across the loop end). Frames stale at VSA
+  completion (2.82 s, 2.11 s) were also plotted. The combined-output EVM was not
+  compared with single-stream EVM on the same frames: no combining gain is shown.
+  A live stream-3 dropout (RMS 75 -> 6.9 counts for 5 frames) was rejected per frame.
+- **Conclusions:** DOA spectrum and pattern are measured four-stream data through
+  the explicit ULA model (d = lambda/2 at 3 GHz), labelled common-feed diagnostic /
+  array model and UNCALIBRATED; with a common splitter feed they are cable/path
+  diagnostics, never physical arrival angles. The loop is burst-periodic, so block
+  reference correlation is ambiguous by whole bursts; board selection uses self-
+  similarity. The old host burst-phase check has been replaced below.
+- **Ways to resolve:** measured geometry, connector mapping (streams 1-3 unverified)
+  and a fresh frozen calibration before any physical DOA/OTA claim; investigate the
+  stream-3 dropout cabling; durable window4 run after review. Editor round trip of
+  the rebuilt .mlapp remains untested.
+
+## Window4 host continuity check (review B1/M1/L1 follow-up)
+
+- **Test:** close the review's blocking finding: a window4 frame whose window holds
+  the loop wrap or a large sample loss must be refused by the host before Controller
+  admission, VSA and the DOA/pattern plots, with VSA on or off; frames that age past
+  2 s while VSA runs must not be drawn; the Cutter must not zero-fill window4 frames.
+- **How:** measured reference structure: a burst is 5 OFDM frames of 5501.25 rows
+  (~3000 active, ~2500 silent); frames differ, whole bursts repeat; the wrap sits in a
+  shortened 1543-row silent gap. `origapp.windowIntegrity` fits one continuous
+  frame-timing hypothesis to every active run (256-row chunks plus 32/16-row edge
+  chunks, correlation >= 0.6, lag +-2, +-4 across a gap, spread <= 8) and every
+  predicted-silent row; fail-closed edge rules (start <= 1559 rows before a burst
+  start, end at the truncation phase, active edge run < 64 rows). Controller refuses
+  `boundaryFree=false` (origapp:Boundary); selector fallback/none/missing/unparsable
+  summaries are refused; processArray re-checks age after VSA (origapp:Expired). The
+  board shifts window starts away from the host's edge rules (<= 2048 rows,
+  alignment unchanged). Developed on saved gate3b/4/5 windows and three saved
+  full-RAM captures; Python prototype and MATLAB agree on 256/256 real-data cases.
+- **Results (software):** real wraps cut from 3 full captures at 1395 positions (incl.
+  1-64 and 32704-32767 pre-wrap rows) all refused; 300-row losses at 15 positions on
+  30 clean windows refused unless the loss touches no active row interior (outermost
+  <= 8 active rows, or wholly in a silent prefix/suffix); ~100 ppm one-row advances
+  accepted (30/30); 300 synthetic captures with 13 slips: board -> host 297 accepted,
+  3 refused = the 3 windows that really held the wrap (board misjudgement), 0 false
+  accepts, 0 false refusals. runWindow4Fixture: VSA off 21/21 and VSA stub 9/9
+  (wrap in first/last block, 300-loss at edges, fallback/no-candidate/unparsable
+  summary refused before VSA/plots, Avg reset, no stop; delayed stub -> Expired
+  clears plots; recovery). Host check 0.02-0.12 s per window.
+- **Results (hardware, bounded, DAC_B logical0 peak 1200, DAC_A RAM zero, common
+  feed to 4 ADCs):** gate A 27 frames and held-out gate B 26 frames; every full-RAM
+  capture saved: capture SHA equals the board-reported SHA, every window equals its
+  capture rows; ground truth (shortened gap in the full capture) shows no wrap in any
+  of the 46 wave windows, all host-accepted (0 false accepts; no live bad window
+  occurred, so live refusal is shown only by fixtures and real-capture replays).
+  VSA (combined input) guarded-valid 22/24 and 19/22; refused: 4 frames older than
+  2 s at VSA completion (also not plotted: Expired) and one sync 0.852. Blanks
+  refused as NoSignal. Both runs ended with both DAC RAMs zeroed, enables off
+  commanded, clock lock 1 at every readback.
+- **Conclusions:** the edge-block blind spot is closed for wraps and large losses,
+  independent of VSA. The historical gate5 seq 25 window is continuous (the earlier
+  "wrap" was a burst-label artifact of the 8192-block analysis); VSA's own block
+  analysis can still refuse such a window (fail-closed, VSA only).
+- **Ways to resolve:** VSA-side window choice still uses the burst-ambiguous block
+  analysis (may refuse continuous windows); a durable window4 run after parent
+  review; physical DOA needs geometry, connector mapping and calibration.

@@ -321,3 +321,49 @@ rejection and transfer-latency work remains with the separate backend campaign.
   Editor round trip, measured antenna calibration, live IQ-comp benefit and physical
   DOA remain unproven. Remaining unported mmW/device/autocal features and hardware
   dependencies are listed in docs/NEW_APP_PORT.md.
+
+
+## Responsive four-stream integration (2026-11-16)
+
+Test / How: user scaling and missing-plot reports; s candidate replaces forced
+one-channel diagnostics with four measured same-capture32768-row windows, board
+selection plus independent host lock/jump/SHA checks. Full App Designer model
+rebuild changes only three intentional layout properties. Parent verified175
+manifest hashes,37 Python tests and primary MATLAB layout/transport results.
+
+Results / Conclusions: bounded gate5 has21/24 guarded-valid signal frames,
+combined-output EVM median2.45%, outlier28.1% kept; two stale frames rejected by VSA and one continuous window falsely refused
+by the old VSA block check (seq25; historical review corrected below). Model DOA/pattern now visible and labelled common-feed/uncalibrated.
+All candidate hardware runs ended RAMzero/readback and offcommands; no helper left.
+No physicalarrivalangle or spatialjammergain claim. Intermittent stream3 loss persists.
+
+Ways to resolve: parent added Controller admission of the host boundaryFree flag
+so rejected windows clear plots even with VSA off; parent MATLAB gates and a1 cold
+review are pending. Publish after gates and review, then run an exact-head bounded
+live check before leaving the updated app visible. No RF/clock/route changes.
+
+
+## Reviewed window4 resolution (2026-11-16)
+
+- Test / How: separate Controller boundary admission and post-VSA display-age gate;
+  strongest-stream continuous frame-timing model checks active chunks and silent
+  gaps independently of VSA. Invalid or ambiguous edge windows and selector
+  fallbacks clear plots and averaging without terminating capture. Cutter is
+  disabled for window4 before zero-filling. Responsive model/export rebuilt together.
+- Results: final candidate passes38 Python tests; VSA-off21/21 and VSA-stub9/9
+  fixtures;256 real-data Python/MATLAB verdicts agree,1395 real-wrap cuts refused.
+  Two bounded hardware gates saved and hash-verified every full capture/window:
+  parent independently matched all27/26 wire windows to same-capture rows and all
+  full-capture hashes. Host accepted24/24 and22/22 wave windows; native combined
+  VSA valid22/24 and19/22, EVM medians2.255% and2.382%. Four stale-at-completion
+  frames were not plotted; one VSA sync0.852 rejected. Both shutdowns passed.
+- Conclusions: real four-stream common-feed diagnostics and responsive plots work.
+  Historical seq25 was continuous: old block analysis/replay falsely called it a
+  wrap. This corrects both earlier report and review; no frame was forced to fail.
+  No same-frame single-stream comparison exists, so no combining-gain claim.
+- Ways to resolve: parent independent rebuild/15-case continuity/regression gate
+  passes (MATLAB exit0 and completion sentinel, rebuilt export identical).38 host
+  tests pass; publication and exact-head launcher check follow. A long live session,
+  physical DOA, OTA motion tracking and MXG rejection remain pending. VSA's separate
+  old block check can still refuse continuous windows; it fails closed. The host
+  model has finite edge resolution and is restricted to the pinned legacy profile.

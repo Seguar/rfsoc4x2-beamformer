@@ -28,3 +28,10 @@ that generated show line changed to off. The shipped app/export stay consistent.
 Opening/saving/exporting in the App Designer editor has not been checked. The
 artifact passed headless model/code readback and parser checks; this is not an editor
 round-trip claim. The original source repository and its app are untouched.
+
+Responsive revision: `build_mlapp_resp` / `verify_mlapp_resp` now rebuild and verify
+the151-component pair using `uiModifySpec`. Only three intentional model properties
+change: landscape figure position,250px left column and scrollable left panel.
+Other component changes are rejected; generated figure/layout/export code is
+checked against the saved model. Geometry properties derived from Position follow
+MATLAB serialization. Use the corresponding builder for the revision being edited.

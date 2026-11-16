@@ -25,6 +25,23 @@ v2 transport:
   * continuous mode exists ONLY with --continuous plus explicit --max-seconds
     (<= 14400) and --max-frames, and still needs --owner-stdin. There is no
     default unbounded run.
+v3 transport (--wire-mode window4, magic R4X2IQ3, frames IQZ3/IQL3):
+  * ALL FOUR measured streams, as one contiguous 32768-row window of the SAME
+    full-RAM capture (8 lanes = 4 x I,Q per row, 524288 bytes: the v2 byte size).
+    No resampling, tiling, joining of captures or sample modification.
+  * the window is selected on the board so it does not contain the legacy DAC
+    loop boundary. The loop is burst-periodic (bursts correlate ~0.98), so a
+    reference correlation cannot locate the wrap (live gate: 4/22 windows
+    crossed it); the wrap is found reference-free as the burst after which
+    rows no longer repeat the rows one burst earlier (self-similarity), and the
+    window keeps 12288 rows clear of it and of the capture's last 8192 rows.
+    Its 4096-row sub-blocks must lock to the staged ref125 (wanted signal) with
+    lag steps <= 4 and spread <= 16: the ~100 ppm one-sample slips are kept,
+    larger loss is refused. A blank/noise capture is flagged unlocked.
+    Selection never looks at EVM. Unlocked frames (blank/noise) get start 0.
+  * each frame carries the window start row, the SHA256 of the full capture and
+    of the selected raw window bytes, the board selection time and a bounded
+    JSON summary (per-stream lock, alignment, block lags, candidate note).
 Never replaces boot files, never manages services/network/clocks beyond the wrapper
 constructor (same as the reviewed helper), never touches the MXG.
 """
@@ -45,6 +62,302 @@ MAX_CONTINUOUS_S = 14400
 CODEC = 'byteplane-shuffle+deflate-raw-lossless'   # IQZ2 body = <I raw_len><32s sha256(raw wire)> + deflate
 PAD_BYTES = 262144                                  # PAD2 link warm-up filler (zeros, not ADC data)
 PAD_LIMIT = 3
+# v3 window4
+WIN = 32768                                          # rows (complex samples per stream) in the window
+WIRE_FORMAT3 = 'int16le-IQ-4ch-window-v3'            # per row: I0,Q0,I1,Q1,I2,Q2,I3,Q3
+WIRE_BYTES3 = WIN * 8 * 2
+MASK3 = 0b1111
+EXT3 = '<II32s32sH'                                  # start_row select_us sha(full) sha(window) json_len
+EXT3_JSON_MAX = 1024
+BLOCK = 8192
+SUB = 4096                                           # window check sub-block
+WRAP_GUARD = 12288                                   # rows kept clear of the wrap estimate (block resolution)
+LOCK_MIN = 0.3
+# Host window-integrity edge rules (matlab origapp.windowIntegrity), mirrored with margins so
+# the board does not hand the host a window it must refuse for lack of evidence:
+HOST_TRUNC_GAP, HOST_GUARD, HOST_MINRUN = 1543, 16, 64
+EDGE_MARGIN = 48
+NUDGES = [0] + [d * m for m in range(1, 17) for d in (128, -128)]   # start shifts tried, <= 2048 rows
+
+
+def _corr_fft():
+    try:
+        import scipy.fft as sf
+        return (lambda x, n=None: sf.fft(x, n, workers=-1)), (lambda x, n=None: sf.ifft(x, n, workers=-1))
+    except Exception:
+        return np.fft.fft, np.fft.ifft
+
+
+def self_similarity(z, burst, block=BLOCK, slip=6):
+    """Normalised correlation of each block with the rows one burst earlier (sm)
+    and one burst later (sp), best over +-slip lags. The legacy loop repeats
+    with the burst period except at the loop wrap (truncated last burst), so
+    sm is low for the burst after the wrap and sp for the burst before it.
+    NaN where the shifted block falls outside the capture."""
+    n = len(z); bi = int(round(burst)); nb = n // block
+    sm = np.full(nb, np.nan); sp = np.full(nb, np.nan)
+    prev = {-1: None, 1: None}                  # tracked lag per side (slips move it slowly)
+    for j in range(nb):
+        a = z[j * block:(j + 1) * block]
+        na = np.sqrt(np.vdot(a, a).real) + 1e-30
+        for sign, out in ((-1, sm), (1, sp)):
+            s0 = j * block + sign * bi
+            if s0 - slip < 0 or s0 + block + slip > n:
+                continue
+            lags = range(-slip, slip + 1) if prev[sign] is None else                 range(max(-slip, prev[sign] - 1), min(slip, prev[sign] + 1) + 1)
+            best, bd = 0.0, 0
+            for d in lags:
+                b = z[s0 + d:s0 + d + block]
+                v = abs(np.vdot(b, a)) / (na * np.sqrt(np.vdot(b, b).real) + 1e-30)
+                if v > best:
+                    best, bd = v, d
+            out[j] = best
+            prev[sign] = bd if best > 0.6 else None   # re-search fully after a low block
+    return sm, sp
+
+
+def find_wrap(sm, sp, burst, block=BLOCK, rel=0.85):
+    """Wrap row estimate from the self-similarity profiles (None if not seen):
+    first block of the low sm run, or the end of the low sp run. 'Low' is
+    relative to the median repeat similarity (a block only partly after the
+    wrap is partly low)."""
+    v = np.concatenate([sm[~np.isnan(sm)], sp[~np.isnan(sp)]])
+    low = rel * float(np.median(v)) if len(v) else 0.5
+    lm = np.where(np.isnan(sm), False, sm < low)
+    lp = np.where(np.isnan(sp), False, sp < low)
+    if lm.any():
+        j = int(np.flatnonzero(lm)[0])
+        if j > 0 and not np.isnan(sm[j - 1]):
+            return j * block, 'sm'                 # wrap inside block j-1 .. j
+        # low from the first defined block: the wrap is earlier, use sp if possible
+    if lp.any():
+        j = int(np.flatnonzero(lp)[-1])
+        return (j + 1) * block, 'sp'
+    if lm.any():
+        return int(np.flatnonzero(lm)[0]) * block, 'sm-edge'
+    return None, 'none'
+
+
+def window_candidates(w, n_loop, n=WIN, guard=WRAP_GUARD, block=BLOCK):
+    """Start rows of windows that end before the capture's last block and stay
+    `guard` rows clear of the wrap estimate w on both sides; the run right after
+    the wrap first, then the run before it."""
+    usable = n_loop - block
+    if w is None:
+        # not seen by the self-similarity: the wrap is at the very start (or in the
+        # excluded last block), so keep the guard after row 0
+        return [('nowrap', guard + k * SUB) for k in range(3) if guard + k * SUB + n <= usable]
+    out = []
+    for k in range(3):                          # a few starts per side (a loss jump may hit one)
+        a = w + guard + k * SUB
+        if a + n <= usable:
+            out.append(('after-wrap', int(a)))
+        b = w - guard - n - k * SUB
+        if b >= 0:
+            out.append(('before-wrap', int(b)))
+    if w + guard < 0 or w - guard > usable:     # wrap outside the usable rows
+        out.append(('clear', 0))
+    return out
+
+
+def ref_activity(ref, gap=256):
+    """Frame-level activity of the loop reference (same model as the host's
+    windowActivityModel): silent only inside a smoothed-quiet run >= gap rows."""
+    p = np.abs(np.asarray(ref, complex)) ** 2
+    n = len(p)
+    sm = np.convolve(np.concatenate([p[-16:], p, p[:15]]), np.ones(32) / 32, 'valid')[:n]
+    quiet = sm < 0.01 * np.mean(p[p > 0.1 * p.max()])
+    act = np.ones(n, bool)
+    d = np.diff(np.concatenate([[0], quiet.astype(np.int8), [0]]))
+    for a, b in zip(np.flatnonzero(d == 1), np.flatnonzero(d == -1)):
+        if b - a >= gap:
+            act[a:b] = False
+    return act
+
+
+def host_edges_ok(ph, n, burst, act, tail):
+    """True if a window starting at burst phase ph passes the host's edge rules
+    with EDGE_MARGIN rows to spare (start not in the pre-burst gap that could hide
+    a wrap, end not at the truncation phase, no short active run at either edge)."""
+    m = EDGE_MARGIN
+    ps = ph % burst
+    pe = (ph + n - 1) % burst
+    if ps > burst - (HOST_TRUNC_GAP + HOST_GUARD + m) or ps < HOST_GUARD + m:
+        return False
+    if tail - HOST_GUARD - m <= pe < tail + HOST_GUARD + m:
+        return False
+    i0, i1 = int(ps), int(pe) + int(burst)          # index both edges inside full bursts
+    if act[i0] and act[i0:i0 + HOST_MINRUN + m].sum() < HOST_MINRUN + m:
+        return False
+    if act[i1] and act[i1 - HOST_MINRUN - m + 1:i1 + 1].sum() < HOST_MINRUN + m:
+        return False
+    return True
+
+
+def block_lags(z, start, kk, ref, n_loop, n=WIN, block=BLOCK, search=32, hint=None, track=False):
+    """Per-block normalised correlation with the loop reference around the
+    alignment kk (loop index of row r = r - kk); returns (locks, lags). Without
+    hint: +-4 around the tracked lag, FFT +-search to (re)acquire; with hint
+    (lags of another stream of the same rows): hint-1..hint+1 only."""
+    fft, ifft = _corr_fft()
+    locks, lags = [], []
+    m = 1 << int(np.ceil(np.log2(block + 2 * search)))
+    pad = block + 2 * abs(search) + 2 * 64 + 64
+    ext = ref if len(ref) >= n_loop + pad else np.concatenate([ref[:n_loop], ref[:pad]])   # circular, sliceable
+    sl = lambda a, length: ext[a % n_loop:a % n_loop + length]
+    centre = 0
+    def near(seg, e, d):
+        c = np.array([abs(np.vdot(sl(e + int(x), block), seg)) for x in d])
+        i = int(np.argmax(c))
+        r = sl(e + int(d[i]), block)
+        return float(c[i] / (np.sqrt(np.vdot(r, r).real * np.vdot(seg, seg).real) + 1e-30)), int(d[i])
+    for j in range(n // block):
+        r0 = start + j * block
+        seg = z[r0:r0 + block]
+        e = (r0 - kk) % n_loop
+        if hint is not None:
+            lk, lg = near(seg, e, np.arange(hint[j] - 1, hint[j] + 2))
+        else:
+            lk, lg = (near(seg, e, np.arange(centre - 4, centre + 5)) if track and j else (0.0, 0))
+            if lk < LOCK_MIN:
+                d = np.arange(centre - search, centre + search + 1)
+                c = np.abs(ifft(fft(sl(e + centre - search, block + 2 * search), m) * np.conj(fft(seg, m)))[:2 * search + 1])
+                lk, lg = near(seg, e, [int(d[int(np.argmax(c))])])
+        locks.append(lk); lags.append(lg)
+        if track and lk >= LOCK_MIN:
+            centre = lg
+    return locks, lags
+
+
+_ACT = {}                                          # activity model cache per reference array
+
+
+def select_window(raw, ref, burst, ref_fft_conj=None, n=WIN):
+    """Board-local window selection on ONE full-RAM capture (raw: 8*N int16).
+    Returns (start_row, info). Never resamples or modifies samples; never uses EVM.
+
+    The legacy loop is burst-periodic (bursts correlate ~0.98 with each other),
+    so a reference correlation cannot tell which burst a block is; the loop
+    wrap (truncated last burst -> first burst) is the only discontinuity.
+    1. strongest stream; wanted-signal check by reference correlation of an
+       8192-row block (lock >= 0.3, else unlocked negative control).
+    2. wrap: self-similarity one burst apart (reference-free); rows after the
+       wrap do not repeat the rows one burst earlier.
+    3. window: 32768 rows clear of the wrap by WRAP_GUARD and before the last
+       block; its 4096-row sub-blocks must lock to the reference (alignment from
+       the window's first block, burst chosen so the window does not cross the
+       reference's own end) with lag steps <= 4 and spread <= 16 (slips only)."""
+    fft, ifft = _corr_fft()
+    t0 = time.perf_counter()
+    rows = raw.reshape(-1, 8)
+    n_loop = rows.shape[0]
+    assert len(ref) == n_loop
+    stream = lambda k: (rows[:, 2*k].astype(np.float32) + 1j * rows[:, 2*k+1].astype(np.float32)).astype(np.complex64)
+    rms = [float(np.sqrt(np.mean(rows[::4, 2*k:2*k+2].astype(np.float32) ** 2) * 2)) for k in range(4)]
+    ch = int(np.argmax(rms))
+    z = stream(ch)                                                  # I + jQ, the reference sense
+    if ref_fft_conj is None:
+        ref_fft_conj = np.conj(fft(ref.astype(np.complex64)))
+    refc = ref.astype(np.complex64)
+    refc = np.concatenate([refc, refc[:BLOCK + 256]])               # circular extension for slicing
+
+    def coarse(r0):
+        x = np.zeros(n_loop, np.complex64)
+        x[r0:r0 + BLOCK] = z[r0:r0 + BLOCK]
+        c = np.abs(ifft(fft(x) * ref_fft_conj))
+        k = int(np.argmax(c))
+        rr = refc[(np.arange(r0, r0 + BLOCK) - k) % n_loop]
+        return k, float(c[k] / (np.linalg.norm(z[r0:r0 + BLOCK]) * np.linalg.norm(rr) + 1e-30))
+
+    kk, lock = coarse(0)
+    if lock < LOCK_MIN:
+        kk, lock = coarse(BLOCK)
+    info = {'det_stream': ch, 'rms_sub4': [round(v, 2) for v in rms], 'lock_block': round(lock, 4)}
+    if lock < LOCK_MIN:
+        info.update(note='unlocked: start 0, boundary unknown (negative control)', start=0, candidate='none')
+        info['select_s'] = time.perf_counter() - t0
+        return 0, info
+    sm, sp = self_similarity(z, burst)
+    w, how = find_wrap(sm, sp, burst)
+    info.update(wrap_row=w, wrap_from=how, self_sim_prev=[None if np.isnan(v) else round(float(v), 2) for v in sm],
+                self_sim_next=[None if np.isnan(v) else round(float(v), 2) for v in sp])
+    tried = []
+    tail = n_loop - 4 * burst                         # truncated-burst length: phase change at the wrap
+    key = hashlib.sha256(np.ascontiguousarray(ref).tobytes()).hexdigest()
+    act = _ACT.get(key)
+    if act is None:
+        act = _ACT[key] = ref_activity(ref)
+    def align(s):
+        # the window's first block matches the loop at kk + m*burst (bursts alike)
+        # in the pass of block 0, or shifted by the wrap phase in the other pass
+        # scored on the window's first and last 4096 rows (exact burst ~0.98,
+        # an alike burst ~0.85); each part searches its own lag (slips)
+        parts = (s, s + n - SUB)
+        def score(k1, lags):
+            tot, first = 0.0, 0
+            for pi, p0 in enumerate(parts):
+                seg = z[p0:p0 + SUB]; ns = np.sqrt(np.vdot(seg, seg).real) + 1e-30
+                top, top_d = 0.0, 0
+                for d_ in lags:
+                    a0 = (p0 - k1 + d_) % n_loop
+                    r = refc[a0:a0 + SUB]
+                    v = abs(np.vdot(r, seg)) / (np.sqrt(np.vdot(r, r).real) * ns + 1e-30)
+                    if v > top:
+                        top, top_d = v, d_
+                tot += top
+                if pi == 0:
+                    first = top_d
+            return tot, first
+        cands = [int(round(kk + m_ * burst + c_ * tail)) % n_loop for m_ in range(5) for c_ in (0, 1)]
+        coarse_scores = [score(k1, range(-12, 13))[0] for k1 in cands]      # (peaks are 1 sample wide)
+        k1 = cands[int(np.argmax(coarse_scores))]
+        sc, lag_first = score(k1, range(-12, 13))
+        return (k1 - lag_first) % n_loop, sc / 2
+    usable = n_loop - BLOCK
+    for name, s in window_candidates(w, n_loop, n):
+        k1, l1 = align(s)
+        # The host refuses (fail closed) windows whose edges cannot show a wrap or
+        # loss (see host_edges_ok). Shift such a start by <= 2048 rows; the alignment
+        # is unchanged and the sub-block lag check below still runs on the new start.
+        ph = ((s - k1) % n_loop) % burst
+        for d_ in NUDGES:
+            if 0 <= s + d_ <= usable - n and host_edges_ok(ph + d_, n, burst, act, tail):
+                if d_:
+                    s += d_
+                    info['nudged'] = info.get('nudged', 0) + 1
+                break
+        # bursts are interchangeable: pick the burst whose loop range holds the whole window
+        base = (s - k1) % n_loop
+        shift = 0
+        while base + n > n_loop - 64 and shift < 6:
+            base = (base - burst) % n_loop; shift += 1
+        kk = int(round(s - base)) % n_loop
+        wl, wg = block_lags(z, s, kk, refc, n_loop, n, block=SUB, search=48, track=True)
+        tried.append(name)
+        steps = np.abs(np.diff(wg))
+        if (min(wl) >= LOCK_MIN and (steps.max() if len(steps) else 0) <= 4 and max(wg) - min(wg) <= 16):
+            info.update(start=int(s), candidate=name, kk=kk, sub_locks=[round(v, 3) for v in wl], sub_lags=wg,
+                        tried=len(tried), note='clear of the self-similarity wrap; sub-block lags consistent (slips only)')
+            break
+    if 'start' not in info:
+        info.update(start=0, candidate='fallback', kk=kk, tried=len(tried),
+                    note='no window clear of the wrap with consistent sub-block lags (sample loss or wrap unknown)')
+    hint = info.get('sub_lags') or block_lags(z, info['start'], info['kk'], refc, n_loop, n, block=SUB, search=48, track=True)[1]
+    sl = []
+    for k in range(4):
+        lk, _ = block_lags(z if k == ch else stream(k), info['start'], info['kk'], refc, n_loop, n, block=SUB, hint=hint)
+        sl.append(round(float(np.median(lk)), 4))
+    info['stream_locks'] = sl
+    info['select_s'] = time.perf_counter() - t0
+    return info['start'], info
+
+
+def frame_extension(start, select_s, full_sha_hex, window_bytes, info):
+    js = json.dumps(info, separators=(',', ':')).encode()
+    if len(js) > EXT3_JSON_MAX:
+        js = json.dumps({'note': 'summary truncated', 'start': start}).encode()
+    return struct.pack(EXT3, start, int(round(select_s * 1e6)), bytes.fromhex(full_sha_hex),
+                       hashlib.sha256(window_bytes).digest(), len(js)) + js
 
 
 def encode_wire(body):
@@ -234,7 +547,11 @@ def main():
     p.add_argument('--sampling-freq-unit', choices=['GHz'], required=True)
     p.add_argument('--request-timeout', type=float, default=30)
     p.add_argument('--wire-codec', choices=['raw', 'deflate'], default='deflate')
+    p.add_argument('--wire-mode', choices=['adc-d-fullram', 'window4'], default='adc-d-fullram')
     p.add_argument('--exclusive-control', action='store_true', required=True)
+    p.add_argument('--save-all-captures', action='store_true',
+                   help='bounded mode only: keep every full-RAM capture (raw_<seq>_<phase>.npy, 1 MiB each) '
+                        'next to the manifest for offline diagnosis of host-refused windows')
     a = p.parse_args()
     if a.rf_mhz != 3000:
         p.error('legacy profile validated only at 3000 MHz')
@@ -248,6 +565,8 @@ def main():
         if not a.schedule or a.max_frames is not None:
             p.error('bounded mode needs --schedule (<= 30 frames) and no --max-frames')
         phases, total = parse_schedule(a.schedule)
+    if a.save_all_captures and a.continuous:
+        p.error('--save-all-captures is for bounded schedules only')
     deadline = None if a.max_seconds is None else time.monotonic() + a.max_seconds
     threading.Thread(target=watch_owner, daemon=True).start()
     board = Path('/proc/device-tree/chosen/pynq_board').read_bytes().strip(b'\x00')
@@ -259,6 +578,11 @@ def main():
                 or float(data['dac_complex_fs']) != 500e6 or int(data['ram_words']) != RAM):
             raise ValueError('Reference is not the reviewed legacy truncated profile')
         dropped = int(data['dropped_complex_500'])
+        ref125 = np.asarray(data['ref125']).astype(np.complex128) if 'ref125' in data.files else None
+        burst125 = float(data['burst_complex_500']) / 4 if 'burst_complex_500' in data.files else None
+    v3 = a.wire_mode == 'window4'
+    if v3 and (ref125 is None or ref125.shape != (RAM // 8,) or not burst125):
+        raise ValueError('window4 needs the reference ref125 (131072 complex) and burst length')
     if words.dtype != np.dtype('<i2') or words.shape != (RAM,) or np.max(np.abs(words.astype(int))) > 1200:
         raise ValueError('Legacy helper requires 1048576 int16 words with peak <= 1200')
     manifest = {'board': board.decode(), 'rf_mhz': a.rf_mhz, 'dac': a.dac,
@@ -266,7 +590,9 @@ def main():
                 'receive_stream0_connector': 'ADC_D', 'fs_assumed_hz': 125e6,
                 'profile': PROFILE, 'schedule': a.schedule, 'frames_planned': total,
                 'continuous': bool(a.continuous), 'max_seconds': a.max_seconds, 'owner_stdin': True,
-                'wire_format': WIRE_FORMAT, 'wire_channels': [0], 'wire_bytes': WIRE_BYTES,
+                'wire_format': WIRE_FORMAT3 if v3 else WIRE_FORMAT,
+                'wire_channels': [0, 1, 2, 3] if v3 else [0], 'wire_bytes': WIRE_BYTES3 if v3 else WIRE_BYTES,
+                'wire_mode': a.wire_mode,
                 'wire_codec': CODEC if a.wire_codec == 'deflate' else 'none',
                 'loop_truncation': {'played_complex_500': RAM//2, 'dropped_complex_500': dropped,
                                     'boundary_loop_index': 0},
@@ -330,6 +656,29 @@ def main():
                 pass
         client.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2 << 20)
         client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        if v3:
+            fft3, _ = _corr_fft()
+            ref_fft_conj = np.conj(fft3(ref125.astype(np.complex64)))
+            header = json.dumps({'magic_version': 3, 'source': 'rfsoc4x2-hardware', 'board': board.decode(),
+                                 'format': WIRE_FORMAT3, 'adc_ram_words': RAM,
+                                 'capture': 'full-ram-contiguous', 'window': 'same-capture-contiguous',
+                                 'window_rows': WIN, 'capture_rows': RAM // 8,
+                                 'wire_channels': [0, 1, 2, 3], 'available_channels': [1, 1, 1, 1],
+                                 'channel_connectors': ['ADC_D', 'unverified', 'unverified', 'unverified'],
+                                 'lane_convention': 'board lanes I,Q per stream; host builds I - 1j*Q (tcpDataRec)',
+                                 'frame_bytes': WIRE_BYTES3, 'frame_header': FRAME_HDR, 'frame_extension': EXT3,
+                                 'extension_json_max': EXT3_JSON_MAX,
+                                 'compression': CODEC if a.wire_codec == 'deflate' else 'none',
+                                 'pad_bytes': PAD_BYTES,
+                                 'samples_per_channel': WIN, 'fs_hz': 125e6, 'rf_mhz': a.rf_mhz,
+                                 'profile': PROFILE, 'dac_connector': manifest['dac_connector'],
+                                 'selection': 'board-reported self-similarity wrap estimate; guarded window with reference sub-block lag checks',
+                                 'frames_planned': total, 'continuous': bool(a.continuous),
+                                 'max_seconds': a.max_seconds,
+                                 'board_monotonic_ns': time.monotonic_ns(),
+                                 'board_realtime_ns': time.time_ns()}).encode()
+            client.settimeout(30)
+            client.sendall(b'R4X2IQ3\n'+struct.pack('<I', len(header))+header)
         header = json.dumps({'magic_version': 2, 'source': 'rfsoc4x2-hardware', 'board': board.decode(),
                              'format': WIRE_FORMAT, 'adc_ram_words': RAM,
                              'capture': 'full-ram-contiguous', 'wire_channels': [0],
@@ -345,8 +694,9 @@ def main():
                              'max_seconds': a.max_seconds,
                              'board_monotonic_ns': time.monotonic_ns(),
                              'board_realtime_ns': time.time_ns()}).encode()
-        client.settimeout(30)
-        client.sendall(b'R4X2IQ2\n'+struct.pack('<I', len(header))+header)
+        if not v3:
+            client.settimeout(30)
+            client.sendall(b'R4X2IQ2\n'+struct.pack('<I', len(header))+header)
         loaded = None
         previous_sha = None
         pads = [0]
@@ -372,32 +722,49 @@ def main():
                 if not refreshed:
                     raise RuntimeError('ADC RAM not refreshed (sentinel kept or identical capture)')
                 label = kind.encode().ljust(8, b' ')
-                wire = np.ascontiguousarray(raw.reshape(-1, 8)[:, 0:2])   # stream0 = ADC_D only
-                body = wire.tobytes()
-                if len(body) != WIRE_BYTES:
-                    raise RuntimeError('wire size differs')
+                ext = b''
+                if v3:
+                    start, sel = select_window(raw, ref125, burst125, ref_fft_conj)
+                    wire = np.ascontiguousarray(raw.reshape(-1, 8)[start:start + WIN, :])   # all 4 streams
+                    body = wire.tobytes()
+                    if len(body) != WIRE_BYTES3 or wire.shape != (WIN, 8):
+                        raise RuntimeError('window wire size differs')
+                    ext = frame_extension(start, sel['select_s'], previous_sha, body, sel)
+                    magic = b'IQZ3' if a.wire_codec == 'deflate' else b'IQL3'
+                    mask = MASK3
+                else:
+                    wire = np.ascontiguousarray(raw.reshape(-1, 8)[:, 0:2])   # stream0 = ADC_D only
+                    body = wire.tobytes()
+                    if len(body) != WIRE_BYTES:
+                        raise RuntimeError('wire size differs')
+                    magic = b'IQZ2' if a.wire_codec == 'deflate' else b'IQL2'
+                    mask = MASK
                 payload = encode_wire(body) if a.wire_codec == 'deflate' else body
                 client.settimeout(30)
-                client.sendall(struct.pack(FRAME_HDR, b'IQZ2' if a.wire_codec == 'deflate' else b'IQL2',
-                                           sequence, mono, req_ns, time.time_ns(),
-                                           label, MASK, len(payload))+payload)
-                ch0 = wire.astype(float)
+                client.sendall(struct.pack(FRAME_HDR, magic, sequence, mono, req_ns, time.time_ns(),
+                                           label, mask, len(payload)) + ext + payload)
+                ch0 = wire[:, 0:2].astype(float)
                 entry = {'sequence': sequence, 'phase': kind, 'monotonic_ns': mono,
                          'request_rx_ns': req_ns, 'sha256': previous_sha,
                          'wire_sha256': hashlib.sha256(body).hexdigest(), 'payload_bytes': len(payload),
                          'sentinel_writable': bool(writable),
                          'ch0_rms': float(np.sqrt(np.mean(ch0**2))),
                          'ch0_peak': int(np.max(np.abs(ch0)))}
+                if v3:
+                    entry.update(window_start=int(sel['start']), select_s=round(sel['select_s'], 4),
+                                 candidate=sel.get('candidate'), lock_block=sel.get('lock_block'), wrap_row=sel.get('wrap_row'), wrap_from=sel.get('wrap_from'),
+                                 stream_locks=sel.get('stream_locks'), sub_lags=sel.get('sub_lags'),
+                                 stream_rms=sel.get('rms_sub4'))
                 if len(manifest['frames']) < 2000:
                     manifest['frames'].append(entry)
-                if not a.continuous and (sequence == 0 or kind == 'blank'):
+                if not a.continuous and (sequence == 0 or kind == 'blank' or a.save_all_captures):
                     np.save(output.parent/f'raw_{sequence:02d}_{kind}.npy', raw)
                 sequence += 1
         manifest['frames_captured'] = sequence
         manifest['pads_sent'] = pads[0]
         client.settimeout(30)
-        client.sendall(struct.pack(FRAME_HDR, b'END2', sequence, time.monotonic_ns(), 0, time.time_ns(),
-                                   b'end     ', MASK, 0))
+        client.sendall(struct.pack(FRAME_HDR, b'END3' if v3 else b'END2', sequence, time.monotonic_ns(), 0,
+                                   time.time_ns(), b'end     ', MASK3 if v3 else MASK, 0))
         # Wait (bounded) for the client to close first: closing with unread client
         # bytes would send RST and could discard END2 before the client reads it.
         client.settimeout(15)

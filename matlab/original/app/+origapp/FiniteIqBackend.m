@@ -18,6 +18,7 @@ classdef FiniteIqBackend < handle
         Sequence = 0
         Uploads = struct('port', {}, 'samples', {})
         LastVsaBuffer = []        % last buffer handed to vsaSend (raw-feed checks)
+        LastVsaInfo = []          % info handed with it (combined-output label)
     end
     properties   % fixture knobs a test may change between ticks (VSA_rfsoc_new port)
         Capabilities = struct()   % declared capabilities (default: none)
@@ -56,7 +57,9 @@ classdef FiniteIqBackend < handle
         function send(obj, line)
             obj.Calls(end+1) = "send"; obj.SentCommands(end+1) = string(line);
         end
-        function vsaSend(obj, buffer)
+        function vsaSend(obj, buffer, info)
+            if nargin < 3, info = []; end
+            obj.LastVsaInfo = info;
             assert(all(isfinite(buffer)), 'fixture:Vsa', 'Non-finite VSA buffer.');
             obj.Calls(end+1) = "vsaSend"; obj.VsaFrames = obj.VsaFrames + 1;
             obj.LastVsaBuffer = buffer;

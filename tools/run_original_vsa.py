@@ -65,7 +65,17 @@ def main():
     p.add_argument('--max-frames', type=int, default=10000)
     p.add_argument('--i-own-board', action='store_true')
     p.add_argument('--out', default='out')
+    p.add_argument('--receive', choices=['window4', 'adc-d'], default='window4',
+                   help='window4: all four ADC streams as one boundary-free 32768-row window of the same '
+                        'capture (common-feed diagnostic DOA/pattern through the array model); '
+                        'adc-d: ADC_D only, full capture (direct mode, no DOA/pattern)')
+    p.add_argument('--save-windows', action='store_true',
+                   help='keep every received wire frame (private run folder, windows/) for offline replay')
+    p.add_argument('--save-captures', action='store_true',
+                   help='validate mode: the helper keeps every full-RAM capture in its private stage folder')
     a = p.parse_args()
+    if a.save_captures and a.mode != 'validate':
+        p.error('--save-captures needs --mode validate (bounded schedule)')
     if not a.i_own_board:
         p.error('--i-own-board is required for exclusive live access')
     if not 0 < a.max_seconds <= 14400 or not 1 <= a.max_frames <= 200000:
@@ -102,6 +112,8 @@ def main():
     run = datetime.now().strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:6]
     out = Path(a.out).resolve()/('original-'+run)
     out.mkdir(parents=True, exist_ok=False)
+    if a.save_windows:
+        (out/'windows').mkdir()
     stage = '/home/'+user+'/rfsoc-original-'+run
 
     def remote(command, privileged=False, timeout=60, check=True):
@@ -128,13 +140,22 @@ def main():
         raise RuntimeError('Staged files failed hash verification')
     continuous = a.mode == 'durable'
     seconds = a.max_seconds if continuous else 300
-    settings = dict(app=dict(originalRepoPath=str(original), visible=True, directOnly=True,
+    window4 = a.receive == 'window4'
+    app_cfg = dict(originalRepoPath=str(original), visible=True, directOnly=True,
         allowBoardCommands=False, sendInitialTuning=False, vsaSetupFile=str(setup), vsa=1,
-        ch=1, dataChan=131072, fc=3e9, fsRfsoc=125e6, staleSeconds=2, frameTimeoutSeconds=.25, outputDir=str(out)),
+        ch=1, dataChan=131072, fc=3e9, fsRfsoc=125e6, staleSeconds=2, frameTimeoutSeconds=.25, outputDir=str(out))
+    if window4:
+        # Common splitter feed: DOA/pattern are a cable diagnostic through the explicit
+        # 4-element ULA model (d = lambda/2 at 3 GHz), uncalibrated; never an arrival angle.
+        app_cfg.update(directOnly=False, ch=5, dataChan=32768, fcAnt=3e9, cutterAllowed=False,
+                       arrayLabel='common-feed diagnostic / array model (ULA d=lambda/2 @3 GHz)')
+    settings = dict(app=app_cfg,
         backend=dict(host=host, port=port, referenceMat=str(reference_mat), orientation='IplusjQ',
         dllPath=str(dll), setupPath=str(setup), setupSha256=sha(setup), vsaPort=vsa_port,
         visible=True, allowContinuous=continuous, staleSeconds=2, expectSource='rfsoc4x2-hardware',
-        logFile=str(out/'vsa_frames.jsonl'), rawDir=''),
+        logFile=str(out/'vsa_frames.jsonl'), rawDir=str(out/'windows') if a.save_windows else '',
+        frameLogFile=str(out/'frames.jsonl'),
+        wireMode='window4' if window4 else 'adc-d-fullram'),
         session=dict(maxSeconds=seconds, stopFile=str(out/'STOP'), reportFile=str(out/'result.json')))
     settings_path = out/'frontend.json'
     settings_path.write_text(json.dumps(settings, indent=2)+'\n')
@@ -145,7 +166,8 @@ def main():
     args = [cfg.get('board_python', '/usr/local/share/pynq-venv/bin/python3'), stage+'/'+helper.name,
             '--exclusive-control', '--owner-stdin', '--reference', stage+'/'+reference.name,
             '--out', stage+'/manifest.json', *bounds, '--stream-bind', host, '--stream-port', str(port),
-            '--request-timeout', '120', '--dac', '0', '--rf-mhz', '3000', '--sampling-freq-unit', 'GHz']
+            '--request-timeout', '120', '--dac', '0', '--rf-mhz', '3000', '--sampling-freq-unit', 'GHz',
+            '--wire-mode', 'window4' if window4 else 'adc-d-fullram', *(['--save-all-captures'] if a.save_captures else [])]
     command = "sudo -S -p '' env BOARD=RFSoC4x2 XILINX_XRT=/usr "+shlex.join(args)
     server = subprocess.Popen([*ssh, command], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     server.stdin.write(password); server.stdin.flush()
