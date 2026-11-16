@@ -42,6 +42,13 @@ app=origapp.BeamformerApp(c);assert(numel(findall(groot,'Type','figure'))==figur
 assert(numel(timerfindall)==timers0+1 && isempty(sends));
 app.Controller.open();enqueue(5,0,true);app.tick();
 a=app.Session.snapshot();assert(app.View.LastSequence==5 && a.valid);
+% The snapshot carries display-only stream diagnostics and acquisition counters.
+assert(isequal(a.channels.available,true(1,4)) && all(isfinite(a.channels.levelDbfs)) && ...
+    abs(a.channels.relPhaseDeg(1))<1e-9 && all(a.channels.coherence>.5) && a.health.accepted>=1);
+assert(contains(app.View.Kpi.rate.sub.Text,sprintf('%d accepted',app.Controller.FramesAccepted)) && app.Controller.FramesAccepted>=1 && ~strcmp(app.View.Monitor.cell(2,2).Text,'—') && ...
+    ~strcmp(app.View.Kpi.sync.value.Text,'—') && any(isfinite(app.View.Lines.burstOk.XData)));
+save(fullfile(outDir,'last.mat'),'a');app.View.Figure.Visible='on';app.View.Figure.Name='SYNTHETIC SESSION — reference IQ, no hardware';
+drawnow;try,exportapp(app.View.Figure,fullfile(outDir,'session-reference.png'));catch,end
 app.View.Controls.Pause.Value=true;app.View.Controls.Pause.ValueChangedFcn(app.View.Controls.Pause,struct());
 assert(app.Session.Paused && all(isnan(app.View.Lines.timeI.XData)) && all(isnan(app.View.Lines.payload.XData)));
 app.View.Controls.Pause.Value=false;app.View.Controls.Pause.ValueChangedFcn(app.View.Controls.Pause,struct());

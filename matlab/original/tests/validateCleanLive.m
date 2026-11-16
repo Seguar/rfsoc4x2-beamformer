@@ -45,9 +45,39 @@ a=app.Session.snapshot();assert(a.valid && a.analysis.valid);
 for name=["doa","pattern","spectrum","timeI","payload","evmCurrent"]
     assert(any(isfinite(app.View.Lines.(name).YData)),'Live panel unavailable: %s',name);
 end
-app.View.Figure.Name='RFSoC4x2 clean GUI - LIVE HARDWARE';
+v=app.View;v.Figure.Name='RFSoC4x2 clean GUI - LIVE HARDWARE';
+% Readouts and per-stream diagnostics come from the same admitted capture.
+for name=["evm","evmDb","rx","cfo","sync","bursts"]
+    assert(~strcmp(v.Kpi.(name).value.Text,char(8212)),'Live readout unavailable: %s',name);
+end
+assert(isfield(a,'channels') && all(isfinite(a.channels.levelDbfs)) && all(isfinite(a.channels.relPhaseDeg)));
+assert(~strcmp(v.Monitor.cell(4,2).Text,char(8212)) && size(v.ChannelPhase,1)>=3 && a.health.accepted>=13);
 exportapp(fig,fullfile(s.outputDir,'live-six-panel.png'));
+% View-only hold: the board keeps streaming; an invalid acquisition may release it.
+t=tic;while isnan(v.LastSequence) && toc(t)<30,pause(.1);end
+assert(~isnan(v.LastSequence),'No current frame to hold.');
+shown=v.LastSequence;v.Controls.Hold.Value=true;v.Controls.Hold.ValueChangedFcn(v.Controls.Hold,struct());
+last=app.Controller.FramesAccepted;t=tic;
+while app.Controller.FramesAccepted<last+2 && toc(t)<30,pause(.1);end
+holdKept=v.Held && v.LastSequence==shown && strcmp(v.StatePill.Text,'HELD');
+assert(holdKept || any(contains(v.EventLog,'hold released')),'Hold neither kept its frame nor reported a release.');
+if v.Held,v.Controls.Hold.Value=false;v.Controls.Hold.ValueChangedFcn(v.Controls.Hold,struct());end
+% Diagnostic plot modes and the monitor page on live data, then a snapshot.
+v.Controls.EvmMode.Value='subcarrier';v.Controls.EvmMode.ValueChangedFcn(v.Controls.EvmMode,struct());
+v.Controls.TimeMode.Value='phase';v.Controls.TimeMode.ValueChangedFcn(v.Controls.TimeMode,struct());
+v.Controls.PageButton(4).Value=true;v.Controls.PageButton(4).ValueChangedFcn(v.Controls.PageButton(4),struct());
+last=app.Controller.FramesAccepted;t=tic;
+while (app.Controller.FramesAccepted<last+2 || ~any(isfinite(v.Lines.evmSub.YData))) && toc(t)<40,pause(.1);end
+assert(any(isfinite(v.Lines.evmSub.YData)) && any(isfinite(v.Lines.chPhase(2).YData)),'Live diagnostic modes empty.');
+exportapp(fig,fullfile(s.outputDir,'live-diagnostics.png'));
+files=v.saveSnapshot(fullfile(s.outputDir,'snapshots'));assert(~isempty(files) && isfile(files{1}));
+P=v.ChannelPhase;P=angle(exp(1j*pi/180*(P-P(1,:))))*180/pi;  % re-wrapped against the first frame
+phaseSpread=max(P,[],1)-min(P,[],1);
 report=struct('source','LIVE RFSoC4x2 / DSP','framesAccepted',app.Controller.FramesAccepted, ...
+ 'holdKeptFrame',holdKept,'snapshotFiles',numel(files),'streamLevelDbfs',a.channels.levelDbfs, ...
+ 'streamPhaseDeg',a.channels.relPhaseDeg,'streamCoherence',a.channels.coherence, ...
+ 'streamPhaseSpreadDeg',phaseSpread,'streamHistoryFrames',size(v.ChannelPhase,1), ...
+ 'eventLog',{v.EventLog}, ...
  'errors',app.Controller.TotalErrors,'noSignal',app.Controller.NoSignalFrames, ...
  'lastSequence',a.sequence,'evmPercent',a.analysis.evmPercent,'evmDb',a.analysis.evmDb, ...
  'completeBursts',a.analysis.metricBursts,'qualifiedBursts',a.analysis.qualifiedBursts, ...

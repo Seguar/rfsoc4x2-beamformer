@@ -66,8 +66,13 @@ classdef BeamformerApp < handle
                 key=string(s.sequence)+"|"+string(~isempty(s.vendor));
             else
                 key="invalid|"+string(s.reason);
+                if isfield(s,'health'),key=key+"|"+string(s.health.errors)+"|"+string(s.health.noSignal);end
             end
-            if key~=obj.RenderKey,obj.View.show(s);obj.RenderKey=key;end
+            if key~=obj.RenderKey
+                obj.View.show(s);obj.RenderKey=key;
+            elseif isfield(s,'health')
+                obj.View.showHealth(s.health);
+            end
         end
         function unbusy(obj)
             if isvalid(obj),obj.Busy=false;end

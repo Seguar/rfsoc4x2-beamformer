@@ -5,3 +5,4 @@ out/
 local/
 *.npz
 *.npy
+snapshots/

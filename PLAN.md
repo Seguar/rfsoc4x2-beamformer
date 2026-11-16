@@ -450,3 +450,23 @@ zero/read back both RAMs and command both DACs off, no errors. Board idle.
 Conclusions: all active converter MTS plus shared RAM-player/capture start enabled.
 Ways to resolve: publish default mode2; recalibrate after re-init, investigate
 capture loss separately. No running capture or MATLAB session remains.
+
+## GUI: readouts, diagnostics, themes — 2026-11-16
+
+Claim: parent completed software and one bounded live run; board released. User
+asked for a more beautiful and more useful GUI, a light/dark switch, an EVM %/dB
+graph switch and stacked pairs (pattern under DOA, time under spectrum, EVM under
+constellation). View-only change plus display-only snapshot fields
+(`channels`, `health`); acquisition, thresholds, DSP and board helper unchanged.
+
+Test/How: extended synthetic view/session fixtures on DSP MATLAB, design and
+review passes with independent verification, then the owned live gate with the
+existing helper at the usual low DAC level.
+Results: fixtures pass, no leaked figures/timers. Live gate exit0,51 accepted,
+8 rejected frames retained, hold/modes/monitor/snapshot exercised; typical EVM
+about4.8%, last frame flagged11.1% (2/5 bursts). Stream phase vs stream0 within
+0.9° over48 frames of one initialization. Shutdown zeroed/read back both RAMs,
+both DACs commanded off, no errors. 66 Python tests pass.
+Conclusions: GUI shows existing metrics and makes timing-slip frames visible;
+no new RF or beamforming claim. Ways to resolve: sample-loss work stays separate;
+phase repeatability across initializations needs its own multi-init run.

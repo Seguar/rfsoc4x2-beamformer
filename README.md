@@ -5,12 +5,17 @@ adaptive combining for the RFSoC4x2. Uses the existing `doa_rfsoc/main` matched
 boot overlay and `vsa_rfsoc` sample conventions; no FPGA build is required.
 
 **Current UI:** one focused [six-panel MATLAB window](docs/GUI.md): DOA, receive
-pattern, spectrum, time-domain I/Q, constellation and EVM in %/dB. Main RF controls
+pattern, spectrum, time-domain I/Q, constellation and EVM in %/dB, with readout
+tiles (EVM, level, CFO, sync, bursts, rate), per-stream phase/level monitor,
+EVM per subcarrier, view-only hold, snapshot, event log and a live dark/light
+theme. Main RF controls
 and DSP options stay in a collapsible sidebar; unused/debug/device controls and
 separate measurement windows are removed from the default layout. The launcher
 defaults to `--layout clean --analyzer integrated`; native VSA is an optional
 separately labelled comparison. `--layout legacy` retains the earlier App Designer
 interface. The new GUI reuses the original refactor's guarded DSP/transport core.
+
+![Synthetic fixture screenshot of the focused interface, not hardware data](docs/img/gui-dark-synthetic.png)
 
 ADC and DAC MTS now follow the installed library policy, with SYSREF on both
 active tile groups and a shared DAC-player/ADC capture start by default. See

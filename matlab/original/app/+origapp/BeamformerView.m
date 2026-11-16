@@ -1,14 +1,24 @@
 classdef BeamformerView < handle
-    %BEAMFORMERVIEW Six measured views and the supported RF/DSP controls.
+    %BEAMFORMERVIEW Six measured views, readout tiles and the supported RF/DSP controls.
     % This class performs no acquisition, beamforming or instrument IO. Its
     % callback contract is implemented by DemoSession/the owning frontend.
+    % Everything drawn is display math on the snapshot handed to show():
+    % readout tiles, markers, per-stream table and histories never feed back
+    % into processing. The only file output is the user-requested snapshot.
     properties (SetAccess=private)
         Figure = []
         Ax = struct()
         Controls = struct()
         Lines = struct()
         StatusLabel = []
+        StatePill = []
         EvmLabel = []
+        Kpi = struct()
+        KpiGrid = []
+        Card = struct()
+        Marks = struct()
+        Empty = struct()
+        Monitor = struct()
         PlotGrid = []
         RootGrid = []
         Sidebar = []
@@ -22,6 +32,20 @@ classdef BeamformerView < handle
         LastSequence = NaN
         HistorySequence = []
         HistoryEvm = []
+        HistoryDegraded = []
+        HistoryBreak = []
+        Held = false
+        ChannelSequence = []
+        ChannelPhase = zeros(0,4)
+        ChannelLevel = zeros(0,4)
+        ChannelBreak = []
+        FramesShown = 0
+        FramesCleared = 0
+        EventLog = {}
+        TimeMode = 'iq'
+        EvmMode = 'history'
+        EvmUnit = 'percent'
+        ThemeName = 'dark'
     end
     properties (Access=private)
         Config
@@ -31,81 +55,190 @@ classdef BeamformerView < handle
         PhaseValues = struct('ADC',[0 0 0 0],'DAC',[0 0 0 0])
         UserSidebar = []
         Closing = false
-        Theme = struct('bg',[.055 .075 .10],'panel',[.09 .12 .155], ...
-            'input',[.135 .17 .21],'text',[.88 .93 .98],'muted',[.54 .65 .75], ...
-            'grid',[.23 .29 .35],'cyan',[.15 .78 .95],'green',[.3 .88 .64], ...
-            'amber',[1 .72 .28],'red',[1 .43 .43])
+        LastData = []
+        LastReason = ""
+        SnapshotDir = ''
+        Clock = []
+        FrameTimes = []
+        SpectrumHold = []
+        Page = 1
+        SeenSequence = NaN
+        GapPending = false
+        Health = []
+        Exporting = false
+        Deferred = []
+        ChannelGap = false
+        EvmSub = struct('x',[],'y',[])
+        EvmSym = struct('x',[],'y',[])
+        EvmNow = [NaN NaN]
+        LastFs = 125e6
+        Theme = struct()
     end
     methods
         function obj=BeamformerView(cfg,callbacks)
             if nargin<2,callbacks=struct();end
             obj.Config=cfg;obj.Callbacks=callbacks;
+            name=char(lower(string(obj.field(cfg,'theme','dark'))));
+            if ~any(strcmp(name,{'dark','light'})),name='dark';end
+            obj.ThemeName=name;obj.Theme=obj.palette(name);
             if isfield(cfg,'dphase'),obj.PhaseValues.DAC=reshape(cfg.dphase,1,[]);end
+            obj.SnapshotDir=char(string(obj.field(cfg,'snapshotDir','')));
+            out=char(string(obj.field(cfg,'outputDir','')));
+            if isempty(obj.SnapshotDir) && ~isempty(out),obj.SnapshotDir=fullfile(out,'snapshots');end
+            obj.Clock=tic;
             obj.build();
         end
         function show(obj,s)
             if ~obj.isOpen(),return,end
+            if obj.Exporting,obj.Deferred=s;return,end
+            if isfield(s,'health'),obj.Health=s.health;end
             if ~isfield(s,'valid') || ~s.valid
                 obj.clear(obj.field(s,'reason','No fresh acquisition'));
                 return
             end
+            th=obj.Theme;
             seq=obj.field(s,'sequence',NaN);age=obj.field(s,'age',NaN);
+            fresh=~(seq==obj.SeenSequence);obj.SeenSequence=seq;
+            if fresh
+                obj.FramesShown=obj.FramesShown+1;
+                obj.FrameTimes(end+1)=toc(obj.Clock);
+                if numel(obj.FrameTimes)>9,obj.FrameTimes(1)=[];end
+            end
+            if obj.Held
+                % View-only hold: the six plots stay on the held frame and
+                % say so; acquisition and counters keep running.
+                obj.put(obj.StatusLabel,sprintf('HELD frame %g  ·  NOT LIVE  ·  live acquisition is at frame %g',obj.LastSequence,seq));
+                obj.StatusLabel.FontColor=th.warn;obj.pill('HELD','warn');
+                obj.ChannelGap=true;obj.GapPending=true;
+                obj.showRate();
+                drawnow limitrate nocallbacks
+                return
+            end
             scope=string(obj.field(s,'scope','Array model / UNCALIBRATED'));
             obj.ScopeLabel.Text=char(scope);obj.ScopeLabel.Tooltip=char(scope);
-            obj.StatusLabel.Text=sprintf('LIVE  ·  frame %g  ·  age %.2f s',seq,age);
-            obj.StatusLabel.FontColor=obj.Theme.green;
-            obj.Controls.Start.Enable='off';
-            scan=obj.field(s,'scan',[]);
-            obj.setLine('doa',scan,obj.field(s,'doaSpectrum',[]));
-            obj.setLine('pattern',scan,obj.field(s,'patternDb',[]));
-            angles=obj.field(s,'angles',[]);
-            if isempty(angles)
-                obj.Panels(1).Title='DOA spectrum · unavailable';
-            else
-                obj.Panels(1).Title=sprintf('DOA spectrum  ·  %s°',strjoin(compose('%.1f',angles(:).'),', '));
+            obj.put(obj.StatusLabel,sprintf('frame %g  ·  age %.2f s',seq,age));
+            obj.StatusLabel.FontColor=th.muted;
+            obj.pill('LIVE','ok');
+            obj.Controls.Start.Enable='off';obj.Controls.Start.Text='Running';
+            if strlength(obj.LastReason)>0
+                obj.logEvent(sprintf('live again · frame %g',seq));obj.LastReason="";
             end
-            samples=obj.field(s,'samples',[]);
+            obj.LastData=s;obj.LastFs=obj.field(s,'fsHz',obj.field(obj.Config,'fsRfsoc',125e6));
+            names=fieldnames(obj.Empty);
+            for k=1:numel(names),obj.Empty.(names{k}).Visible='off';end
+            % --- spatial model views -------------------------------------
+            scan=obj.field(s,'scan',[]);
+            doa=obj.field(s,'doaSpectrum',[]);pat=obj.field(s,'patternDb',[]);
+            obj.setLine('doa',scan,doa);
+            obj.setLine('pattern',scan,pat);
+            angles=obj.field(s,'angles',[]);angles=angles(isfinite(angles));
+            obj.mark('doa',angles);obj.mark('pattern',angles);
+            if isempty(angles) || isempty(doa)
+                obj.Card.doa.note.Text='estimate unavailable';
+                if isempty(doa) && (logical(obj.field(s,'directOnly',false)) || isempty(angles))
+                    obj.emptyState('doa','NO DOA SPECTRUM','no array estimate in this session or frame');
+                elseif isempty(doa)
+                    obj.emptyState('doa','NO DOA SPECTRUM','this estimator returns angles only');
+                end
+            else
+                obj.Card.doa.note.Text=sprintf('model angle %s°',strjoin(compose('%.1f',angles(:).'),', '));
+            end
+            if isempty(pat)
+                obj.Card.pattern.note.Text='single stream · no weights';
+                obj.emptyState('pattern','NO PATTERN','direct single-stream session');
+            else
+                [~,ix]=max(pat);
+                obj.Card.pattern.note.Text=sprintf('peak at model %.1f°',scan(ix));
+            end
+            % --- time domain and per-stream histories --------------------
+            samples=obj.field(s,'samples',[]);fs=obj.field(s,'fsHz',obj.field(obj.Config,'fsRfsoc',125e6));
             if ~isempty(samples)
-                samples=samples(:);idx=unique(round(linspace(1,numel(samples),min(2048,numel(samples)))));
-                fs=obj.field(obj.Config,'fsRfsoc',125e6);
-                t=(idx-1)/fs*1e6;
-                obj.setLine('timeI',t,real(samples(idx)));
-                obj.setLine('timeQ',t,imag(samples(idx)));
+                [t,yi,yq]=obj.envelope(samples(:),fs);
+                obj.setLine('timeI',t,yi);obj.setLine('timeQ',t,yq);
             else
                 obj.setLine('timeI',[],[]);obj.setLine('timeQ',[],[]);
             end
+            ch=obj.field(s,'channels',[]);
+            if fresh,obj.pushChannels(seq,ch);end
+            obj.pad();
+            obj.showChannels(ch,obj.field(s,'weights',[]));
+            obj.timeNote(numel(samples),fs);
+            % --- spectrum ------------------------------------------------
             analysis=obj.field(s,'analysis',[]);
             spec=obj.field(s,'spectrum',[]);
             if isempty(spec) && isstruct(analysis),spec=obj.field(analysis,'spectrum',[]);end
             if isstruct(spec) && isfield(spec,'freqHz') && isfield(spec,'psdDbfs')
-                obj.setLine('spectrum',spec.freqHz/1e6,spec.psdDbfs);
+                obj.showSpectrum(spec.freqHz(:)/1e6,spec.psdDbfs(:));
             else
-                obj.setLine('spectrum',[],[]);
+                obj.setLine('spectrum',[],[]);obj.setLine('spectrumHold',[],[]);
+                obj.Card.spectrum.note.Text='unavailable';
             end
+            % --- demodulation --------------------------------------------
+            if isstruct(analysis),obj.showLevel(analysis,ch);end
             if isstruct(analysis) && isfield(analysis,'valid') && analysis.valid
                 obj.showAnalysis(analysis,seq);
             else
                 why='OFDM unavailable';
                 if isstruct(analysis),why=char(string(obj.field(analysis,'reason',why)));end
                 obj.clearAnalysis(why);
+                if isstruct(analysis) && isfinite(obj.field(analysis,'syncPeak',NaN))
+                    sub=char(string(obj.field(analysis,'state','no demodulation')));
+                    if analysis.syncPeak<obj.field(analysis,'syncThreshold',-Inf),sub='below sync threshold';end
+                    obj.tile('sync',sprintf('%.2f',analysis.syncPeak),sub,'warn');
+                end
             end
             obj.showVendor(obj.field(s,'vendor',[]),seq);
+            obj.showRate();
             obj.LastSequence=seq;
             drawnow limitrate nocallbacks
         end
         function clear(obj,reason)
             if ~obj.isOpen(),return,end
-            for n=["doa","pattern","spectrum","timeI","timeQ"]
+            reason=string(reason);
+            if obj.Held
+                obj.Held=false;obj.Controls.Hold.Value=false;obj.holdLook();
+                obj.logEvent('hold released · acquisition became invalid');
+            end
+            obj.SeenSequence=NaN;obj.ChannelGap=true;
+            set([obj.Lines.chPhase obj.Lines.chLevel],'Color',obj.Theme.dim);
+            for n=["doa","pattern","spectrum","spectrumHold","timeI","timeQ"]
                 obj.setLine(char(n),[],[]);
             end
+            obj.SpectrumHold=[];
+            obj.mark('doa',[]);obj.mark('pattern',[]);
             obj.clearAnalysis(reason);
-            obj.StatusLabel.Text=char("UNAVAILABLE  ·  "+string(reason));
-            obj.StatusLabel.FontColor=obj.Theme.amber;
-            obj.Panels(1).Title='DOA spectrum · unavailable';
-            obj.Panels(2).Title='Receive pattern · unavailable';
+            for n=["doa","pattern","spectrum","constellation"]
+                obj.emptyState(char(n),'NO CURRENT FRAME',reason);
+            end
+            if strcmp(obj.TimeMode,'iq'),obj.emptyState('time','NO CURRENT FRAME',reason);end
+            obj.StatusLabel.Text=char(reason);obj.StatusLabel.FontColor=obj.Theme.warn;
+            low=lower(reason);
+            if contains(low,"paus"),obj.pill('PAUSED','idle');
+            elseif contains(low,"idle"),obj.pill('IDLE','idle');
+            elseif contains(low,"stop"),obj.pill('STOPPED','fault');
+            elseif contains(low,"stale") || contains(low,"expired"),obj.pill('STALE','warn');
+            else,obj.pill('NO DATA','warn');
+            end
+            for n=["doa","pattern","spectrum"],obj.Card.(n).note.Text='unavailable';end
+            obj.timeNote(0,NaN);
+            obj.tile('rx','—','','idle');
+            obj.showChannels([],[]);
             obj.showVendor([],NaN);
-            obj.LastSequence=NaN;
+            if reason~=obj.LastReason
+                obj.FramesCleared=obj.FramesCleared+1;
+                obj.logEvent("display cleared · "+reason);obj.LastReason=reason;
+            end
+            obj.LastData=[];obj.LastSequence=NaN;obj.FrameTimes=[];
+            obj.ScopeLabel.Text=char(string(obj.field(obj.Config,'arrayLabel','Array model'))+' · UNCALIBRATED');
+            obj.ScopeLabel.Tooltip=obj.ScopeLabel.Text;
+            obj.showRate();
             drawnow limitrate nocallbacks
+        end
+        function showHealth(obj,health)
+            % Counter refresh only (no plot work): the controller counts a
+            % frame as accepted after it was drawn.
+            if ~obj.isOpen() || obj.Exporting || ~isstruct(health),return,end
+            obj.Health=health;obj.showRate();
         end
         function tf=isOpen(obj)
             tf=~isempty(obj.Figure) && isvalid(obj.Figure);
@@ -119,47 +252,166 @@ classdef BeamformerView < handle
         function updateConfig(obj,cfg)
             % Called after an explicit successful load/configuration action,
             % not each frame (never overwrite edits while a user types).
+            rescan=~isequal(obj.field(obj.Config,'scan_bw',NaN),obj.field(cfg,'scan_bw',NaN));
             obj.Config=cfg;
+            if rescan,obj.defaultLimits('doa');obj.defaultLimits('pattern');end
             cal=obj.field(cfg,'calibration',struct());
             ready=~isempty(obj.field(cal,'steeringCorrection',[])) && ~isempty(obj.field(cal,'powCalibration',[]));
             obj.Controls.phComp.Enable=matlab.lang.OnOffSwitchState(ready);
             obj.Controls.phComp.Value=logical(cfg.phComp);obj.Accepted.phComp=logical(cfg.phComp);
             obj.Controls.doa.Value=char(cfg.doa);obj.Accepted.doa=char(cfg.doa);
+            obj.band();
         end
         function fitPlots(obj)
             names=fieldnames(obj.Ax);
-            for k=1:numel(names)
-                ax=obj.Ax.(names{k});ax.XLimMode='auto';ax.YLimMode='auto';
-            end
-            axis(obj.Ax.constellation,'equal');
+            for k=1:numel(names),obj.defaultLimits(names{k});end
+            obj.SpectrumHold=[];obj.setLine('spectrumHold',[],[]);
             values=[obj.Lines.payload.XData(:);obj.Lines.payload.YData(:); ...
                 obj.Lines.header.XData(:);obj.Lines.header.YData(:);obj.Lines.pilots.XData(:);obj.Lines.pilots.YData(:)];
-            values=values(isfinite(values));lim=1.6;
+            values=values(isfinite(values));lim=1.45;
             if ~isempty(values),lim=max(lim,1.05*max(abs(values)));end
             obj.Ax.constellation.XLim=[-lim lim];obj.Ax.constellation.YLim=[-lim lim];
+        end
+        function files=saveSnapshot(obj,folder)
+            % User-requested record of what is on screen: a PNG of the window
+            % and a MAT file with the displayed snapshot struct and settings.
+            files={};
+            if ~obj.isOpen(),return,end
+            if nargin<2 || isempty(folder)
+                folder=obj.SnapshotDir;
+                if isempty(folder)
+                    folder=uigetdir(pwd,'Folder for RFSoC snapshots');
+                    figure(obj.Figure);
+                    if isequal(folder,0),return,end
+                    obj.SnapshotDir=folder;
+                end
+            end
+            folder=char(folder);
+            if ~isfolder(folder),mkdir(folder);end
+            stamp=char(datetime('now','Format','yyyyMMdd_HHmmss_SSS'));
+            base=fullfile(folder,['rfsoc4x2_' stamp]);
+            data=obj.LastData;
+            settings=obj.Accepted;drop={'phase1','phase2','phase3','phase4','phaseKind','CompareVsa','bwMHz','bw','dac','analyzer'};
+            settings=rmfield(settings,drop(isfield(settings,drop)));
+            settings.bwHz=obj.field(obj.Config,'bw',NaN);settings.analyzer=char(string(obj.field(obj.Config,'analyzer','')));
+            settings.dacEnabled=logical(obj.Controls.Dac.Value);settings.phases=obj.PhaseValues;
+            settings.theme=obj.ThemeName; %#ok<STRNU>
+            history=struct('sequence',obj.HistorySequence,'evmPercent',obj.HistoryEvm, ...
+                'degraded',obj.HistoryDegraded,'channelSequence',obj.ChannelSequence, ...
+                'channelPhaseDeg',obj.ChannelPhase,'channelLevelDbfs',obj.ChannelLevel); %#ok<NASGU>
+            events=obj.EventLog; %#ok<NASGU>
+            save([base '.mat'],'data','settings','history','events','-v7');
+            files={[base '.mat']};
+            % The capture lets the acquisition timer run. Frames arriving
+            % meanwhile are deferred, so the PNG shows the frame in the MAT.
+            obj.Exporting=true;obj.Deferred=[];
+            try
+                drawnow;exportapp(obj.Figure,[base '.png']);files{end+1}=[base '.png'];
+            catch err
+                obj.logEvent("screenshot unavailable · "+string(err.message));
+            end
+            obj.Exporting=false;later=obj.Deferred;obj.Deferred=[];
+            if ~isempty(later),obj.show(later);end
+            tag='current frame';if isempty(data),tag='no current frame, history only';end
+            obj.logEvent(sprintf('snapshot saved (%s) · rfsoc4x2_%s',tag,stamp));
+        end
+        function setTheme(obj,name)
+            % Live light/dark switch. Every colour in the window comes from the
+            % palette, so each object is recoloured by looking its current
+            % colour up in the old palette; no graphics are rebuilt.
+            name=char(lower(string(name)));
+            assert(any(strcmp(name,{'dark','light'})),'origapp:View','Theme must be dark or light.');
+            if ~obj.isOpen() || strcmp(name,obj.ThemeName),return,end
+            from=cell2mat(struct2cell(obj.Theme));next=obj.palette(name);to=cell2mat(struct2cell(next));
+            try
+                if isprop(obj.Figure,'Theme'),obj.Figure.Theme=name;end
+            catch
+            end
+            props={'Color','BackgroundColor','FontColor','ForegroundColor','XColor','YColor','GridColor', ...
+                'MarkerFaceColor','MarkerEdgeColor','FaceColor','EdgeColor'};
+            for k=1:numel(props)
+                h=findall(obj.Figure,'-property',props{k});
+                for n=1:numel(h)
+                    v=get(h(n),props{k});
+                    if ~isnumeric(v) || numel(v)~=3,continue,end
+                    [d,ix]=min(max(abs(from-v(:).'),[],2));
+                    if d<2e-3,set(h(n),props{k},to(ix,:));end
+                end
+            end
+            % Setting a ruler colour also recolours its label; restore those.
+            names=fieldnames(obj.Ax);
+            for k=1:numel(names)
+                obj.Ax.(names{k}).XLabel.Color=next.muted;obj.Ax.(names{k}).YLabel.Color=next.muted;
+            end
+            obj.Theme=next;obj.ThemeName=name;obj.themeLook();
+            obj.logEvent([name ' theme']);
+        end
+        function clearHistory(obj)
+            obj.HistorySequence=[];obj.HistoryEvm=[];obj.HistoryDegraded=[];obj.HistoryBreak=[];
+            obj.ChannelSequence=[];obj.ChannelPhase=zeros(0,4);obj.ChannelLevel=zeros(0,4);obj.ChannelBreak=[];
+            obj.SpectrumHold=[];obj.FrameTimes=[];
+            for n=["evmHistory","evmFlagged","spectrumHold","evmPad"],obj.setLine(char(n),[],[]);end
+            for k=1:4
+                set(obj.Lines.chPhase(k),'XData',NaN,'YData',NaN);
+                set(obj.Lines.chLevel(k),'XData',NaN,'YData',NaN);
+            end
+            obj.Marks.evmMedian.Visible='off';
+            if strcmp(obj.EvmMode,'history'),obj.Card.evm.note.Text='no history';end
+            obj.logEvent('histories cleared');
         end
     end
     methods (Access=private)
         function build(obj)
             th=obj.Theme;
-            f=uifigure('Name','RFSoC Beamformer','Visible','off','Color',th.bg, ...
+            f=uifigure('Name','RFSoC 4x2 Beamformer','Visible','off','Color',th.bg, ...
                 'Position',[60 60 1480 900],'AutoResizeChildren','off','Tag','RFSoCBeamformerDashboard');
             obj.Figure=f;
+            try
+                % Built-in chrome (popups, scrollbars, axes toolbars) follows
+                % the dark palette on releases that support figure themes.
+                if isprop(f,'Theme'),f.Theme=obj.ThemeName;end
+            catch
+            end
             f.CloseRequestFcn=@(~,~)obj.onClose();
-            outer=uigridlayout(f,[3 1],'RowHeight',{56,'1x',29},'Padding',[14 10 14 8], ...
+            outer=uigridlayout(f,[4 1],'RowHeight',{44,66,'1x',24},'Padding',[14 10 14 8], ...
                 'RowSpacing',8,'BackgroundColor',th.bg);obj.OuterGrid=outer;
-            header=uigridlayout(outer,[1 5],'ColumnWidth',{106,190,'1x',170,110},'Padding',[0 0 0 0], ...
-                'BackgroundColor',th.bg);header.Layout.Row=1;obj.HeaderGrid=header;
+            % --- header ---------------------------------------------------
+            header=uigridlayout(outer,[1 8],'ColumnWidth',{112,150,84,'1x',76,104,90,84},'Padding',[0 0 0 0], ...
+                'ColumnSpacing',10,'BackgroundColor',th.bg);header.Layout.Row=1;obj.HeaderGrid=header;
             obj.Controls.Sidebar=uibutton(header,'Text','☰ Controls','FontWeight','bold', ...
-                'BackgroundColor',th.input,'FontColor',th.text,'ButtonPushedFcn',@(~,~)obj.toggleSidebar());
-            obj.TitleLabel=uilabel(header,'Text','RFSoC 4×2','FontWeight','bold','FontSize',25,'FontColor',th.text);
-            obj.StatusLabel=uilabel(header,'Text','IDLE  ·  ready to acquire','FontSize',13,'FontColor',th.muted);
-            obj.EvmLabel=uilabel(header,'Text','EVM —','FontSize',22,'FontWeight','bold','FontColor',th.cyan, ...
-                'HorizontalAlignment','right');
+                'BackgroundColor',th.input,'FontColor',th.text,'ButtonPushedFcn',@(~,~)obj.toggleSidebar(), ...
+                'Tooltip','F6 · Show or hide the control sidebar');
+            obj.TitleLabel=uilabel(header,'Text','RFSoC 4×2','FontWeight','bold','FontSize',22,'FontColor',th.text);
+            pillBox=uigridlayout(header,[1 1],'Padding',[0 9 0 9],'BackgroundColor',th.bg);
+            obj.StatePill=uilabel(pillBox,'Text','IDLE','HorizontalAlignment','center','FontWeight','bold', ...
+                'FontSize',11,'BackgroundColor',th.input,'FontColor',th.muted);
+            obj.StatusLabel=uilabel(header,'Text','ready to acquire','FontSize',12,'FontColor',th.muted);
+            obj.Controls.Hold=uibutton(header,'state','Text','Hold','BackgroundColor',th.input,'FontColor',th.text, ...
+                'ValueChangedFcn',@(~,~)obj.holdAction(), ...
+                'Tooltip','F3 · Freeze the plots on the current frame for inspection. View only: the board keeps streaming. Released when acquisition becomes invalid.');
+            obj.Controls.Snapshot=uibutton(header,'Text','Snapshot','BackgroundColor',th.input,'FontColor',th.text, ...
+                'ButtonPushedFcn',@(~,~)obj.snapshotAction(), ...
+                'Tooltip','F2 · Save a PNG of this window and a MAT file with the displayed frame, settings and histories');
             obj.Controls.Fit=uibutton(header,'Text','Fit plots','BackgroundColor',th.input,'FontColor',th.text, ...
-                'ButtonPushedFcn',@(~,~)obj.fitPlots());
-            main=uigridlayout(outer,[1 2],'ColumnWidth',{278,'1x'},'ColumnSpacing',10, ...
-                'Padding',[0 0 0 0],'BackgroundColor',th.bg);main.Layout.Row=2;obj.RootGrid=main;
+                'ButtonPushedFcn',@(~,~)obj.fitPlots(),'Tooltip','F5 · Restore default limits on all six plots and reset max hold');
+            obj.Controls.ThemeSwitch=uibutton(header,'Text','','BackgroundColor',th.input,'FontColor',th.text, ...
+                'ButtonPushedFcn',@(~,~)obj.toggleTheme(),'Tooltip','F7 · Switch between the dark and the light theme');
+            obj.themeLook();
+            % --- readout tiles --------------------------------------------
+            kg=uigridlayout(outer,[1 7],'ColumnWidth',repmat({'1x'},1,7),'RowHeight',{'1x'},'ColumnSpacing',8, ...
+                'RowSpacing',6,'Padding',[0 0 0 0],'BackgroundColor',th.bg);kg.Layout.Row=2;obj.KpiGrid=kg;
+            spec={'evm','PAYLOAD EVM','Primary metric: rms error of every complete detected payload burst'; ...
+                'evmDb','EVM (dB)','Same payload EVM in dB; header and pilot EVM below'; ...
+                'rx','OUTPUT LEVEL','Mean level of the analysed output buffer; highest raw ADC peak below'; ...
+                'cfo','CARRIER OFFSET','Median training-based CFO; pilot timing drift along the burst in ppm (a slip indicator in shared-clock loopback)'; ...
+                'sync','SYNC PEAK','Best preamble correlation in this buffer (own metric 0..1, not the vendor sync quantity) and median training-row SNR estimate'; ...
+                'bursts','BURSTS','Qualified / complete bursts in this buffer; clean-only EVM is the secondary metric'; ...
+                'rate','DISPLAY RATE','Fresh frames received by the display per second (also while held); acquisition counters of this session'};
+            for k=1:size(spec,1),obj.buildTile(kg,spec{k,1},spec{k,2},spec{k,3});end
+            obj.EvmLabel=obj.Kpi.evm.value;obj.EvmLabel.FontSize=22;
+            % --- sidebar and plots ----------------------------------------
+            main=uigridlayout(outer,[1 2],'ColumnWidth',{300,'1x'},'ColumnSpacing',10, ...
+                'Padding',[0 0 0 0],'BackgroundColor',th.bg);main.Layout.Row=3;obj.RootGrid=main;
             side=uipanel(main,'BorderType','none','BackgroundColor',th.panel);side.Layout.Column=1;obj.Sidebar=side;
             obj.buildControls(side);
             pg=uigridlayout(main,[2 3],'ColumnWidth',{'1x','1x','1x'}, ...
@@ -167,93 +419,230 @@ classdef BeamformerView < handle
                 'RowSpacing',9,'ColumnSpacing',9,'BackgroundColor',th.bg);
             pg.Layout.Column=2;obj.PlotGrid=pg;
             keys={'doa','pattern','spectrum','time','constellation','evm'};
-            titles={'DOA spectrum','Receive pattern','Baseband spectrum','Time domain · I/Q', ...
-                'Constellation','Payload EVM · all complete bursts'};
+            titles={'DOA spectrum','Receive pattern','Baseband spectrum','Time domain','Constellation','Payload EVM'};
+            tips={'Spatial spectrum of the selected estimator on the array model. Uncalibrated model angle.', ...
+                'Relative response of the applied weights on the array model. Uncalibrated model angle.', ...
+                'Averaged spectrum of the analysed output buffer. Shaded: configured signal bandwidth.', ...
+                'Selected output as a min/max envelope with detected burst starts, or frame-to-frame phase / level of the raw receive streams (conducted path, not arrival angle).', ...
+                'Equalized cells of every complete detected burst: payload, header and pilots.', ...
+                'Primary payload EVM over all complete detected bursts. Ringed points were quality-flagged; the line breaks where acquisitions were rejected or skipped.'};
+            badges={'MODEL','MODEL','','','',''};
             obj.Panels=gobjects(1,6);
-            for k=1:6
-                p=uipanel(pg,'Title',titles{k},'FontWeight','bold','FontSize',13, ...
-                    'ForegroundColor',th.text,'BackgroundColor',th.panel,'BorderType','line', ...
-                    'HighlightColor',th.grid);obj.Panels(k)=p;
-                g=uigridlayout(p,[1 1],'Padding',[5 4 7 4],'BackgroundColor',th.panel);
-                ax=uiaxes(g,'Color',th.panel,'XColor',th.muted,'YColor',th.muted, ...
-                    'GridColor',th.grid,'GridAlpha',.55,'FontSize',11,'Box','off');
-                grid(ax,'on');hold(ax,'on');obj.Ax.(keys{k})=ax;
-                axtoolbar(ax,{'zoomin','zoomout','pan','datacursor','restoreview'});
-            end
-            obj.Lines.doa=plot(obj.Ax.doa,NaN,NaN,'LineWidth',1.6,'Color',th.cyan);
-            xlabel(obj.Ax.doa,'Model angle (°)');ylabel(obj.Ax.doa,'Normalized spectrum');
-            obj.Lines.pattern=plot(obj.Ax.pattern,NaN,NaN,'LineWidth',1.6,'Color',th.green);
-            xlabel(obj.Ax.pattern,'Model angle (°)');ylabel(obj.Ax.pattern,'Relative response (dB)');
-            obj.Lines.spectrum=plot(obj.Ax.spectrum,NaN,NaN,'Color',th.cyan,'LineWidth',1.1);
-            xlabel(obj.Ax.spectrum,'Baseband frequency (MHz)');ylabel(obj.Ax.spectrum,'dBFS/bin');
-            obj.Lines.timeI=plot(obj.Ax.time,NaN,NaN,'Color',th.cyan,'LineWidth',1);
-            obj.Lines.timeQ=plot(obj.Ax.time,NaN,NaN,'Color',th.amber,'LineWidth',1);
-            xlabel(obj.Ax.time,'Time (µs) · display decimated');ylabel(obj.Ax.time,'Amplitude');
-            legend(obj.Ax.time,{'I','Q'},'TextColor',th.muted,'Color',th.panel,'EdgeColor','none','Location','northeast');
-            lev=(-3:2:3)/sqrt(10);[a,b]=meshgrid(lev);
-            obj.Lines.ideal=plot(obj.Ax.constellation,a(:),b(:),'+','Color',th.grid,'MarkerSize',9);
-            obj.Lines.payload=plot(obj.Ax.constellation,NaN,NaN,'.','Color',th.cyan,'MarkerSize',5);
-            obj.Lines.header=plot(obj.Ax.constellation,NaN,NaN,'.','Color',th.amber,'MarkerSize',5);
-            obj.Lines.pilots=plot(obj.Ax.constellation,NaN,NaN,'.','Color',th.green,'MarkerSize',5);
-            legend(obj.Ax.constellation,[obj.Lines.payload,obj.Lines.header,obj.Lines.pilots], ...
-                {'16QAM data','BPSK header','Pilots'},'Location','southoutside','NumColumns',3, ...
-                'TextColor',th.muted,'Color',th.panel,'EdgeColor','none','FontSize',9);
-            xlabel(obj.Ax.constellation,'I');ylabel(obj.Ax.constellation,'Q');axis(obj.Ax.constellation,'equal');
-            obj.Ax.constellation.XLim=[-1.6 1.6];obj.Ax.constellation.YLim=[-1.6 1.6];
-            obj.Lines.evmHistory=plot(obj.Ax.evm,NaN,NaN,'Color',th.cyan,'LineWidth',1.4);
-            obj.Lines.evmCurrent=plot(obj.Ax.evm,NaN,NaN,'o','Color',th.cyan,'MarkerFaceColor',th.cyan,'MarkerSize',5);
-            xlabel(obj.Ax.evm,'Acquisition sequence');ylabel(obj.Ax.evm,'Payload EVM (%)');
-            footer=uigridlayout(outer,[1 3],'ColumnWidth',{'1x',260,340},'Padding',[0 0 0 0], ...
-                'BackgroundColor',th.bg);footer.Layout.Row=3;obj.FooterGrid=footer;
+            for k=1:6,obj.buildCard(pg,k,keys{k},titles{k},badges{k});obj.Card.(keys{k}).title.Tooltip=tips{k};end
+            obj.buildPlots();
+            % --- footer ---------------------------------------------------
+            footer=uigridlayout(outer,[1 3],'ColumnWidth',{'1x',330,330},'Padding',[0 0 0 0], ...
+                'BackgroundColor',th.bg);footer.Layout.Row=4;obj.FooterGrid=footer;
             obj.ScopeLabel=uilabel(footer,'Text',char(string(obj.field(obj.Config,'arrayLabel','Array model'))+' · UNCALIBRATED'), ...
-                'FontSize',11,'FontColor',th.muted);
-            obj.MetricLabel=uilabel(footer,'Text','CFO —  ·  RX —','FontColor',th.muted,'HorizontalAlignment','right');
-            obj.CoverageLabel=uilabel(footer,'Text','No demodulated frame','FontColor',th.muted,'HorizontalAlignment','right');
+                'FontSize',11,'FontColor',th.warn);
+            obj.MetricLabel=uilabel(footer,'Text','F2 snapshot · F3 hold · F5 fit · F6 controls · F7 theme · F8 pause','FontSize',11,'FontColor',th.dim,'HorizontalAlignment','right');
+            obj.CoverageLabel=uilabel(footer,'Text','No demodulated frame','FontSize',11,'FontColor',th.muted,'HorizontalAlignment','right');
+            set(findall(f,'-property','FontName'),'FontName','Segoe UI');
+            obj.Monitor.log.FontName='Consolas';
             f.SizeChangedFcn=@(~,~)obj.reflow();
+            f.WindowKeyPressFcn=@(~,e)obj.onKey(e);
             mp=get(groot,'MonitorPositions');m=mp(1,:);
             w=min(1540,max(420,m(3)-48));h=min(930,max(340,m(4)-110));
             f.Position=[m(1)+round((m(3)-w)/2),m(2)+max(45,round((m(4)-h)/2)),w,h];
-            obj.reflow();
+            obj.reflow();obj.selectPage(1);obj.timeMode();obj.evmMode();obj.band();
             if logical(obj.field(obj.Config,'visible',false)),f.Visible='on';end
+        end
+        function buildTile(obj,parent,key,caption,tip)
+            th=obj.Theme;
+            g=uigridlayout(parent,[3 2],'ColumnWidth',{3,'1x'},'RowHeight',{13,'1x',13},'RowSpacing',1, ...
+                'ColumnSpacing',9,'Padding',[0 5 8 5],'BackgroundColor',th.panel,'Tooltip',tip);
+            t.grid=g;
+            t.edge=uilabel(g,'Text','','BackgroundColor',th.hair);t.edge.Layout.Row=[1 3];t.edge.Layout.Column=1;
+            t.caption=uilabel(g,'Text',caption,'FontSize',9,'FontWeight','bold','FontColor',th.dim);
+            t.caption.Layout.Row=1;t.caption.Layout.Column=2;
+            t.value=uilabel(g,'Text','—','FontSize',20,'FontWeight','bold','FontColor',th.dim);
+            t.value.Layout.Row=2;t.value.Layout.Column=2;
+            t.sub=uilabel(g,'Text','','FontSize',10,'FontColor',th.muted);
+            t.sub.Layout.Row=3;t.sub.Layout.Column=2;
+            obj.Kpi.(key)=t;
+        end
+        function buildCard(obj,parent,k,key,titleText,badge)
+            th=obj.Theme;
+            p=uipanel(parent,'BorderType','none','BackgroundColor',th.panel);obj.Panels(k)=p;
+            g=uigridlayout(p,[2 1],'RowHeight',{24,'1x'},'RowSpacing',2,'Padding',[10 7 8 6],'BackgroundColor',th.panel);
+            head=uigridlayout(g,[1 4],'ColumnWidth',{'fit','1x',0,0},'Padding',[0 0 0 0],'ColumnSpacing',8, ...
+                'BackgroundColor',th.panel);
+            c.panel=p;c.head=head;
+            c.title=uilabel(head,'Text',titleText,'FontWeight','bold','FontSize',13,'FontColor',th.text);
+            c.note=uilabel(head,'Text','','FontSize',11,'FontColor',th.muted);
+            c.slot=uigridlayout(head,[1 1],'Padding',[0 1 0 1],'BackgroundColor',th.panel);
+            c.badge=uilabel(head,'Text',badge,'FontSize',9,'FontWeight','bold','HorizontalAlignment','center', ...
+                'BackgroundColor',th.warnBg,'FontColor',th.warn, ...
+                'Tooltip','Array-model quantity. Angles are model angles, not calibrated physical directions.');
+            if ~isempty(badge),head.ColumnWidth{4}=52;end
+            ax=uiaxes(g,'Color',th.panel,'XColor',th.dim,'YColor',th.dim,'GridColor',th.hair,'GridAlpha',1, ...
+                'FontSize',10,'Box','off','TickLength',[0 0],'LineWidth',.75);
+            grid(ax,'on');hold(ax,'on');
+            ax.XLabel.Color=th.muted;ax.YLabel.Color=th.muted;
+            axtoolbar(ax,{'datacursor','zoomin','zoomout','pan'});
+            obj.Ax.(key)=ax;obj.Card.(key)=c;
+            obj.Empty.(key)=text(ax,.5,.5,'','Units','normalized','HorizontalAlignment','center', ...
+                'VerticalAlignment','middle','Color',th.dim,'FontSize',11,'FontWeight','bold', ...
+                'Visible','off','HandleVisibility','off','PickableParts','none');
+        end
+        function buildPlots(obj)
+            th=obj.Theme;A=obj.Ax;
+            % DOA spectrum and receive pattern (array model)
+            obj.Lines.doa=plot(A.doa,NaN,NaN,'LineWidth',1.6,'Color',th.model);
+            xlabel(A.doa,'Model angle (°)');ylabel(A.doa,'Normalized spectrum');
+            obj.Lines.pattern=plot(A.pattern,NaN,NaN,'LineWidth',1.6,'Color',th.model);
+            xlabel(A.pattern,'Model angle (°)');ylabel(A.pattern,'Relative response (dB)');
+            for n=["doa","pattern"]
+                for k=1:3
+                    obj.Marks.(n)(k)=xline(A.(n),0,'--','','Color',th.muted,'LineWidth',.9,'FontSize',9, ...
+                        'LabelOrientation','horizontal','LabelVerticalAlignment','middle','Visible','off','HandleVisibility','off');
+                end
+            end
+            % Baseband spectrum with band shading and optional max hold
+            try
+                obj.Marks.band=xregion(A.spectrum,-1,1,'FaceColor',th.s1,'FaceAlpha',.07,'EdgeColor','none', ...
+                    'HandleVisibility','off');
+            catch
+                obj.Marks.band=[];
+            end
+            obj.Lines.spectrumHold=plot(A.spectrum,NaN,NaN,'Color',th.dim,'LineWidth',1,'Visible','off');
+            obj.Lines.spectrum=plot(A.spectrum,NaN,NaN,'Color',th.s1,'LineWidth',1.2);
+            xlabel(A.spectrum,'Baseband frequency (MHz)');ylabel(A.spectrum,'dBFS/bin');
+            obj.Controls.MaxHold=uibutton(obj.Card.spectrum.slot,'state','Text','Max hold','FontSize',10, ...
+                'BackgroundColor',th.input,'FontColor',th.muted,'ValueChangedFcn',@(~,~)obj.maxHold(), ...
+                'Tooltip','Keep the per-bin maximum since the last clear, Fit plots or setting change');
+            obj.Card.spectrum.head.ColumnWidth{3}=72;
+            % Time domain: waveform, or per-stream phase / level histories
+            obj.Lines.timeQ=plot(A.time,NaN,NaN,'Color',th.s2,'LineWidth',.8);
+            obj.Lines.timeI=plot(A.time,NaN,NaN,'Color',th.s1,'LineWidth',.8);
+            obj.Lines.timePad=plot(A.time,NaN,NaN,'LineStyle','none','Marker','none','HandleVisibility','off');
+            obj.Lines.burstOk=plot(A.time,NaN,NaN,'v','Color',th.ok,'MarkerFaceColor',th.ok,'MarkerSize',6,'LineStyle','none');
+            obj.Lines.burstBad=plot(A.time,NaN,NaN,'v','Color',th.warn,'MarkerFaceColor',th.warn,'MarkerSize',6,'LineStyle','none');
+            colors={th.s1,th.s2,th.s3,th.s4};
+            for k=1:4
+                obj.Lines.chPhase(k)=plot(A.time,NaN,NaN,'.-','Color',colors{k},'LineWidth',1,'MarkerSize',9,'Visible','off');
+                obj.Lines.chLevel(k)=plot(A.time,NaN,NaN,'.-','Color',colors{k},'LineWidth',1,'MarkerSize',9,'Visible','off');
+            end
+            obj.Marks.timeKey=obj.key(A.time,4);
+            obj.Controls.TimeMode=uidropdown(obj.Card.time.slot,'Items',{'I/Q waveform','Stream phase','Stream level'}, ...
+                'ItemsData',{'iq','phase','level'},'Value','iq','FontSize',10,'BackgroundColor',th.input,'FontColor',th.text, ...
+                'ValueChangedFcn',@(~,~)obj.timeMode(), ...
+                'Tooltip','Waveform of the selected output, or frame-to-frame phase / level of each raw receive stream');
+            obj.Card.time.head.ColumnWidth{3}=118;
+            % Constellation
+            lev=(-3:2:3)/sqrt(10);[a,b]=meshgrid(lev);
+            for v=[-2 0 2]/sqrt(10)
+                xline(A.constellation,v,':','Color',th.hair,'HandleVisibility','off');
+                yline(A.constellation,v,':','Color',th.hair,'HandleVisibility','off');
+            end
+            obj.Lines.ideal=plot(A.constellation,a(:),b(:),'o','Color',th.dim,'MarkerSize',10,'LineWidth',.75);
+            obj.Lines.payload=scatter(A.constellation,NaN,NaN,9,'filled','MarkerFaceColor',th.s1, ...
+                'MarkerFaceAlpha',.4,'MarkerEdgeColor','none');
+            obj.Lines.header=scatter(A.constellation,NaN,NaN,22,'d','filled','MarkerFaceColor',th.s3, ...
+                'MarkerFaceAlpha',.9,'MarkerEdgeColor','none');
+            obj.Lines.pilots=scatter(A.constellation,NaN,NaN,22,'^','filled','MarkerFaceColor',th.s4, ...
+                'MarkerFaceAlpha',.9,'MarkerEdgeColor','none');
+            grid(A.constellation,'off');
+            A.constellation.XTick=lev;A.constellation.YTick=lev;
+            A.constellation.XTickLabel={'-3','-1','1','3'};A.constellation.YTickLabel={'-3','-1','1','3'};
+            xlabel(A.constellation,'I');ylabel(A.constellation,'Q');
+            A.constellation.DataAspectRatio=[1 1 1];
+            A.constellation.XLim=[-1.45 1.45];A.constellation.YLim=[-1.45 1.45];
+            h=obj.key(A.constellation,3);
+            labels={'● 16QAM data','◆ BPSK header','▲ pilots'};colors={th.s1,th.s3,th.s4};
+            for k=1:3,h(k).String=labels{k};h(k).Color=colors{k};end
+            obj.Marks.constKey=h;
+            % Payload EVM: history, or the current frame per subcarrier / symbol
+            obj.Marks.evmMedian=yline(A.evm,0,':','median','Color',th.muted,'FontSize',9,'LabelHorizontalAlignment','left', ...
+                'Visible','off','HandleVisibility','off');
+            obj.Lines.evmPad=plot(A.evm,NaN,NaN,'LineStyle','none','Marker','none','HandleVisibility','off');
+            obj.Lines.evmHistory=plot(A.evm,NaN,NaN,'.-','Color',th.s1,'LineWidth',1.3,'MarkerSize',9);
+            obj.Lines.evmFlagged=plot(A.evm,NaN,NaN,'o','Color',th.warn,'MarkerSize',7,'LineWidth',1.2,'LineStyle','none');
+            obj.Lines.evmCurrent=plot(A.evm,NaN,NaN,'o','Color',th.text,'MarkerFaceColor',th.s1,'MarkerSize',7);
+            obj.Lines.evmSub=plot(A.evm,NaN,NaN,'.-','Color',th.s1,'LineWidth',1,'MarkerSize',8,'Visible','off');
+            obj.Lines.evmSym=plot(A.evm,NaN,NaN,'.-','Color',th.s1,'LineWidth',1.2,'MarkerSize',10,'Visible','off');
+            obj.Card.evm.slot.ColumnWidth={46,'1x'};obj.Card.evm.slot.ColumnSpacing=6;
+            obj.Controls.EvmUnit=uibutton(obj.Card.evm.slot,'state','Text','%','FontSize',10,'FontWeight','bold', ...
+                'BackgroundColor',th.input,'FontColor',th.text,'ValueChangedFcn',@(~,~)obj.evmUnit(), ...
+                'Tooltip','Switch the EVM graph between percent and dB (20·log10 of the same values)');
+            obj.Controls.EvmMode=uidropdown(obj.Card.evm.slot,'Items',{'History','Per subcarrier','Per symbol'}, ...
+                'ItemsData',{'history','subcarrier','symbol'},'Value','history','FontSize',10, ...
+                'BackgroundColor',th.input,'FontColor',th.text,'ValueChangedFcn',@(~,~)obj.evmMode(), ...
+                'Tooltip','Frame history of the primary EVM, or the current frame resolved by subcarrier or payload symbol');
+            obj.Card.evm.head.ColumnWidth{3}=170;
+            for n=["doa","pattern","evm"],obj.defaultLimits(char(n));end
+        end
+        function h=key(obj,ax,n)
+            % Persistent coloured series key inside the axes (cheaper than a legend).
+            h=gobjects(1,n);
+            for k=1:n
+                h(k)=text(ax,.02+(k-1)*.98/n,.975,'','Units','normalized','VerticalAlignment','top', ...
+                    'FontSize',9,'FontWeight','bold','Color',obj.Theme.muted,'HandleVisibility','off','PickableParts','none');
+            end
         end
         function buildControls(obj,parent)
             th=obj.Theme;
-            g=uigridlayout(parent,[3 1],'RowHeight',{36,25,'1x'},'Padding',[10 9 10 9], ...
-                'BackgroundColor',th.panel);
+            g=uigridlayout(parent,[4 1],'RowHeight',{34,0,30,'1x'},'Padding',[10 10 10 8],'RowSpacing',8, ...
+                'BackgroundColor',th.panel);obj.Controls.SideGrid=g;
             buttons=uigridlayout(g,[1 2],'ColumnWidth',{'1x','1x'},'Padding',[0 0 0 0], ...
                 'BackgroundColor',th.panel);
             obj.Controls.Start=uibutton(buttons,'Text','Start','FontWeight','bold', ...
-                'BackgroundColor',[.05 .42 .51],'FontColor',th.text, ...
-                'ButtonPushedFcn',@(~,~)obj.action('start',[]));
+                'BackgroundColor',th.accent,'FontColor',th.text, ...
+                'ButtonPushedFcn',@(~,~)obj.action('start',[]),'Tooltip','Open the board session and start acquiring');
             obj.Controls.Pause=uibutton(buttons,'state','Text','Pause','BackgroundColor',th.input,'FontColor',th.text, ...
-                'ValueChangedFcn',@(h,~)obj.valueAction('pause',h,logical(h.Value)));
+                'ValueChangedFcn',@(h,~)obj.valueAction('pause',h,logical(h.Value)), ...
+                'Tooltip','F8 · Stop / resume the board data stream; current plots are cleared while paused');
             if ~obj.has('start'),obj.Controls.Start.Enable='off';end
             if ~obj.has('pause'),obj.Controls.Pause.Enable='off';end
-            obj.Controls.Error=uilabel(g,'Text','','FontColor',th.amber,'WordWrap','on','FontSize',11);
-            tabs=uitabgroup(g);tabs.Layout.Row=3;
-            rf=uitab(tabs,'Title','RF','BackgroundColor',th.panel);
-            dsp=uitab(tabs,'Title','DSP','BackgroundColor',th.panel);
-            advanced=uitab(tabs,'Title','Algorithms','BackgroundColor',th.panel);
-            r=obj.controlGrid(rf,17);
-            obj.heading(r,1,'RF tuning');
-            obj.number(r,2,'ADC center (MHz)','adcMHz',obj.field(obj.Config,'fc',3e9)/1e6,[-6000 6000],false);
-            obj.number(r,3,'DAC center (MHz)','dacMHz',obj.field(obj.Config,'fc_d0',3e9)/1e6,[-6000 6000],false);
+            obj.Controls.Error=uilabel(g,'Text','','FontColor',th.warn,'BackgroundColor',th.warnBg,'WordWrap','on', ...
+                'FontSize',11,'Visible','off');
+            seg=uigridlayout(g,[2 4],'RowHeight',{'1x',2},'ColumnWidth',{'1x','1x','1.35x','1.15x'},'RowSpacing',0, ...
+                'ColumnSpacing',2,'Padding',[0 0 0 0],'BackgroundColor',th.panel);seg.Layout.Row=3;
+            names={'RF','DSP','Algorithms','Monitor'};
+            for k=1:4
+                obj.Controls.PageButton(k)=uibutton(seg,'state','Text',names{k},'FontSize',11, ...
+                    'BackgroundColor',th.panel,'FontColor',th.muted,'ValueChangedFcn',@(~,~)obj.selectPage(k));
+                obj.Controls.PageButton(k).Layout.Row=1;obj.Controls.PageButton(k).Layout.Column=k;
+                obj.Controls.PageRule(k)=uilabel(seg,'Text','','BackgroundColor',th.hair);
+                obj.Controls.PageRule(k).Layout.Row=2;obj.Controls.PageRule(k).Layout.Column=k;
+            end
+            for k=1:4
+                obj.Controls.PagePanel(k)=uipanel(g,'BorderType','none','BackgroundColor',th.panel,'Visible','off');
+                obj.Controls.PagePanel(k).Layout.Row=4;obj.Controls.PagePanel(k).Layout.Column=1;
+            end
+            rf=obj.Controls.PagePanel(1);dsp=obj.Controls.PagePanel(2);
+            advanced=obj.Controls.PagePanel(3);mon=obj.Controls.PagePanel(4);
+            % --- RF ---------------------------------------------------------
+            r=obj.controlGrid(rf,{20,28,28,28,26,6,20,28,28,28,28,28,28,6,28,44});
+            obj.heading(r,1,'RF TUNING');
+            obj.number(r,2,'ADC center','adcMHz',obj.field(obj.Config,'fc',3e9)/1e6,[0 6000],false,'%g MHz');
+            obj.number(r,3,'DAC center','dacMHz',obj.field(obj.Config,'fc_d0',3e9)/1e6,[0 6000],false,'%g MHz');
+            obj.Controls.adcMHz.ValueChangedFcn=@(~,~)obj.dirty();
+            obj.Controls.dacMHz.ValueChangedFcn=@(~,~)obj.dirty();
+            obj.Controls.adcMHz.RoundFractionalValues='on';obj.Controls.dacMHz.RoundFractionalValues='on';
             obj.Controls.ApplyRF=obj.button(r,4,'Apply frequency',@(~,~)obj.rfAction());
+            obj.Controls.ApplyRF.Tooltip='Retune ADC and DAC mixers. Clears model calibration and averaging.';
             obj.Controls.Dac=obj.checkbox(r,5,'Selected DAC enabled','dac',logical(any(obj.field(obj.Config,'dacPow',[1 0 0 0]))),false);
             obj.Controls.Dac.ValueChangedFcn=@(h,~)obj.valueAction('dac',h,logical(h.Value));
-            obj.heading(r,7,'Requested mixer phases (°)');
+            obj.heading(r,7,'REQUESTED MIXER PHASES');
             obj.Controls.PhaseKind=obj.dropdown(r,8,'Converters','phaseKind',{'ADC','DAC'},'DAC',false);
             obj.Controls.PhaseKind.ValueChangedFcn=@(~,~)obj.phaseKind();
-            for k=1:4,obj.number(r,8+k,sprintf('Channel %d',k),sprintf('phase%d',k),obj.PhaseValues.DAC(k),[-180 180],false);end
+            for k=1:4
+                obj.number(r,8+k,sprintf('Channel %d',k),sprintf('phase%d',k),obj.PhaseValues.DAC(k),[-180 180],false,'%g°');
+                obj.Controls.(sprintf('phase%d',k)).ValueChangedFcn=@(~,~)obj.dirty();
+                obj.Controls.(sprintf('phase%d',k)).RoundFractionalValues='on';
+            end
             obj.Controls.ApplyPhase=obj.button(r,13,'Apply phases',@(~,~)obj.phaseAction());
-            if obj.has('calibration'),obj.Controls.Calibration=obj.button(r,15,'Load calibration',@(~,~)obj.action('calibration',[]));end
+            obj.Controls.ApplyPhase.Tooltip='Write the requested mixer phases. Clears model calibration and averaging.';
+            if obj.has('calibration'),obj.Controls.Calibration=obj.button(r,15,'Load calibration…',@(~,~)obj.action('calibration',[]));end
             info=uilabel(r,'Text','ADC_D = stream 0. Other connector mappings remain unverified.', ...
-                'WordWrap','on','FontColor',th.muted,'FontSize',11);info.Layout.Row=17;info.Layout.Column=[1 2];
+                'WordWrap','on','FontColor',th.dim,'FontSize',10,'VerticalAlignment','top');info.Layout.Row=16;info.Layout.Column=[1 2];
             if ~obj.has('rf'),obj.Controls.ApplyRF.Enable='off';end
             if ~obj.has('dac'),obj.Controls.Dac.Enable='off';end
             if ~obj.has('phase'),obj.Controls.ApplyPhase.Enable='off';end
-            d=obj.controlGrid(dsp,17);
-            obj.heading(d,1,'Receive processing');
+            % --- DSP --------------------------------------------------------
+            d=obj.controlGrid(dsp,{20,28,28,28,28,28,28,28,28,28,22,24,24,24,24});
+            obj.heading(d,1,'RECEIVE PROCESSING');
             obj.Controls.ch=obj.dropdown(d,2,'Output','ch',{'Combined','ADC_D · stream 0','RX stream 1','RX stream 2','RX stream 3'},'Combined',false);
             mask=true(1,4);if obj.field(obj.Config,'directOnly',false),mask=[true false false false];end
             mask=logical(obj.field(obj.Config,'availableChannels',mask));
@@ -268,65 +657,96 @@ classdef BeamformerView < handle
             obj.dropdown(d,3,'Beamformer','bf',bfs,char(obj.field(obj.Config,'bf','Steering')),true);
             doa={'MVDR','MUSIC','Beamscan','MUSICR','ESPRITE','ESPRITEBS','WSFR','MVDRman','MVDRman_corr'};
             obj.dropdown(d,4,'DOA estimator','doa',doa,char(obj.field(obj.Config,'doa','MVDR')),true);
-            obj.number(d,5,'Source count','num',obj.field(obj.Config,'num',1),[1 3],true);
-            obj.number(d,6,'Scan width (°)','scan_bw',obj.field(obj.Config,'scan_bw',120),[1 180],true);
-            obj.number(d,7,'Scan step (°)','scan_res',obj.field(obj.Config,'scan_res',1),[.1 10],true);
-            obj.number(d,8,'Average frames','avg_factor',obj.field(obj.Config,'avg_factor',10),[1 100],true);
-            obj.number(d,9,'Signal BW (MHz)','bwMHz',obj.field(obj.Config,'bw',100e6)/1e6,[1 125],false);
-            obj.Accepted.bw=obj.Controls.bwMHz.Value;
-            obj.Controls.bwMHz.ValueChangedFcn=@(h,~)obj.configure('bw',h.Value*1e6,h);
-            obj.Controls.CompareVsa=obj.checkbox(d,10,'Compare with native VSA','CompareVsa',string(obj.field(obj.Config,'analyzer','integrated'))~="integrated",false);
-            obj.Accepted.analyzer=obj.Controls.CompareVsa.Value;
-            obj.Controls.CompareVsa.ValueChangedFcn=@(h,~)obj.compareVsa(h);
+            obj.number(d,5,'Source count','num',obj.field(obj.Config,'num',1),[1 3],true,'%g');
             obj.Controls.ang_num=uidropdown(d,'Items',{'Strongest','Weaker'},'ItemsData',{1,2}, ...
-                'Value',obj.field(obj.Config,'ang_num',1),'BackgroundColor',th.input,'FontColor',th.text);
-            obj.Controls.ang_num.Layout.Row=11;obj.Controls.ang_num.Layout.Column=2;
-            h=uilabel(d,'Text','Signal priority','FontColor',th.muted);h.Layout.Row=11;h.Layout.Column=1;
+                'Value',obj.field(obj.Config,'ang_num',1),'BackgroundColor',th.input,'FontColor',th.text,'FontSize',11);
+            obj.Controls.ang_num.Layout.Row=6;obj.Controls.ang_num.Layout.Column=2;
+            obj.label(d,6,'Signal priority');
             obj.Accepted.ang_num=obj.Controls.ang_num.Value;
             obj.Controls.ang_num.ValueChangedFcn=@(h,~)obj.configure('ang_num',h.Value,h);
-            obj.heading(d,12,'IQ / phase correction');
-            obj.checkbox(d,13,'Adaptive IQ correction','adIQcomp',logical(obj.field(obj.Config,'adIQcomp',false)),true);
-            obj.checkbox(d,14,'Static IQ correction','IQcomp',logical(obj.field(obj.Config,'IQcomp',false)),true);
+            obj.number(d,7,'Scan width','scan_bw',obj.field(obj.Config,'scan_bw',120),[1 180],true,'%g°');
+            obj.number(d,8,'Scan step','scan_res',obj.field(obj.Config,'scan_res',1),[.1 10],true,'%g°');
+            obj.number(d,9,'Average frames','avg_factor',obj.field(obj.Config,'avg_factor',10),[1 100],true,'%g');
+            obj.number(d,10,'Signal bandwidth','bwMHz',obj.field(obj.Config,'bw',100e6)/1e6,[1 125],false,'%g MHz');
+            obj.Accepted.bw=obj.Controls.bwMHz.Value;
+            obj.Controls.bwMHz.ValueChangedFcn=@(h,~)obj.bandwidth(h);
+            obj.heading(d,11,'IQ / PHASE CORRECTION');
+            obj.checkbox(d,12,'Adaptive IQ correction','adIQcomp',logical(obj.field(obj.Config,'adIQcomp',false)),true);
+            obj.checkbox(d,13,'Static IQ correction','IQcomp',logical(obj.field(obj.Config,'IQcomp',false)),true);
             obj.Controls.IQcomp.Tooltip='Uses the frozen IQ filter learned by adaptive correction.';
-            obj.checkbox(d,15,'Phase / power correction','phComp',logical(obj.field(obj.Config,'phComp',false)),true);
+            obj.checkbox(d,14,'Phase / power correction','phComp',logical(obj.field(obj.Config,'phComp',false)),true);
             cal=obj.field(obj.Config,'calibration',struct());
             if isempty(obj.field(cal,'steeringCorrection',[])) || isempty(obj.field(cal,'powCalibration',[]))
                 obj.Controls.phComp.Enable='off';obj.Controls.phComp.Tooltip='Load matching steering and power calibration tables first.';
             end
-            obj.Controls.Vendor=uilabel(d,'Text','Native VSA comparison —','WordWrap','on', ...
-                'FontColor',th.muted,'FontSize',11);obj.Controls.Vendor.Layout.Row=16;obj.Controls.Vendor.Layout.Column=[1 2];
-            obj.Controls.Profile=uilabel(d,'Text','OFDM profile · awaiting data','WordWrap','on', ...
-                'FontColor',th.muted,'FontSize',11);obj.Controls.Profile.Layout.Row=17;obj.Controls.Profile.Layout.Column=[1 2];
-            a=obj.controlGrid(advanced,15);
-            obj.heading(a,1,'Beamformer parameters');
-            spec={'diag','Diagonal loading',[0 1e6];'alpha','Uncertainty',[0 100];'gamma','Robust loading γ',[0 100]; ...
-                'iter','Iterations',[1 1000];'mis_ang','Mismatch angle (°)',[0 90];'alg_scan_res','Algorithm step (°)',[.1 10]};
-            for k=1:size(spec,1),obj.number(a,k+1,spec{k,2},spec{k,1},obj.field(obj.Config,spec{k,1},1),spec{k,3},true);end
-            obj.heading(a,9,'IQ filter parameters');
-            obj.number(a,10,'Filter length','sizeL',obj.field(obj.Config,'sizeL',4),[1 50],true);
-            obj.number(a,11,'LMS step μ','stepMU',obj.field(obj.Config,'stepMU',1e-16),[1e-31 1],true);
+            obj.Controls.CompareVsa=obj.checkbox(d,15,'Compare with native VSA','CompareVsa',string(obj.field(obj.Config,'analyzer','integrated'))~="integrated",false);
+            obj.Accepted.analyzer=obj.Controls.CompareVsa.Value;
+            obj.Controls.CompareVsa.ValueChangedFcn=@(h,~)obj.compareVsa(h);
+            % --- Algorithms -------------------------------------------------
+            a=obj.controlGrid(advanced,{20,28,28,28,28,28,28,6,22,28,28,44});
+            obj.heading(a,1,'BEAMFORMER PARAMETERS');
+            spec={'diag','Diagonal loading',[0 1e6],'%g';'alpha','Uncertainty',[0 100],'%g';'gamma','Robust loading γ',[0 100],'%g'; ...
+                'iter','Iterations',[1 1000],'%g';'mis_ang','Mismatch angle',[0 90],'%g°';'alg_scan_res','Algorithm step',[.1 10],'%g°'};
+            for k=1:size(spec,1),obj.number(a,k+1,spec{k,2},spec{k,1},obj.field(obj.Config,spec{k,1},1),spec{k,3},true,spec{k,4});end
+            obj.heading(a,9,'IQ FILTER PARAMETERS');
+            obj.number(a,10,'Filter length','sizeL',obj.field(obj.Config,'sizeL',4),[1 50],true,'%g');
+            obj.number(a,11,'LMS step μ','stepMU',obj.field(obj.Config,'stepMU',1e-16),[1e-31 1],true,'%g');
             note=uilabel(a,'Text','Only supported processing options are shown. RF changes reset current measurements.', ...
-                'WordWrap','on','FontSize',11,'FontColor',th.muted);note.Layout.Row=14;note.Layout.Column=[1 2];
+                'WordWrap','on','FontSize',10,'FontColor',th.dim,'VerticalAlignment','top');note.Layout.Row=12;note.Layout.Column=[1 2];
+            % --- Monitor ----------------------------------------------------
+            m=obj.controlGrid(mon,{20,100,38,20,32,28,44,20,'1x',28});
+            obj.heading(m,1,'RECEIVE STREAMS · RAW CAPTURE');
+            tg=uigridlayout(m,[5 6],'ColumnWidth',{34,'1x','1x','1x','1x','1x'},'RowHeight',repmat({'1x'},1,5), ...
+                'RowSpacing',2,'ColumnSpacing',4,'Padding',[0 0 0 0],'BackgroundColor',th.panel);
+            tg.Layout.Row=2;tg.Layout.Column=[1 2];
+            heads={'RX','dBFS','Δφ °','coh','w dB','w °'};colors={th.s1,th.s2,th.s3,th.s4};
+            for c=1:6
+                uilabel(tg,'Text',heads{c},'FontSize',10,'FontWeight','bold','FontColor',th.dim,'HorizontalAlignment','right');
+            end
+            for rr=1:4
+                for c=1:6
+                    h=uilabel(tg,'Text','—','FontSize',11,'FontColor',th.text,'HorizontalAlignment','right');
+                    h.Layout.Row=rr+1;h.Layout.Column=c;
+                    if c==1,h.Text=sprintf('%d',rr-1);h.FontColor=colors{rr};h.FontWeight='bold';end
+                    obj.Monitor.cell(rr,c)=h;
+                end
+            end
+            n=uilabel(m,'Text',['Level, phase and coherence against the first measured stream; applied weight w. ' ...
+                'Conducted-path readouts, not arrival angles.'],'WordWrap','on','FontSize',10,'FontColor',th.dim, ...
+                'VerticalAlignment','top');n.Layout.Row=3;n.Layout.Column=[1 2];
+            obj.heading(m,4,'SESSION');
+            obj.Monitor.counts=uilabel(m,'Text','No frame displayed yet','WordWrap','on','FontSize',11,'FontColor',th.muted, ...
+                'VerticalAlignment','top');obj.Monitor.counts.Layout.Row=5;obj.Monitor.counts.Layout.Column=[1 2];
+            obj.Controls.Vendor=uilabel(m,'Text','Native VSA comparison —','WordWrap','on', ...
+                'FontColor',th.muted,'FontSize',11,'VerticalAlignment','top');obj.Controls.Vendor.Layout.Row=6;obj.Controls.Vendor.Layout.Column=[1 2];
+            obj.Controls.Profile=uilabel(m,'Text','OFDM profile · awaiting data','WordWrap','on', ...
+                'FontColor',th.muted,'FontSize',10,'VerticalAlignment','top');obj.Controls.Profile.Layout.Row=7;obj.Controls.Profile.Layout.Column=[1 2];
+            obj.heading(m,8,'EVENT LOG');
+            obj.Monitor.log=uitextarea(m,'Editable','off','Value',{'(no events yet)'},'FontSize',10, ...
+                'BackgroundColor',th.bg,'FontColor',th.muted,'WordWrap','on');
+            obj.Monitor.log.Layout.Row=9;obj.Monitor.log.Layout.Column=[1 2];
+            obj.Controls.ClearHistory=obj.button(m,10,'Clear histories',@(~,~)obj.clearHistory());
+            obj.Controls.ClearHistory.Tooltip='Forget the EVM and per-stream histories, max hold and rate estimate';
             obj.phaseKind();
             if isfield(obj.Config,'ofdmProfile'),obj.Controls.Profile.Text=obj.profileText(obj.Config.ofdmProfile);end
         end
-        function g=controlGrid(obj,parent,n)
-            rh=repmat({30},1,n);rh{n}=65;
-            g=uigridlayout(parent,[n 2],'ColumnWidth',{132,'1x'},'RowHeight',rh, ...
-                'Padding',[7 9 7 9],'RowSpacing',5,'ColumnSpacing',6,'BackgroundColor',obj.Theme.panel,'Scrollable','on');
+        function g=controlGrid(obj,parent,rows)
+            g=uigridlayout(parent,[numel(rows) 2],'ColumnWidth',{126,'1x'},'RowHeight',rows, ...
+                'Padding',[2 6 4 6],'RowSpacing',5,'ColumnSpacing',6,'BackgroundColor',obj.Theme.panel,'Scrollable','on');
         end
         function heading(obj,g,row,text)
-            h=uilabel(g,'Text',text,'FontColor',obj.Theme.text,'FontWeight','bold','FontSize',12);
+            h=uilabel(g,'Text',text,'FontColor',obj.Theme.dim,'FontWeight','bold','FontSize',10, ...
+                'VerticalAlignment','bottom');
             h.Layout.Row=row;h.Layout.Column=[1 2];
         end
         function h=label(obj,g,row,text)
             h=uilabel(g,'Text',text,'FontColor',obj.Theme.muted,'FontSize',11);
             h.Layout.Row=row;h.Layout.Column=1;
         end
-        function h=number(obj,g,row,text,key,value,limits,bind)
+        function h=number(obj,g,row,text,key,value,limits,bind,fmt)
             lh=obj.label(g,row,text);obj.Controls.([key 'Label'])=lh;
             h=uieditfield(g,'numeric','Value',value,'Limits',limits,'BackgroundColor',obj.Theme.input, ...
-                'FontColor',obj.Theme.text,'FontSize',11);
+                'FontColor',obj.Theme.text,'FontSize',11,'ValueDisplayFormat',fmt);
             h.Layout.Row=row;h.Layout.Column=2;obj.Controls.(key)=h;obj.Accepted.(key)=value;
             if bind,h.ValueChangedFcn=@(src,~)obj.configure(key,src.Value,src);end
         end
@@ -344,7 +764,23 @@ classdef BeamformerView < handle
         end
         function h=button(obj,g,row,text,callback)
             h=uibutton(g,'Text',text,'BackgroundColor',obj.Theme.input,'FontColor',obj.Theme.text, ...
-                'ButtonPushedFcn',callback);h.Layout.Row=row;h.Layout.Column=[1 2];
+                'ButtonPushedFcn',callback,'Interruptible','off','BusyAction','cancel');
+            h.Layout.Row=row;h.Layout.Column=[1 2];
+        end
+        function selectPage(obj,k)
+            th=obj.Theme;obj.Page=k;
+            for j=1:4
+                on=j==k;
+                obj.Controls.PageButton(j).Value=on;
+                obj.Controls.PagePanel(j).Visible=matlab.lang.OnOffSwitchState(on);
+                if on
+                    set(obj.Controls.PageButton(j),'FontColor',th.text,'FontWeight','bold','BackgroundColor',th.input);
+                    obj.Controls.PageRule(j).BackgroundColor=th.s1;
+                else
+                    set(obj.Controls.PageButton(j),'FontColor',th.muted,'FontWeight','normal','BackgroundColor',th.panel);
+                    obj.Controls.PageRule(j).BackgroundColor=th.hair;
+                end
+            end
         end
         function configure(obj,key,value,h)
             old=h.Value;
@@ -354,10 +790,15 @@ classdef BeamformerView < handle
                 obj.Callbacks.configure(struct(key,value));
                 obj.Accepted.(key)=h.Value;
                 obj.Config.(key)=value;
-                obj.Controls.Error.Text='';
+                if strcmp(key,'scan_bw'),obj.defaultLimits('doa');obj.defaultLimits('pattern');end
+                obj.noError();
+                obj.logEvent(sprintf('%s = %s',key,obj.valueText(value)));
             catch err
                 h.Value=old;obj.showError(err.message);
             end
+        end
+        function bandwidth(obj,h)
+            obj.configure('bw',h.Value*1e6,h);obj.band();
         end
         function compareVsa(obj,h)
             mode='integrated';if h.Value,mode='both';end
@@ -367,17 +808,36 @@ classdef BeamformerView < handle
             old=~logical(h.Value);
             try
                 assert(obj.has(name),'origapp:View','This control is unavailable.');
-                obj.Callbacks.(name)(value);obj.Controls.Error.Text='';
+                obj.Callbacks.(name)(value);obj.noError();
+                obj.logEvent(sprintf('%s %s',name,obj.valueText(logical(value))));
             catch err
                 h.Value=old;obj.showError(err.message);
+            end
+            if isfield(obj.Controls,'Pause') && isequal(h,obj.Controls.Pause),obj.pauseLook();end
+        end
+        function pauseLook(obj)
+            h=obj.Controls.Pause;
+            if h.Value
+                set(h,'Text','Resume','BackgroundColor',obj.Theme.warnBg,'FontColor',obj.Theme.warn);
+            else
+                set(h,'Text','Pause','BackgroundColor',obj.Theme.input,'FontColor',obj.Theme.text);
             end
         end
         function action(obj,name,arg)
             try
                 assert(obj.has(name),'origapp:View','This control is unavailable.');
                 if isempty(arg),obj.Callbacks.(name)();else,obj.Callbacks.(name)(arg);end
-                if strcmp(name,'start'),obj.Controls.Start.Enable='off';end
-                obj.Controls.Error.Text='';
+                if strcmp(name,'start')
+                    obj.Controls.Start.Enable='off';obj.Controls.Start.Text='Running';
+                    obj.pill('WAITING','idle');obj.StatusLabel.Text='waiting for the first frame';
+                end
+                obj.noError();obj.logEvent(name);
+            catch err,obj.showError(err.message);end
+        end
+        function snapshotAction(obj)
+            try
+                files=obj.saveSnapshot();
+                if ~isempty(files),obj.StatusLabel.Text=['snapshot saved · ' files{1}];end
             catch err,obj.showError(err.message);end
         end
         function rfAction(obj)
@@ -385,11 +845,13 @@ classdef BeamformerView < handle
                 assert(obj.has('rf'),'origapp:View','Frequency controls are unavailable.');
                 obj.Callbacks.rf(struct('adcMHz',obj.Controls.adcMHz.Value,'dacMHz',obj.Controls.dacMHz.Value));
                 obj.Accepted.adcMHz=obj.Controls.adcMHz.Value;obj.Accepted.dacMHz=obj.Controls.dacMHz.Value;
-                obj.Controls.Error.Text='';
+                obj.noError();
+                obj.logEvent(sprintf('RF applied · ADC %g MHz · DAC %g MHz',obj.Accepted.adcMHz,obj.Accepted.dacMHz));
             catch err
                 obj.Controls.adcMHz.Value=obj.Accepted.adcMHz;obj.Controls.dacMHz.Value=obj.Accepted.dacMHz;
                 obj.showError(err.message);
             end
+            obj.dirty();
         end
         function phaseKind(obj)
             kind=obj.Controls.PhaseKind.Value;v=obj.PhaseValues.(kind);
@@ -399,7 +861,7 @@ classdef BeamformerView < handle
                 h.Value=v(k);h.Layout.Row=8+k;lab.Layout.Row=8+k;
                 h.Visible='on';lab.Visible='on';
                 if k==1,lab.Text='RX0 · ADC_D';else,lab.Text=sprintf('RX%d · unverified',k-1);end
-                rh{8+k}=30;
+                rh{8+k}=28;
             end
             if strcmp(kind,'DAC')
                 obj.Controls.phase1Label.Text='DAC_B (index 0)';
@@ -412,6 +874,7 @@ classdef BeamformerView < handle
                 rh{11}=0;rh{12}=0;
             end
             g.RowHeight=rh;
+            if isfield(obj.Controls,'ApplyPhase'),obj.dirty();end
         end
         function phaseAction(obj)
             kind=obj.Controls.PhaseKind.Value;values=zeros(1,4);
@@ -420,42 +883,461 @@ classdef BeamformerView < handle
             try
                 assert(obj.has('phase'),'origapp:View','Phase controls are unavailable.');
                 obj.Callbacks.phase(struct('kind',kind,'values',values));
-                obj.PhaseValues.(kind)=values;obj.Controls.Error.Text='';
+                obj.PhaseValues.(kind)=values;obj.noError();
+                obj.logEvent(sprintf('%s phases applied · %s°',kind,strjoin(compose('%g',values(indices)),' / ')));
             catch err,obj.phaseKind();obj.showError(err.message);end
+            obj.dirty();
+        end
+        function dirty(obj)
+            % Tint an Apply button while its fields differ from the last
+            % values the board accepted (display hint only).
+            th=obj.Theme;
+            if ~isfield(obj.Controls,'ApplyRF') || ~isfield(obj.Controls,'ApplyPhase'),return,end
+            rf=obj.Controls.adcMHz.Value~=obj.Accepted.adcMHz || obj.Controls.dacMHz.Value~=obj.Accepted.dacMHz;
+            kind=obj.Controls.PhaseKind.Value;v=obj.PhaseValues.(kind);
+            indices=1:4;if strcmp(kind,'DAC'),indices=[1 3];end
+            ph=false;for k=indices,ph=ph || obj.Controls.(sprintf('phase%d',k)).Value~=v(k);end
+            pairs={obj.Controls.ApplyRF,rf;obj.Controls.ApplyPhase,ph};
+            for k=1:2
+                if pairs{k,2},set(pairs{k,1},'BackgroundColor',th.accent,'FontWeight','bold');
+                else,set(pairs{k,1},'BackgroundColor',th.input,'FontWeight','normal');end
+            end
         end
         function showError(obj,text)
-            obj.Controls.Error.Text=char(string(text));
-            obj.StatusLabel.Text=char("CONTROL REFUSED  ·  "+string(text));
-            obj.StatusLabel.FontColor=obj.Theme.amber;
+            text=char(string(text));
+            obj.Controls.Error.Text=text;obj.Controls.Error.Visible='on';
+            obj.Controls.SideGrid.RowHeight{2}=44;
+            obj.StatusLabel.Text=['control refused · ' text];
+            obj.StatusLabel.FontColor=obj.Theme.warn;
+            obj.logEvent("REFUSED · "+string(text));
+        end
+        function noError(obj)
+            obj.Controls.Error.Text='';obj.Controls.Error.Visible='off';
+            obj.Controls.SideGrid.RowHeight{2}=0;
         end
         function showAnalysis(obj,r,seq)
+            th=obj.Theme;
             c=r.constellation;
             obj.setLine('payload',real(c.payload),imag(c.payload));
             obj.setLine('header',real(c.header),imag(c.header));
             obj.setLine('pilots',real(c.pilot),imag(c.pilot));
+            obj.Empty.constellation.Visible='off';
             ev=r.evmPercent;db=r.evmDb;
-            obj.EvmLabel.Text=sprintf('%.2f%% / %.1f dB',ev,db);
             degraded=logical(obj.field(r,'degraded',false));
-            obj.EvmLabel.FontColor=obj.Theme.cyan;
-            if degraded,obj.EvmLabel.FontColor=obj.Theme.amber;end
+            state='ok';if degraded,state='warn';end
             if isempty(obj.HistorySequence) || seq~=obj.HistorySequence(end)
-                obj.HistorySequence(end+1)=seq;obj.HistoryEvm(end+1)=ev;
-                if numel(obj.HistorySequence)>300,obj.HistorySequence(1)=[];obj.HistoryEvm(1)=[];end
+                % A rejected or skipped acquisition breaks the history line:
+                % it is never drawn as if frames in between were measured.
+                gap=~isempty(obj.HistorySequence) && (obj.GapPending || seq-obj.HistorySequence(end)~=1);
+                obj.HistorySequence(end+1)=seq;obj.HistoryEvm(end+1)=ev;obj.HistoryDegraded(end+1)=degraded;
+                obj.HistoryBreak(end+1)=gap;
+                if numel(obj.HistorySequence)>300
+                    obj.HistorySequence(1)=[];obj.HistoryEvm(1)=[];obj.HistoryDegraded(1)=[];obj.HistoryBreak(1)=[];
+                end
             end
-            obj.setLine('evmHistory',obj.HistorySequence,obj.HistoryEvm);
-            obj.setLine('evmCurrent',seq,ev);
-            obj.Lines.evmHistory.Color=obj.Theme.cyan;
+            obj.GapPending=false;
+            hist=obj.HistoryEvm;
+            obj.tile('evm',sprintf('%.2f %%',ev),sprintf('median %.2f · max %.2f · n=%d',median(hist),max(hist),numel(hist)),state);
+            obj.tile('evmDb',sprintf('%.1f dB',db),sprintf('header %.2f %% · pilots %.2f %%', ...
+                obj.field(r,'headerEvmPercent',NaN),obj.field(r,'pilotEvmPercent',NaN)),state);
+            obj.EvmNow=[seq ev];
+            sc=obj.field(r,'evmPerSubcarrierPercent',[]);sx=obj.field(r,'evmSubcarrier',[]);
+            if numel(sx)~=numel(sc),sx=1:numel(sc);end
+            sy=obj.field(r,'evmPerSymbolPercent',[]);yx=obj.field(r,'evmSymbolIndex',[]);
+            if numel(yx)~=numel(sy),yx=1:numel(sy);end
+            obj.EvmSub=struct('x',sx,'y',sc);obj.EvmSym=struct('x',yx,'y',sy);
+            obj.drawEvm();
+            obj.Empty.evm.Visible='off';
+            switch obj.EvmMode
+                case 'history'
+                    obj.Card.evm.note.Text=obj.count(numel(hist),'frame');
+                case 'subcarrier'
+                    [worst,ix]=max(sc);
+                    if isempty(sc),obj.Card.evm.note.Text=sprintf('frame %g · unavailable',seq);
+                    else,obj.Card.evm.note.Text=sprintf('worst %.1f %% at k=%g',worst,sx(ix));end
+                case 'symbol'
+                    [worst,ix]=max(sy);
+                    if isempty(sy),obj.Card.evm.note.Text=sprintf('frame %g · unavailable',seq);
+                    else,obj.Card.evm.note.Text=sprintf('worst %.1f %% at row %g',worst,yx(ix));end
+            end
             if isfield(r,'profile'),obj.Controls.Profile.Text=obj.profileText(r.profile);end
-            obj.Panels(6).Title='Payload EVM · all complete bursts';
             qualified=obj.field(r,'qualifiedBursts',NaN);complete=obj.field(r,'metricBursts',NaN);
             secondary=obj.field(r,'qualifiedPayloadEvmPercent',NaN);
             tag='LOCKED';if degraded,tag='DEGRADED';end
             obj.CoverageLabel.Text=sprintf('%s · %g/%g qualified · clean-only %.2f%%',tag,qualified,complete,secondary);
-            obj.CoverageLabel.FontColor=obj.EvmLabel.FontColor;
-            cfo=obj.field(r,'cfoHz',NaN);rx=obj.field(r,'rxLevelDbfs',NaN);
-            obj.MetricLabel.Text=sprintf('CFO %.1f Hz  ·  RX %.1f dBFS',median(cfo,'omitnan'),rx);
-            obj.Panels(2).Title='Receive pattern';
-            obj.Panels(5).Title=sprintf('Constellation · frame %g',seq);
+            obj.CoverageLabel.FontColor=th.(state);
+            obj.tile('bursts',sprintf('%g / %g',qualified,complete),sprintf('clean-only %.2f %%',secondary),state);
+            cfo=median(obj.field(r,'cfoHz',NaN),'omitnan');
+            ppm=obj.field(r,'samplingErrorPpm',NaN);
+            obj.tile('cfo',obj.hz(cfo),sprintf('pilot timing drift %+.2f ppm',ppm),'ok');
+            snr=median(obj.field(r,'trainingSnrDb',NaN),'omitnan');
+            obj.tile('sync',sprintf('%.2f',obj.field(r,'syncPeak',NaN)),sprintf('training SNR %.1f dB',snr),'ok');
+            obj.Card.constellation.note.Text=sprintf('frame %g · %d cells',seq,numel(c.payload));
+            pb=obj.field(r,'perBurst',[]);cand=obj.field(r,'candidates',[]);
+            obj.showBursts(cand,pb);
+            if degraded && ~(numel(obj.HistoryDegraded)>1 && obj.HistoryDegraded(end-1))
+                why='';
+                if isstruct(pb) && isfield(pb,'qualified') && isfield(pb,'rejectionReason')
+                    bad=find(~[pb.qualified],1);
+                    if ~isempty(bad),why=[' · ' char(string(pb(bad).rejectionReason))];end
+                end
+                obj.logEvent(sprintf('frame %g degraded · %g/%g bursts qualified%s',seq,qualified,complete,why));
+            end
+        end
+        function showLevel(obj,analysis,ch)
+            rx=obj.field(analysis,'rxLevelDbfs',NaN);
+            if ~isfinite(rx),return,end
+            state='ok';sub=sprintf('output peak %.1f dBFS',obj.field(analysis,'peakDbfs',NaN));
+            if isstruct(ch) && isfield(ch,'peakDbfs') && any(isfinite(ch.peakDbfs))
+                pk=max(ch.peakDbfs);sub=sprintf('ADC peak %.1f dBFS',pk);
+                clip=sum(obj.field(ch,'clipCount',0));
+                if clip>0,state='fault';sub=sprintf('%s · %d at full scale',sub,clip);
+                elseif pk>-1,state='fault';sub=[sub ' · near full scale'];
+                elseif pk>-6,state='warn';end
+            end
+            obj.tile('rx',sprintf('%.1f dBFS',rx),sub,state);
+        end
+        function showSpectrum(obj,f,p)
+            obj.setLine('spectrum',f,p);
+            if numel(obj.SpectrumHold)~=numel(p),obj.SpectrumHold=p;else,obj.SpectrumHold=max(obj.SpectrumHold,p);end
+            if obj.Controls.MaxHold.Value,obj.setLine('spectrumHold',f,obj.SpectrumHold);end
+            lin=10.^(p/10);tot=sum(lin);note='';
+            if tot>0 && numel(p)>2
+                c=cumsum(lin)/tot;lo=f(find(c>=.005,1));hi=f(find(c>=.995,1));
+                note=sprintf('99 %% power in %.1f MHz',hi-lo);
+            end
+            obj.Card.spectrum.note.Text=note;
+        end
+        function maxHold(obj)
+            on=obj.Controls.MaxHold.Value;th=obj.Theme;
+            obj.Lines.spectrumHold.Visible=matlab.lang.OnOffSwitchState(on);
+            if on
+                set(obj.Controls.MaxHold,'FontColor',th.text,'BackgroundColor',th.accent);
+                obj.SpectrumHold=obj.Lines.spectrum.YData(:);
+                if all(isnan(obj.SpectrumHold)),obj.SpectrumHold=[];end
+            else
+                set(obj.Controls.MaxHold,'FontColor',th.muted,'BackgroundColor',th.input);
+                obj.setLine('spectrumHold',[],[]);
+            end
+        end
+        function band(obj)
+            if isempty(obj.Marks.band) || ~isvalid(obj.Marks.band),return,end
+            bw=obj.field(obj.Config,'bw',NaN)/1e6;
+            if isfinite(bw) && bw>0
+                obj.Marks.band.Value=[-bw/2 bw/2];obj.Marks.band.Visible='on';
+            else
+                obj.Marks.band.Visible='off';
+            end
+        end
+        function pushChannels(obj,seq,ch)
+            if ~isstruct(ch) || ~isfield(ch,'relPhaseDeg') || ~isfinite(seq),return,end
+            row=nan(1,4);lev=nan(1,4);n=min(4,numel(ch.relPhaseDeg));
+            row(1:n)=ch.relPhaseDeg(1:n);lev(1:n)=ch.levelDbfs(1:n);
+            % Same rule as the EVM history: never join across rejected,
+            % skipped or held acquisitions.
+            gap=~isempty(obj.ChannelSequence) && (obj.ChannelGap || seq-obj.ChannelSequence(end)~=1);
+            obj.ChannelGap=false;
+            obj.ChannelSequence(end+1)=seq;obj.ChannelPhase(end+1,:)=row;obj.ChannelLevel(end+1,:)=lev;
+            obj.ChannelBreak(end+1)=gap;
+            if numel(obj.ChannelSequence)>300
+                obj.ChannelSequence(1)=[];obj.ChannelPhase(1,:)=[];obj.ChannelLevel(1,:)=[];obj.ChannelBreak(1)=[];
+            end
+            pos=(1:numel(obj.ChannelSequence))+cumsum(logical(obj.ChannelBreak));
+            x=nan(1,pos(end));x(pos)=obj.ChannelSequence;
+            colors={obj.Theme.s1,obj.Theme.s2,obj.Theme.s3,obj.Theme.s4};
+            for k=1:4
+                yp=nan(1,pos(end));yl=yp;yp(pos)=obj.ChannelPhase(:,k);yl(pos)=obj.ChannelLevel(:,k);
+                set(obj.Lines.chPhase(k),'XData',x,'YData',yp,'Color',colors{k});
+                set(obj.Lines.chLevel(k),'XData',x,'YData',yl,'Color',colors{k});
+            end
+        end
+        function showChannels(obj,ch,w)
+            th=obj.Theme;T=obj.Monitor.cell;
+            have=isstruct(ch) && isfield(ch,'levelDbfs');
+            w=w(:).';wdb=nan(1,4);wph=nan(1,4);
+            if numel(w)==4 && all(isfinite(w)) && any(abs(w)>0)
+                % One weight per stream only: a single-stream output carries
+                % one weight, which is not attributed to a row here.
+                n=4;[~,ref]=max(abs(w(1:n)));
+                wdb(1:n)=20*log10(abs(w(1:n))/abs(w(ref))+realmin);
+                wph(1:n)=angle(w(1:n)/w(ref))*180/pi;
+                wph(abs(w(1:n))==0)=NaN;
+            end
+            for k=1:4
+                vals={NaN,NaN,NaN,wdb(k),wph(k)};
+                if have && k<=numel(ch.levelDbfs)
+                    vals(1:3)={ch.levelDbfs(k),ch.relPhaseDeg(k),ch.coherence(k)};
+                end
+                fmt={'%.1f','%+.1f','%.3f','%.1f','%+.1f'};
+                for c=1:5
+                    if isfinite(vals{c}),T(k,c+1).Text=sprintf(fmt{c},vals{c});T(k,c+1).FontColor=th.text;
+                    else,T(k,c+1).Text='—';T(k,c+1).FontColor=th.dim;end
+                end
+                if have && k<=numel(ch.peakDbfs) && isfinite(ch.peakDbfs(k)) && ch.peakDbfs(k)>-1
+                    T(k,2).FontColor=th.fault;
+                end
+            end
+        end
+        function timeMode(obj)
+            mode=obj.Controls.TimeMode.Value;obj.TimeMode=mode;th=obj.Theme;ax=obj.Ax.time;
+            iq=strcmp(mode,'iq');
+            set([obj.Lines.timeI obj.Lines.timeQ obj.Lines.burstOk obj.Lines.burstBad],'Visible',matlab.lang.OnOffSwitchState(iq));
+            set(obj.Lines.chPhase,'Visible',matlab.lang.OnOffSwitchState(strcmp(mode,'phase')));
+            set(obj.Lines.chLevel,'Visible',matlab.lang.OnOffSwitchState(strcmp(mode,'level')));
+            k=obj.Marks.timeKey;colors={th.s1,th.s2,th.s3,th.s4};
+            switch mode
+                case 'iq'
+                    labels={'I','Q','▼ burst','▼ flagged / incomplete'};colors={th.s1,th.s2,th.ok,th.warn};
+                    xlabel(ax,'Time (µs) · min/max per display bin');ylabel(ax,'Amplitude');
+                case 'phase'
+                    labels={'RX0','RX1','RX2','RX3'};
+                    xlabel(ax,'Acquisition sequence');ylabel(ax,'Phase vs first stream (°)');
+                case 'level'
+                    labels={'RX0','RX1','RX2','RX3'};
+                    xlabel(ax,'Acquisition sequence');ylabel(ax,'Mean level (dBFS)');
+            end
+            at=.02+(0:3)*.1;if iq,at=[.02 .07 .13 .27];end
+            for j=1:4,k(j).String=labels{j};k(j).Color=colors{j};k(j).Position(1)=at(j);end
+            if ~iq,obj.Empty.time.Visible='off';end
+            obj.pad();obj.defaultLimits('time');
+            n=0;fs=NaN;
+            if isstruct(obj.LastData)
+                n=numel(obj.field(obj.LastData,'samples',[]));
+                fs=obj.field(obj.LastData,'fsHz',obj.field(obj.Config,'fsRfsoc',125e6));
+            end
+            obj.timeNote(n,fs);
+        end
+        function timeNote(obj,n,fs)
+            switch obj.TimeMode
+                case 'iq'
+                    if n>0,text=sprintf('%d samples · %.4g MS/s',n,fs/1e6);
+                    else,text='unavailable';end
+                otherwise
+                    text=obj.count(numel(obj.ChannelSequence),'frame');
+                    if isempty(obj.LastData) && ~isempty(obj.ChannelSequence)
+                        text=sprintf('History only · last valid frame %g',obj.ChannelSequence(end));
+                    end
+            end
+            obj.Card.time.note.Text=text;
+        end
+        function evmMode(obj)
+            mode=obj.Controls.EvmMode.Value;obj.EvmMode=mode;ax=obj.Ax.evm;
+            hist=strcmp(mode,'history');
+            set([obj.Lines.evmHistory obj.Lines.evmFlagged obj.Lines.evmCurrent],'Visible',matlab.lang.OnOffSwitchState(hist));
+            obj.Marks.evmMedian.Visible=matlab.lang.OnOffSwitchState(hist && numel(obj.HistoryEvm)>2);
+            obj.Lines.evmSub.Visible=matlab.lang.OnOffSwitchState(strcmp(mode,'subcarrier'));
+            obj.Lines.evmSym.Visible=matlab.lang.OnOffSwitchState(strcmp(mode,'symbol'));
+            switch mode
+                case 'history',xlabel(ax,'Acquisition sequence');ylabel(ax,['Payload EVM (' obj.unitName() ')']);
+                    obj.Card.evm.note.Text=obj.count(numel(obj.HistoryEvm),'frame');
+                case 'subcarrier',xlabel(ax,'Subcarrier index');ylabel(ax,['Payload EVM (' obj.unitName() ')']);
+                    obj.Card.evm.note.Text='current frame';
+                case 'symbol',xlabel(ax,'Burst row (0-based) · header and payload rows');ylabel(ax,['EVM (' obj.unitName() ')']);
+                    obj.Card.evm.note.Text='current frame';
+            end
+            obj.evmPad();obj.defaultLimits('evm');
+            current=any(isfinite(obj.Lines.evmCurrent.YData));
+            if ~hist && ~current,obj.emptyState('evm','NO CURRENT FRAME','per-frame view needs a demodulated frame');
+            else,obj.Empty.evm.Visible='off';end
+        end
+        function defaultLimits(obj,name)
+            ax=obj.Ax.(name);ax.XLimMode='auto';ax.YLimMode='auto';
+            half=obj.field(obj.Config,'scan_bw',NaN)/2;
+            switch name
+                case 'doa',ax.YLim=[0 1.05];if isfinite(half) && half>0,ax.XLim=[-half half];end
+                case 'pattern',ax.YLim=[-60 0];if isfinite(half) && half>0,ax.XLim=[-half half];end
+                case 'evm',if strcmp(obj.EvmUnit,'percent'),ax.YLim=[0 Inf];end
+                case 'constellation',ax.XLim=[-1.45 1.45];ax.YLim=[-1.45 1.45];
+            end
+        end
+        function pad(obj)
+            % Invisible anchor that keeps automatic limits clear of the series key.
+            x=NaN;y=NaN;
+            switch obj.TimeMode
+                case 'iq'
+                    top=max(abs([obj.Lines.timeI.YData(:);obj.Lines.timeQ.YData(:)]),[],'omitnan');
+                    if ~isempty(top) && isfinite(top) && top>0,x=[0 0];y=[-1 1.32]*top;end
+                otherwise
+                    v=obj.ChannelLevel;if strcmp(obj.TimeMode,'phase'),v=obj.ChannelPhase;end
+                    v=v(isfinite(v));
+                    if ~isempty(v)
+                        span=max(1,max(v)-min(v));x=obj.ChannelSequence(1)*[1 1];y=[min(v)-.15*span max(v)+.4*span];
+                    end
+            end
+            set(obj.Lines.timePad,'XData',x,'YData',y);
+        end
+        function drawEvm(obj)
+            % All EVM series in the selected unit, from the stored percent values.
+            hist=obj.HistoryEvm;
+            if isempty(hist)
+                for n=["evmHistory","evmFlagged"],obj.setLine(char(n),[],[]);end
+                obj.Marks.evmMedian.Visible='off';
+            else
+                pos=(1:numel(hist))+cumsum(logical(obj.HistoryBreak));
+                hx=nan(1,pos(end));hy=hx;hx(pos)=obj.HistorySequence;hy(pos)=obj.unit(hist);
+                obj.setLine('evmHistory',hx,hy);
+                flag=logical(obj.HistoryDegraded);
+                obj.setLine('evmFlagged',obj.HistorySequence(flag),obj.unit(hist(flag)));
+                obj.Marks.evmMedian.Value=obj.unit(median(hist));
+                obj.Marks.evmMedian.Visible=matlab.lang.OnOffSwitchState(strcmp(obj.EvmMode,'history') && numel(hist)>2);
+            end
+            if isfinite(obj.EvmNow(2)),obj.setLine('evmCurrent',obj.EvmNow(1),obj.unit(obj.EvmNow(2)));end
+            obj.setLine('evmSub',obj.EvmSub.x,obj.unit(obj.EvmSub.y));
+            obj.setLine('evmSym',obj.EvmSym.x,obj.unit(obj.EvmSym.y));
+            obj.evmPad();
+        end
+        function y=unit(obj,percent)
+            y=percent;
+            if strcmp(obj.EvmUnit,'db'),y=20*log10(max(percent,realmin)/100);end
+        end
+        function evmUnit(obj)
+            if obj.Controls.EvmUnit.Value,obj.EvmUnit='db';obj.Controls.EvmUnit.Text='dB';
+            else,obj.EvmUnit='percent';obj.Controls.EvmUnit.Text='%';end
+            obj.drawEvm();obj.evmMode();
+        end
+        function text=unitName(obj)
+            text='%';if strcmp(obj.EvmUnit,'db'),text='dB';end
+        end
+        function evmPad(obj)
+            % Invisible anchor: headroom above the highest plotted EVM value.
+            switch obj.EvmMode
+                case 'history',h=obj.Lines.evmHistory;
+                case 'subcarrier',h=obj.Lines.evmSub;
+                otherwise,h=obj.Lines.evmSym;
+            end
+            ok=isfinite(h.YData) & isfinite(h.XData);x=NaN;y=NaN;
+            if any(ok)
+                x=h.XData(find(ok,1));
+                if strcmp(obj.EvmUnit,'db'),y=max(h.YData(ok))+2;else,y=1.18*max(h.YData(ok));end
+            end
+            set(obj.Lines.evmPad,'XData',x,'YData',y);
+        end
+        function showBursts(obj,cand,pb)
+            % Burst starts found in the analysed buffer, drawn above the trace.
+            if ~isstruct(cand) || isempty(cand) || ~isfield(cand,'start')
+                obj.setLine('burstOk',[],[]);obj.setLine('burstBad',[],[]);return
+            end
+            start=[cand.start];good=true(size(start));
+            if isfield(cand,'accepted'),good=logical([cand.accepted]);end
+            if isstruct(pb) && isfield(pb,'start') && isfield(pb,'qualified')
+                good(ismember(start,[pb(~[pb.qualified]).start]))=false;
+            end
+            t=(start-1)/obj.LastFs*1e6;
+            top=max(abs([obj.Lines.timeI.YData(:);obj.Lines.timeQ.YData(:)]),[],'omitnan');
+            if isempty(top) || ~isfinite(top) || top==0,top=1;end
+            y=1.12*top*ones(size(t));
+            obj.setLine('burstOk',t(good),y(good));obj.setLine('burstBad',t(~good),y(~good));
+        end
+        function holdAction(obj)
+            want=logical(obj.Controls.Hold.Value);
+            if want && isempty(obj.LastData)
+                obj.Controls.Hold.Value=false;want=false;
+                obj.logEvent('hold refused · no current frame on screen');
+            end
+            obj.Held=want;obj.holdLook();
+            if want
+                obj.put(obj.StatusLabel,sprintf('HELD frame %g  ·  NOT LIVE',obj.LastSequence));
+                obj.StatusLabel.FontColor=obj.Theme.warn;obj.pill('HELD','warn');
+                obj.logEvent(sprintf('hold · frame %g',obj.LastSequence));
+            elseif ~isempty(obj.LastData)
+                obj.put(obj.StatusLabel,'hold released · waiting for the next frame');
+                obj.StatusLabel.FontColor=obj.Theme.muted;obj.pill('WAITING','idle');
+                obj.SeenSequence=NaN;obj.logEvent('hold released');
+            end
+        end
+        function toggleTheme(obj)
+            if strcmp(obj.ThemeName,'dark'),obj.setTheme('light');else,obj.setTheme('dark');end
+        end
+        function themeLook(obj)
+            if strcmp(obj.ThemeName,'dark'),obj.Controls.ThemeSwitch.Text='☀ Light';
+            else,obj.Controls.ThemeSwitch.Text='☾ Dark';end
+        end
+        function holdLook(obj)
+            h=obj.Controls.Hold;name='RFSoC 4x2 Beamformer';
+            if obj.Held
+                set(h,'Text','Release','BackgroundColor',obj.Theme.warnBg,'FontColor',obj.Theme.warn);
+                name=[name ' — HELD, NOT LIVE'];
+            else
+                set(h,'Text','Hold','BackgroundColor',obj.Theme.input,'FontColor',obj.Theme.text);
+            end
+            if ~startsWith(obj.Figure.Name,'SYNTHETIC'),obj.Figure.Name=name;end
+        end
+        function onKey(obj,e)
+            % Function keys only: plain keys would fire while a value is typed.
+            if ~isempty(e.Modifier),return,end
+            switch e.Key
+                case 'f2',obj.snapshotAction();
+                case 'f3',obj.Controls.Hold.Value=~obj.Controls.Hold.Value;obj.holdAction();
+                case 'f5',obj.fitPlots();
+                case 'f6',obj.toggleSidebar();
+                case 'f7',obj.toggleTheme();
+                case 'f8'
+                    h=obj.Controls.Pause;
+                    if strcmp(h.Enable,'on'),h.Value=~h.Value;obj.valueAction('pause',h,logical(h.Value));end
+            end
+        end
+        function mark(obj,name,angles)
+            m=obj.Marks.(name);
+            for k=1:numel(m)
+                if k<=numel(angles)
+                    m(k).Value=angles(k);m(k).Label=sprintf('model %.1f°',angles(k));
+                    side='right';if mod(k,2)==0,side='left';end
+                    m(k).LabelHorizontalAlignment=side;m(k).Visible='on';
+                else
+                    m(k).Visible='off';
+                end
+            end
+        end
+        function emptyState(obj,name,headline,reason)
+            h=obj.Empty.(name);
+            lines=[{char(headline)},obj.wrap(char(string(reason)),36)];
+            h.String=lines;h.Visible='on';
+        end
+        function tile(obj,key,value,sub,state)
+            th=obj.Theme;t=obj.Kpi.(key);
+            obj.put(t.value,value);obj.put(t.sub,sub);
+            switch state
+                case 'ok',t.value.FontColor=th.text;t.edge.BackgroundColor=th.ok;
+                case 'warn',t.value.FontColor=th.warn;t.edge.BackgroundColor=th.warn;
+                case 'fault',t.value.FontColor=th.fault;t.edge.BackgroundColor=th.fault;
+                otherwise,t.value.FontColor=th.dim;t.edge.BackgroundColor=th.hair;
+            end
+        end
+        function pill(obj,text,state)
+            th=obj.Theme;obj.StatePill.Text=text;
+            switch state
+                case 'ok',set(obj.StatePill,'BackgroundColor',th.okBg,'FontColor',th.ok);
+                case 'warn',set(obj.StatePill,'BackgroundColor',th.warnBg,'FontColor',th.warn);
+                case 'fault',set(obj.StatePill,'BackgroundColor',th.faultBg,'FontColor',th.fault);
+                otherwise,set(obj.StatePill,'BackgroundColor',th.input,'FontColor',th.muted);
+            end
+        end
+        function showRate(obj)
+            rate=NaN;
+            if numel(obj.FrameTimes)>=3,rate=1/median(diff(obj.FrameTimes));end
+            text='—';state='idle';
+            if isfinite(rate),text=sprintf('%.2f /s',rate);state='ok';end
+            if isempty(obj.LastData),state='idle';end
+            h=obj.Health;
+            if isstruct(h) && isfield(h,'accepted')
+                rejected=h.boundary+h.noSignal+h.expired;
+                sub=sprintf('%d accepted · %d rejected',h.accepted,rejected);
+                counts=sprintf('accepted %d · other errors %d\nrejected: boundary %d · no signal %d · expired %d', ...
+                    h.accepted,max(0,h.errors-rejected),h.boundary,h.noSignal,h.expired);
+            else
+                sub=sprintf('%d shown · %d cleared',obj.FramesShown,obj.FramesCleared);
+                counts=sprintf('%d fresh frames displayed · %d display clears',obj.FramesShown,obj.FramesCleared);
+            end
+            obj.tile('rate',text,sub,state);
+            obj.put(obj.Monitor.counts,counts);
+        end
+        function logEvent(obj,text)
+            line=[char(datetime('now','Format','HH:mm:ss')) '  ' char(string(text))];
+            obj.EventLog=[{line} obj.EventLog];
+            if numel(obj.EventLog)>80,obj.EventLog(81:end)=[];end
+            if isfield(obj.Monitor,'log') && isvalid(obj.Monitor.log)
+                obj.Monitor.log.Value=obj.EventLog(:);
+            end
         end
         function showVendor(obj,v,seq)
             if ~isstruct(v) || ~isfield(v,'valid') || ~v.valid
@@ -466,7 +1348,7 @@ classdef BeamformerView < handle
                 obj.Controls.Vendor.FontColor=obj.Theme.muted;
             else
                 obj.Controls.Vendor.Text=sprintf('Native VSA comparison: %.2f%% / %.1f dB',v.evmPercent,20*log10(v.evmPercent/100));
-                obj.Controls.Vendor.FontColor=obj.Theme.green;
+                obj.Controls.Vendor.FontColor=obj.Theme.ok;
             end
         end
         function text=profileText(obj,p)
@@ -476,16 +1358,26 @@ classdef BeamformerView < handle
                 obj.field(p,'dataSubcarriers',NaN),numel(obj.field(p,'pilotSubcarriers',[])));
         end
         function clearAnalysis(obj,why)
-            for n=["payload","header","pilots","evmCurrent"],obj.setLine(char(n),[],[]);end
-            obj.EvmLabel.Text='EVM —';obj.EvmLabel.FontColor=obj.Theme.muted;
-            obj.MetricLabel.Text='CFO —  ·  RX —';
-            obj.CoverageLabel.Text=char(string(why));obj.CoverageLabel.FontColor=obj.Theme.amber;
-            obj.Lines.evmHistory.Color=obj.Theme.muted;
-            obj.Panels(5).Title='Constellation · unavailable';
-            if isempty(obj.HistorySequence)
-                obj.Panels(6).Title='EVM · no current value';
+            th=obj.Theme;why=char(string(why));
+            for n=["payload","header","pilots","evmCurrent","evmSub","evmSym","burstOk","burstBad"],obj.setLine(char(n),[],[]);end
+            obj.EvmSub=struct('x',[],'y',[]);obj.EvmSym=obj.EvmSub;obj.EvmNow=[NaN NaN];
+            obj.GapPending=true;
+            for n=["evm","evmDb","cfo","sync","bursts"],obj.tile(char(n),'—','','idle');end
+            obj.CoverageLabel.Text=why;obj.CoverageLabel.FontColor=th.warn;
+            obj.Lines.evmHistory.Color=th.dim;
+            obj.Card.constellation.note.Text='unavailable';
+            obj.emptyState('constellation','NO DEMODULATED FRAME',why);
+            if strcmp(obj.EvmMode,'history')
+                if isempty(obj.HistorySequence)
+                    obj.Card.evm.note.Text='no current value';
+                    obj.emptyState('evm','NO EVM YET',why);
+                else
+                    obj.Card.evm.note.Text=sprintf('History only · last valid frame %g',obj.HistorySequence(end));
+                    obj.Empty.evm.Visible='off';
+                end
             else
-                obj.Panels(6).Title=sprintf('History only · last valid frame %g',obj.HistorySequence(end));
+                obj.Card.evm.note.Text='unavailable';
+                obj.emptyState('evm','NO CURRENT FRAME',why);
             end
         end
         function setLine(obj,name,x,y)
@@ -498,32 +1390,42 @@ classdef BeamformerView < handle
         function reflow(obj)
             if ~obj.isOpen(),return,end
             width=obj.Figure.Position(3);height=obj.Figure.Position(4);
+            names=fieldnames(obj.Kpi);
             if width<1000
-                obj.EvmLabel.FontSize=16;
-                obj.HeaderGrid.ColumnWidth={105,'1x',170};obj.HeaderGrid.RowHeight={34,32};
+                obj.HeaderGrid.ColumnWidth={112,'1x',76,104,90,84};obj.HeaderGrid.RowHeight={34,30};
                 obj.Controls.Sidebar.Layout.Row=1;obj.Controls.Sidebar.Layout.Column=1;
                 obj.TitleLabel.Layout.Row=1;obj.TitleLabel.Layout.Column=2;
-                obj.Controls.Fit.Layout.Row=1;obj.Controls.Fit.Layout.Column=3;
-                obj.StatusLabel.Layout.Row=2;obj.StatusLabel.Layout.Column=[1 2];
-                obj.EvmLabel.Layout.Row=2;obj.EvmLabel.Layout.Column=3;
-                obj.FooterGrid.ColumnWidth={'1x'};obj.FooterGrid.RowHeight={20,20,20};
+                obj.Controls.Hold.Layout.Row=1;obj.Controls.Hold.Layout.Column=3;
+                obj.Controls.Snapshot.Layout.Row=1;obj.Controls.Snapshot.Layout.Column=4;
+                obj.Controls.Fit.Layout.Row=1;obj.Controls.Fit.Layout.Column=5;
+                obj.Controls.ThemeSwitch.Layout.Row=1;obj.Controls.ThemeSwitch.Layout.Column=6;
+                obj.StatePill.Parent.Layout.Row=2;obj.StatePill.Parent.Layout.Column=1;
+                obj.StatusLabel.Layout.Row=2;obj.StatusLabel.Layout.Column=[2 6];
+                obj.FooterGrid.ColumnWidth={'1x'};obj.FooterGrid.RowHeight={18,18,18};
                 obj.ScopeLabel.Layout.Row=1;obj.ScopeLabel.Layout.Column=1;
                 obj.MetricLabel.Layout.Row=2;obj.MetricLabel.Layout.Column=1;
                 obj.CoverageLabel.Layout.Row=3;obj.CoverageLabel.Layout.Column=1;
-                obj.OuterGrid.RowHeight={76,'1x',68};
+                obj.KpiGrid.ColumnWidth=repmat({'1x'},1,4);obj.KpiGrid.RowHeight={'1x','1x'};
+                for k=1:numel(names)
+                    g=obj.Kpi.(names{k}).grid;g.Layout.Row=ceil(k/4);g.Layout.Column=mod(k-1,4)+1;
+                end
+                obj.OuterGrid.RowHeight={72,140,'1x',62};obj.StatePill.Parent.Padding=[0 4 0 4];
             else
-                obj.EvmLabel.FontSize=22;
-                obj.HeaderGrid.ColumnWidth={106,190,'1x',220,90};obj.HeaderGrid.RowHeight={46};
-                hs={obj.Controls.Sidebar,obj.TitleLabel,obj.StatusLabel,obj.EvmLabel,obj.Controls.Fit};
-                for j=1:5,hs{j}.Layout.Row=1;hs{j}.Layout.Column=j;end
-                obj.FooterGrid.ColumnWidth={'1x',230,330};obj.FooterGrid.RowHeight={25};
+                obj.HeaderGrid.ColumnWidth={112,150,84,'1x',76,104,90,84};obj.HeaderGrid.RowHeight={44};
+                hs={obj.Controls.Sidebar,obj.TitleLabel,obj.StatePill.Parent,obj.StatusLabel,obj.Controls.Hold,obj.Controls.Snapshot,obj.Controls.Fit,obj.Controls.ThemeSwitch};
+                for j=1:8,hs{j}.Layout.Row=1;hs{j}.Layout.Column=j;end
+                obj.FooterGrid.ColumnWidth={'1x',330,330};obj.FooterGrid.RowHeight={22};
                 fs={obj.ScopeLabel,obj.MetricLabel,obj.CoverageLabel};
                 for j=1:3,fs{j}.Layout.Row=1;fs{j}.Layout.Column=j;end
-                obj.OuterGrid.RowHeight={56,'1x',29};
+                obj.KpiGrid.ColumnWidth=repmat({'1x'},1,7);obj.KpiGrid.RowHeight={'1x'};
+                for k=1:numel(names)
+                    g=obj.Kpi.(names{k}).grid;g.Layout.Row=1;g.Layout.Column=k;
+                end
+                obj.OuterGrid.RowHeight={44,66,'1x',24};obj.StatePill.Parent.Padding=[0 9 0 9];
             end
             side=width>=900;if ~isempty(obj.UserSidebar),side=obj.UserSidebar;end
             if side
-                obj.RootGrid.ColumnWidth={278,'1x'};obj.Sidebar.Visible='on';
+                obj.RootGrid.ColumnWidth={300,'1x'};obj.Sidebar.Visible='on';
                 obj.Controls.Sidebar.Text='Hide controls';
             else
                 obj.RootGrid.ColumnWidth={0,'1x'};obj.Sidebar.Visible='off';
@@ -532,15 +1434,22 @@ classdef BeamformerView < handle
             if width>=1280
                 nc=3;obj.PlotGrid.ColumnWidth={'1x','1x','1x'};
                 if height>=680,obj.PlotGrid.RowHeight={'1x','1x'};obj.PlotGrid.Scrollable='off';
-                else,obj.PlotGrid.RowHeight={260,260};obj.PlotGrid.Scrollable='on';end
+                else,obj.PlotGrid.RowHeight={270,270};obj.PlotGrid.Scrollable='on';end
             elseif width>=1000
                 nc=2;obj.PlotGrid.ColumnWidth={'1x','1x'};
-                if height>=680,obj.PlotGrid.RowHeight={'1x','1x','1x'};obj.PlotGrid.Scrollable='off';
-                else,obj.PlotGrid.RowHeight={240,240,240};obj.PlotGrid.Scrollable='on';end
+                if height>=860,obj.PlotGrid.RowHeight={'1x','1x','1x'};obj.PlotGrid.Scrollable='off';
+                else,obj.PlotGrid.RowHeight={250,250,250};obj.PlotGrid.Scrollable='on';end
             else
-                nc=1;obj.PlotGrid.ColumnWidth={'1x'};obj.PlotGrid.RowHeight=repmat({280},1,6);obj.PlotGrid.Scrollable='on';
+                nc=1;obj.PlotGrid.ColumnWidth={'1x'};obj.PlotGrid.RowHeight=repmat({290},1,6);obj.PlotGrid.Scrollable='on';
             end
-            for k=1:6,obj.Panels(k).Layout.Row=ceil(k/nc);obj.Panels(k).Layout.Column=mod(k-1,nc)+1;end
+            % Pairs stay stacked: pattern under DOA, time domain under the
+            % spectrum, EVM under the constellation.
+            switch nc
+                case 3,rows=[1 2 1 2 1 2];cols=[1 1 2 2 3 3];
+                case 2,rows=[1 2 1 2 3 3];cols=[1 1 2 2 1 2];
+                otherwise,rows=1:6;cols=ones(1,6);
+            end
+            for k=1:6,obj.Panels(k).Layout.Row=rows(k);obj.Panels(k).Layout.Column=cols(k);end
         end
         function onClose(obj)
             if obj.Closing,return,end
@@ -556,9 +1465,74 @@ classdef BeamformerView < handle
             tf=isfield(obj.Callbacks,name) && isa(obj.Callbacks.(name),'function_handle');
         end
     end
+    methods (Static)
+        function th=palette(name)
+            % One palette per theme. Status hues (ok/warn/fault) are never used
+            % for data series. Every entry is unique within a palette so a live
+            % switch can map colours one to one in both directions.
+            if strcmp(name,'light')
+                th=struct('bg',[.935 .945 .96],'panel',[1 1 1],'input',[.915 .93 .95], ...
+                    'hair',[.85 .875 .905],'text',[.09 .12 .16],'muted',[.34 .40 .47],'dim',[.52 .57 .63], ...
+                    'accent',[.56 .83 .90],'ok',[.04 .52 .33],'warn',[.72 .43 0],'fault',[.78 .14 .14], ...
+                    'okBg',[.84 .95 .89],'warnBg',[.99 .92 .78],'faultBg',[.99 .87 .87], ...
+                    's1',[.02 .50 .70],'s2',[.46 .30 .80],'s3',[.82 .20 .45],'s4',[.64 .50 .04], ...
+                    'model',[.24 .34 .76]);
+            else
+                th=struct('bg',[.043 .058 .078],'panel',[.082 .106 .141],'input',[.125 .16 .20], ...
+                    'hair',[.165 .205 .255],'text',[.90 .93 .97],'muted',[.56 .64 .73],'dim',[.38 .45 .53], ...
+                    'accent',[.06 .45 .56],'ok',[.30 .88 .64],'warn',[1 .72 .28],'fault',[1 .43 .43], ...
+                    'okBg',[.07 .24 .18],'warnBg',[.27 .19 .05],'faultBg',[.30 .10 .10], ...
+                    's1',[.25 .78 .96],'s2',[.78 .60 .98],'s3',[.98 .55 .72],'s4',[.93 .87 .45], ...
+                    'model',[.60 .70 .98]);
+            end
+        end
+    end
     methods (Static,Access=private)
+        function put(h,text)
+            % Compare-then-set: each changed label is a round trip to the web view.
+            if ~isequal(h.Text,text),h.Text=text;end
+        end
         function value=field(s,name,fallback)
             value=fallback;if isstruct(s) && isfield(s,name),value=s.(name);end
+        end
+        function [t,yi,yq]=envelope(x,fs)
+            % Min/max per display bin: at most 2048 drawn points per trace
+            % and no burst peak is lost to stride decimation.
+            n=numel(x);nb=1024;
+            if n<=2*nb
+                t=(0:n-1).'/fs*1e6;yi=real(x);yq=imag(x);return
+            end
+            L=floor(n/nb);X=reshape(x(1:nb*L),L,nb);
+            c=((0:nb-1)*L+(L-1)/2)/fs*1e6;t=[c;c];t=t(:);
+            yi=[min(real(X),[],1);max(real(X),[],1)];yi=yi(:);
+            yq=[min(imag(X),[],1);max(imag(X),[],1)];yq=yq(:);
+        end
+        function text=count(n,noun)
+            text=sprintf('%d %s',n,noun);if n~=1,text=[text 's'];end
+        end
+        function text=hz(v)
+            if ~isfinite(v),text='—';
+            elseif abs(v)>=1e3,text=sprintf('%+.2f kHz',v/1e3);
+            else,text=sprintf('%+.0f Hz',v);
+            end
+        end
+        function text=valueText(v)
+            if islogical(v)
+                text='off';if v,text='on';end
+            elseif isnumeric(v),text=mat2str(v,6);
+            else,text=char(string(v));
+            end
+        end
+        function lines=wrap(text,width)
+            words=strsplit(strtrim(text),' ');lines={};line='';
+            for k=1:numel(words)
+                if isempty(line),line=words{k};
+                elseif numel(line)+1+numel(words{k})<=width,line=[line ' ' words{k}]; %#ok<AGROW>
+                else,lines{end+1}=line;line=words{k}; %#ok<AGROW>
+                end
+            end
+            if ~isempty(line),lines{end+1}=line;end
+            if numel(lines)>3,lines=lines(1:3);lines{3}=[lines{3} ' …'];end
         end
     end
 end

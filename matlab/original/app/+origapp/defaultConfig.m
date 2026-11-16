@@ -13,6 +13,7 @@ cfg.backend = [];                 % injected backend (struct of handles or objec
 cfg.originalRepoPath = "";        % read-only vsa_rfsoc checkout: Functions/, koef.mat, Settings/
 cfg.iqtoolsPath = "";             % only used by the IQtools button
 cfg.outputDir = "";               % raw saves and phase-calibration output (never the repo)
+cfg.theme = "dark";              % focused GUI palette: "dark" or "light" (switchable live)
 cfg.visible = false;              % hidden construction by default (headless fixtures)
 cfg.autoStart = false;            % true: start the acquisition timer after construction
 cfg.periodSeconds = 0.1;          % acquisition timer period

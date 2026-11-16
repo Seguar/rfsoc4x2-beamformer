@@ -181,7 +181,8 @@ classdef DemoSession < handle
                     'age',origapp.Controller.nowSeconds()-frame.timestamp,'scope',string(obj.Config.arrayLabel)+", UNCALIBRATED", ...
                     'scan',obj.Params.scan_axis,'doaSpectrum',ds,'patternDb',pat,'angles',angles, ...
                     'samples',displaySamples,'weights',weights,'analysis',r,'spectrum',r.spectrum,'vendor',[], ...
-                    'fsHz',obj.Config.fsRfsoc,'directOnly',obj.Config.directOnly);
+                    'fsHz',obj.Config.fsRfsoc,'directOnly',obj.Config.directOnly, ...
+                    'channels',origapp.DemoSession.channelDiagnostics(frame));
                 if obj.Config.phComp,obj.Last.scope=string(obj.Config.arrayLabel)+", MODEL CALIBRATION";end
                 obj.Status="acquiring";
                 if ~isempty(render),render(obj.snapshot());end
@@ -206,6 +207,11 @@ classdef DemoSession < handle
                     obj.invalidate("stale acquisition");s=obj.Last;
                 end
             end
+            % Acquisition counters already held by the controller (no IO).
+            c=obj.Controller;
+            s.health=struct('accepted',c.FramesAccepted,'boundary',c.BoundaryFrames, ...
+                'noSignal',c.NoSignalFrames,'expired',c.ExpiredFrames,'errors',c.TotalErrors, ...
+                'lastError',string(c.LastError));
         end
         function close(obj)
             if obj.Closed,return,end
@@ -214,6 +220,33 @@ classdef DemoSession < handle
             obj.invalidate("stopped");
         end
         function delete(obj),obj.close();end
+    end
+    methods (Static)
+        function d=channelDiagnostics(frame)
+            % Display-only per-stream readouts of the admitted raw capture:
+            % mean/peak level against the int16 converter word and the phase /
+            % coherence of each stream against the first measured one. These
+            % describe the conducted cabling, not arrival angles.
+            x=double(frame.samples);n=size(x,2);
+            mask=true(1,n);
+            if isfield(frame,'availableChannels'),mask=reshape(logical(frame.availableChannels),1,[]);end
+            mask=mask(1:min(n,numel(mask)));mask(end+1:n)=false;
+            d=struct('available',mask,'levelDbfs',nan(1,n),'peakDbfs',nan(1,n), ...
+                'clipCount',zeros(1,n), ...
+                'relPhaseDeg',nan(1,n),'coherence',nan(1,n),'reference',NaN);
+            r=find(mask,1);if isempty(r) || isempty(x),return,end
+            d.reference=r;fs=32767;pr=sum(abs(x(:,r)).^2);
+            for k=find(mask)
+                pk=sum(abs(x(:,k)).^2);
+                d.levelDbfs(k)=10*log10(pk/size(x,1)/fs^2+realmin);
+                d.peakDbfs(k)=20*log10(max(max(abs(real(x(:,k)))),max(abs(imag(x(:,k)))))/fs+realmin);
+                d.clipCount(k)=sum(abs(real(x(:,k)))>=32760 | abs(imag(x(:,k)))>=32760);
+                c=x(:,r)'*x(:,k);
+                if pr>0 && pk>0
+                    d.relPhaseDeg(k)=angle(c)*180/pi;d.coherence(k)=abs(c)/sqrt(pr*pk);
+                end
+            end
+        end
     end
     methods (Access=private)
         function command(obj,line)
