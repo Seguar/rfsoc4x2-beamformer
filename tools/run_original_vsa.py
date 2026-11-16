@@ -142,7 +142,7 @@ def main():
         raise RuntimeError('Board already has an owner/service; see private preflight.json')
     reference, reference_mat = build(original/'Signals/dac_ofdm_f_500.mat', out)
     helper = ROOT/'board/legacy_capture.py'
-    control_files = [ROOT/'board/control_service.py', ROOT/'board/board_commands.py']
+    control_files = [ROOT/'board/control_service.py', ROOT/'board/board_commands.py', ROOT/'board/mts_sync.py']
     remote('mkdir -p '+shlex.quote(stage))
     subprocess.run([pscp, *common, str(helper), *map(str, control_files), str(reference), user+'@'+host+':'+stage+'/'], check=True, timeout=120)
     staged = remote('sha256sum '+ ' '.join(shlex.quote(stage+'/'+f.name) for f in [helper, reference, *control_files])).stdout.decode()
@@ -152,7 +152,7 @@ def main():
     seconds = a.max_seconds if continuous else 300
     window4 = a.receive == 'window4'
     app_cfg = dict(frontend=a.layout, originalRepoPath=str(original), visible=True, directOnly=True,
-        allowBoardCommands=bool(control_port), sendInitialTuning=False, vsaSetupFile=str(setup), vsa=1,
+        allowBoardCommands=bool(control_port), sendInitialTuning=False, da=2, vsaSetupFile=str(setup), vsa=1,
         ch=1, dataChan=131072, fc=3e9, fc_d0=3e9, fc_d1=3e9, adcMirror=1, nyquistZone=2,
         nyquistZone_d0=1, nyquistZone_d1=1, dacPow=[1,0,0,0], fsRfsoc=125e6, staleSeconds=2, frameTimeoutSeconds=.25, outputDir=str(out),
         uiTimingFile=str(out/'ui_timing.jsonl'), uiProbePeriodSeconds=.02, analyzer=a.analyzer,

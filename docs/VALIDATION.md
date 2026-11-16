@@ -710,3 +710,35 @@ This is not a throughput benchmark or proof of physical angles/gain/jammer rejec
 **Ways to resolve:** publish as launcher default; use --layout legacy for the earlier
 App Designer interface. Capture-loss/speed work and physical-array validation remain
 separate. The old .mlapp/export are unchanged; the clean frontend is code-based.
+
+## ADC/DAC MTS and shared playback start, 2026-11-16
+
+**Test:** enable all active ADC/DAC synchronization as in the installed MTS library,
+then verify real waveform timing and the live MATLAB frontend.
+**How:** explicit masks5 (tiles0/2), reference tile2, SYSREF enabled, automatic
+latency−1 and all six physical mixer SYSREF events. Mode2 starts both RAM players
+with the shared ADC trigger before separate GPIO enables are latched. Two fresh
+initializations each captured20 full-RAM frames: blank2, DAC_B4, DAC_A4, both8,
+blank2,600 peak per DAC and aggregate bound1200. Host analysis retains every frame.
+A separate DSP MATLAB gate used the final helper, DAC_B≤1200 and inactive DAC_A
+full-RAM zero/readback. Original age/lock/integrity and metric guards unchanged.
+**Results:** both converter groups reported SYSREF1/ref2/mask5. ADC active-tile
+latencies280/280 in both runs; DAC1460/1460 then1500/1500. ADC offsets were0/0 then
+0/1; DAC offsets0/0. All40 captures refreshed, no clipping, maximum component220
+codes. A-versus-B recorded waveform lag was0 in the first initialization and
+−1..0 ADC samples in the second. Same-kind repeated-capture lags stayed within
+±1 sample. Both-DAC reference locks ranged0.660–0.929; blanks0.032–0.037.
+The large prior asynchronous RAM-player offset was not seen in these runs.
+The MATLAB gate exited0 with completion sentinel:23 accepted frames, all six
+panels, pause/resume, phase15°→0°, RF reapply and beamformer selection; final
+primary EVM5.55%/−25.12dB,5 complete/4 qualified bursts. All rejected frames are
+retained.66 Python tests pass, plus4-frame simulation and syntax/diff checks.
+Both full RAMs were zeroed/read back and DAC-off commanded after every run,
+without shutdown errors. No boot files, clock rates, FPGA images or services changed.
+**Conclusions:** converter MTS and common playback/capture start are enabled and
+measured on this topology. This is not exact fractional-sample alignment, a
+capture-loss repair, combining-gain proof or an independent RF-off observation.
+**Ways to resolve:** default original-app launches now use mode2 and stage the
+MTS module. Recalibrate paths after reinitialization; automatic latency changes
+between inits. Known sample loss and precise cross-DAC phase/timing remain separate
+hardware work. No hardware or MATLAB session is left running.

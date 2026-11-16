@@ -48,6 +48,10 @@ constructor (same as the reviewed helper), never touches the MXG.
 import argparse, hashlib, json, os, signal, socket, struct, sys, threading, time, zlib
 from pathlib import Path
 import numpy as np
+if __package__:
+    from .mts_sync import enable as enable_mts, trigger as synced_trigger
+else:
+    from mts_sync import enable as enable_mts, trigger as synced_trigger
 
 PROFILE = 'legacy-ofdm64-truncated-v1'
 SRC_SHA = '3f17e6cccef941d1bac4fefff4439472d8a6e6923b0ef7633e6184448be9eef3'
@@ -471,7 +475,10 @@ def full_capture(overlay, previous_sha):
     capture must differ from the previous one (ADC noise makes repeats impossible)."""
     overlay.adc_capture[RAM-8:RAM] = SENTINEL
     writable = np.array_equal(np.asarray(overlay.adc_capture[RAM-8:RAM]), SENTINEL)
-    overlay.trigger_capture()
+    if overlay.da == 2:
+        synced_trigger(overlay)
+    else:
+        overlay.trigger_capture()
     time.sleep(SETTLE)
     raw = np.array(overlay.adc_capture[:RAM], dtype='<i2', copy=True)
     sha = hashlib.sha256(raw.tobytes()).hexdigest()
@@ -642,14 +649,12 @@ def main():
         overlay.d_centre_freq = [a.rf_mhz]*4
         overlay.d_nyquist_zone = [1]*4
         overlay.d_phases = [0, 0, 0, 0]
-        overlay.configure_dacs()
-        overlay.configure_adcs()
-        overlay.sync_tiles()
+        manifest['sync'] = enable_mts(overlay)
         require_lock(overlay, manifest, 'after_sync')
         if len(overlay.adc_capture) != RAM:
             raise RuntimeError('ADC RAM size differs')
         manifest['adc_ram_words'] = RAM
-        overlay.da = 0
+        overlay.da = 2
         overlay.dacPower = [int(a.dac == '0'), 0, int(a.dac == '1'), 0]
         if a.control_port:
             from board_commands import BoardCommands
@@ -681,7 +686,7 @@ def main():
         if v3:
             fft3, _ = _corr_fft()
             ref_fft_conj = np.conj(fft3(ref125.astype(np.complex64)))
-            header = json.dumps({'magic_version': 3, 'control_port': a.control_port, 'control_protocol': 'jsonline-v1', 'source': 'rfsoc4x2-hardware', 'board': board.decode(),
+            header = json.dumps({'magic_version': 3, 'sync': manifest['sync'], 'control_port': a.control_port, 'control_protocol': 'jsonline-v1', 'source': 'rfsoc4x2-hardware', 'board': board.decode(),
                                  'format': WIRE_FORMAT3, 'adc_ram_words': RAM,
                                  'capture': 'full-ram-contiguous', 'window': 'same-capture-contiguous',
                                  'window_rows': WIN, 'capture_rows': RAM // 8,
@@ -701,7 +706,7 @@ def main():
                                  'board_realtime_ns': time.time_ns()}).encode()
             client.settimeout(30)
             client.sendall(b'R4X2IQ3\n'+struct.pack('<I', len(header))+header)
-        header = json.dumps({'magic_version': 2, 'source': 'rfsoc4x2-hardware', 'board': board.decode(),
+        header = json.dumps({'magic_version': 2, 'sync': manifest['sync'], 'source': 'rfsoc4x2-hardware', 'board': board.decode(),
                              'format': WIRE_FORMAT, 'adc_ram_words': RAM,
                              'capture': 'full-ram-contiguous', 'wire_channels': [0],
                              'available_channels': [1, 0, 0, 0],

@@ -82,3 +82,27 @@ stream loop. A disconnect and a fresh control connection can request stop but
 cannot prove it. No bounded-stream or DAC-beamforming commands from ZCU216 apply.
 
 Register semantics: [AMD PG144 GPIO DATA](https://docs.amd.com/api/khub/documents/0c0ItRCmnYkoHpcYUCPkEA/content).
+
+## Shared ADC/DAC synchronization
+
+The original-app launcher stages `board/mts_sync.py` alongside the capture helper.
+It uses the installed MTS library policy: active ADC and DAC tile masks0b0101
+(tiles0/2), reference tile2 for each group, SysRef_Enable=1 and automatic target
+latency−1. All four ADC mixers and both physical DAC mixers use SYSREF events;
+the wrapper also configures coarse-delay/QMC SYSREF events and resets NCO phases.
+The resulting driver latency/offset and event readbacks are stored in the manifest
+and stream metadata under `sync`. Driver failures or mismatched readbacks stop
+startup. An enabled flag alone is not evidence of physical timing performance.
+
+Capture defaults to `da=2`. Both separate RAM-player enables are lowered first;
+the shared ADC capture trigger then starts both players on one hardware gate.
+Selected continuous enables are latched while the gate is high, followed by the
+wrapper's10ms capture dwell. The trigger falls after that dwell. The entire
+unused DAC RAM must still be zero: the common trigger enables both physical
+players regardless of their software-selected output. Shutdown still zeroes and
+reads back both RAMs and commands both enables off. Explicit legacy `da0/1`
+commands override the capture mode; they are not the synchronized default.
+
+Converter MTS and shared playback start do not calibrate splitter/cable phase or
+fix the known capture sample loss. Automatic target latency can differ across
+initialization, so remeasure path calibration after every reinitialization.

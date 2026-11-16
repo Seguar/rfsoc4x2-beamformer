@@ -425,3 +425,28 @@ attempts retained/fixed. Final Fit/short-window checks pass.
 Conclusions: redesigned GUI works with actual samples, no claimed FPS gain.
 Ways to resolve: publish default layout. Speed, physical array calibration/DOA,
 OTA tracking and MXG rejection remain separate open work.
+
+## ADC/DAC MTS and common start — 2026-11-16
+
+Claim: parent completed the bounded hardware checks; board released. User requested all
+ADC/DAC sync as in the installed MTS library. Both tile groups were already
+MTS-enabled; the helper had forced free-running da=0 afterward. The new helper
+explicitly verifies active masks 0b0101, reference tile2, SYSREF enabled, automatic
+target latency and SYSREF mixer events on all4 ADC / both physical DAC blocks.
+Mode2 now starts both RAM players and ADC capture from the common capture edge,
+then latches selected continuous GPIO enables while that common gate stays high.
+No boot, firmware, clock-rate, installed-library or routing changes.
+
+Test/How: two fresh initializations,20 full-RAM captures each, blank/B/A/both/blank;
+600 peak per DAC, both aggregate bound1200. Preserve every capture; check rates,
+clock lock, clipping, driver MTS latencies and host waveform alignment. Then run
+the six-panel MATLAB control/capture regression from DSP with the new helper.
+Results:40/40 captures fresh, no clipping; MTS masks5/ref2/SYSREF1 read back.
+Within-group active-tile latencies match; A/B waveform lag−1..0 ADC samples,
+repeated same-kind captures within±1. No exact-phase/loss-repair claim. DSP MATLAB
+live gate exits0,23 accepted frames,6 panels and controls; final5.55%/−25.12dB.
+Rejected frames retained.66 Python tests and4-frame simulation pass. Shutdowns
+zero/read back both RAMs and command both DACs off, no errors. Board idle.
+Conclusions: all active converter MTS plus shared RAM-player/capture start enabled.
+Ways to resolve: publish default mode2; recalibrate after re-init, investigate
+capture loss separately. No running capture or MATLAB session remains.

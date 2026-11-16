@@ -212,3 +212,14 @@ clears. Pause/settings callbacks invalidate immediately. Reviewed-engine knobs
 must update real reviewed fields; do not expose inert controls. RF/phase changes
 clear model calibration. Preserve the original .mlapp/export as the legacy layout;
 the new code-based view is not an editable App Designer file.
+
+
+## MTS policy
+
+For the original-app helper keep both converter groups enabled with active tiles
+0/2 (mask5), reference tile2, SYSREF events and automatic target−1, matching the
+installed rfsoc_mts library. Stage mts_sync.py with legacy_capture.py. Default da2
+uses a shared hardware trigger before latching separate DAC GPIO enables; keep
+the10ms capture dwell and unused full-RAM zero/readback. Store sync readbacks.
+Do not reset tiles after waveform loading or infer DAC playback coherence from
+MTS flags. Compare actual captured timing; retain the raw sample-loss limitation.

@@ -12,6 +12,10 @@ defaults to `--layout clean --analyzer integrated`; native VSA is an optional
 separately labelled comparison. `--layout legacy` retains the earlier App Designer
 interface. The new GUI reuses the original refactor's guarded DSP/transport core.
 
+ADC and DAC MTS now follow the installed library policy, with SYSREF on both
+active tile groups and a shared DAC-player/ADC capture start by default. See
+[synchronization details](docs/HARDWARE.md#shared-adcdac-synchronization).
+
 Live MATLAB frequency/phase, pause/resume and selected-DAC controls use a separate
 [acknowledged command socket](docs/BOARD_CONTROL.md). Old buffered revisions are
 discarded. DOA and receive pattern remain explicitly uncalibrated common-feed
