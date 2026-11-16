@@ -394,3 +394,17 @@ error unidentified; all193 analyzed frames replay exactly. Parent fixes actual
 resize callback (AutoResizeChildren off), append-only Controller error logging
 and launcher cleanup capture. Core analyzer/board/guards unchanged. Confirm fixes,
 publish, launch visible exact head. Capture loss/OTA/MXG remain separate open tasks.
+
+## Live command path — 2026-11-16
+
+Claim: parent owns integration; hardware test has ended and released the board.
+Test/How: separate acknowledged control socket, original command names, 4x2
+wrapper operations serialized with capture. MATLAB handles ACKs, logs readbacks,
+and rejects old capture revisions. Fixed-size/unsupported actions are explicit.
+Results: DSP live test exit0/sentinels;11 direct commands plus a queued batch;
+phase45/0 readbacks, same-frequency retuning, pause/status/resume and DAC RAM
+off/on recover. Four invalid requests refused. Three obsolete frames discarded.
+ACKs0.15–0.33s; shutdown RAMzero/readback/offcommands, no errors.
+Conclusions: controls now work during acquisition; this does not improve FPS.
+Ways to resolve: software regression and uncertain-ACK closure gates pass; publish. Speed optimization,
+physical array calibration, OTA and MXG remain separate pending work.

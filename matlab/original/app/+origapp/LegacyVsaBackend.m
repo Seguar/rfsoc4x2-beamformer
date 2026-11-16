@@ -52,6 +52,8 @@ classdef LegacyVsaBackend < handle
     % The stream mode must equal cfg.wireMode; there is no silent switch.
     properties (SetAccess = private)
         Config
+        Control = []
+        ControlPaused = false
         Metadata = struct()
         Log = struct([])
         Ended = false
@@ -125,7 +127,7 @@ classdef LegacyVsaBackend < handle
                 'logFile',"",'syncCorrThreshold',0.9,'vendorReadThreshold',1e-6, ...
                 'staleSeconds',2,'allowContinuous',false,'rawDir',"",'maxTimestampDelaySeconds',2, ...
                 'expectSource',"rfsoc4x2-hardware",'prefetch',true,'warmup',true, ...
-                'wireMode',"adc-d-fullram",'vsaStartupTimeoutSeconds',120,'frameLogFile',"",'prefetchWithoutVsa',false);
+                'wireMode',"adc-d-fullram",'vsaStartupTimeoutSeconds',120,'frameLogFile',"",'prefetchWithoutVsa',false,'controlPort',0,'controlTimeoutSeconds',8,'controlLogFile',"");
             f = fieldnames(d);
             for k = 1:numel(f)
                 if ~isfield(cfg,f{k}), cfg.(f{k}) = d.(f{k}); end
@@ -149,6 +151,48 @@ classdef LegacyVsaBackend < handle
             obj.Ref = r.ref125(:); obj.Burst = double(r.burst125);
             obj.RefFftConj = conj(fft(obj.Ref));
             obj.RefAct = origapp.windowActivityModel(obj.Ref);
+        end
+
+        function c = capabilities(obj)
+            names=strings(1,0);
+            if obj.Config.controlPort>0, names=["fc","phase","dphase","dacPow","da","dataStream"];end
+            c=struct('commands',names,'txArrayElements',0,'uploadDac',false);
+        end
+
+        function reply = send(obj,line)
+            assert(obj.Config.controlPort>0 && obj.WireMode=="window4", ...
+                'origapp:Control','Live board commands require window4 and a control port.');
+            try
+                if isempty(obj.Control)
+                    obj.Control=origapp.BoardControl(obj.Config.host,obj.Config.controlPort,obj.Config.controlTimeoutSeconds);
+                end
+                reply=obj.Control.send(line);
+            catch err
+                if string(err.identifier)~="origapp:CommandRejected"
+                    obj.close();  % no IQ may continue with an uncertain applied setting
+                end
+                rethrow(err)
+            end
+            if strlength(string(obj.Config.controlLogFile))>0
+                try
+                    fid=fopen(obj.Config.controlLogFile,'a');
+                    assert(fid>=0,'origapp:ControlLog','Cannot open command acknowledgement log.');
+                    g=onCleanup(@()fclose(fid));
+                    fprintf(fid,'%s\n',jsonencode(struct('timestamp',obj.now(),'command',string(line),'reply',reply)));
+                    clear g
+                catch err
+                    warning('origapp:ControlLog','Command applied but its log could not be saved: %s',err.message);
+                end
+            end
+            obj.ControlPaused=~logical(reply.result.streaming);
+            obj.PrefetchHold=obj.ControlPaused;
+        end
+
+        function state=controlStatus(obj)
+            state=[];
+            if ~isempty(obj.Control) && isfield(obj.Control.LastReply,'result')
+                state=obj.Control.LastReply.result;
+            end
         end
 
         function m = availableChannels(obj)
@@ -180,6 +224,11 @@ classdef LegacyVsaBackend < handle
             assert(n < 65536, 'a2live:Protocol', 'Oversized header');
             md = jsondecode(native2unicode(obj.readBlocking(n).','UTF-8'));
             obj.validateMetadata(md);
+            if obj.Config.controlPort>0
+                assert(isfield(md,'control_port') && md.control_port==obj.Config.controlPort && ...
+                    isfield(md,'control_protocol') && string(md.control_protocol)=="jsonline-v1", ...
+                    'a2live:Protocol','Board control endpoint differs from configuration.');
+            end
             obj.SourceTag = origapp.LegacyVsaBackend.sourceTag(string(md.source));
             obj.Metadata = md;
             obj.Anchor.boardMonoNs = double(md.board_monotonic_ns);
@@ -198,6 +247,7 @@ classdef LegacyVsaBackend < handle
             if obj.Ended || obj.Closed, return; end
             if isempty(obj.Client), obj.open(); end
             t = tic;
+            if obj.ControlPaused, return; end
             if ~obj.Pending, obj.sendRequest(); end
             while true
                 obj.updateStale();
@@ -420,6 +470,7 @@ classdef LegacyVsaBackend < handle
             catch
             end
             obj.Client = []; obj.Stream = [];
+            if ~isempty(obj.Control), delete(obj.Control); obj.Control=[]; end
             try
                 if ~isempty(obj.Session) && isvalid(obj.Session), delete(obj.Session); end
             catch
@@ -740,6 +791,18 @@ classdef LegacyVsaBackend < handle
                 catch er
                     obj.logFrame(frame, string(er.identifier) + ": " + string(er.message));
                     rethrow(er)
+                end
+            end
+            if obj.Config.controlPort>0
+                assert(isfield(frame,'boardInfo') && isfield(frame.boardInfo,'control_revision'), ...
+                    'a2live:Protocol','Control-enabled frame has no settings revision.');
+                rev=frame.boardInfo.control_revision;
+                assert(isscalar(rev) && isnumeric(rev) && isfinite(rev) && rev>=0 && rev==fix(rev), ...
+                    'a2live:Protocol','Invalid settings revision.');
+                frame.controlRevision=rev;
+                if ~isempty(obj.Control) && rev<obj.Control.Revision
+                    obj.logFrame(frame,"settings changed after this capture");
+                    error('origapp:NoSignal','Discarded a capture from before the acknowledged settings change.');
                 end
             end
             obj.LastFrameMeta = rmfield(frame,'samples');

@@ -218,3 +218,11 @@ Controller failures append their identifier, message, stack and last received se
 to private `outputDir/errors.jsonl`. This includes blank/boundary/expiry rejections;
 sequence identifies the last received frame if a transport failure produced none.
 The viewer uses actual resize events for its narrow scrollable layout.
+
+## Live board commands
+
+The window4 launcher now enables the separate [4x2 control socket](../../docs/BOARD_CONTROL.md).
+Frequency/phase, pause/resume, trigger mode and selected-DAC power changes receive
+applied acknowledgements while streaming. Old buffered revisions are discarded.
+Use `--no-board-controls` for acquisition-only operation. Frame size and automatic
+ADC calibration remain unavailable during this fixed-profile session.

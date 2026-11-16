@@ -30,7 +30,7 @@ def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def preflight_code(port):
+def preflight_code(port, control_port=0):
     # Match actual Python executables, not the stopped sudo parent left by an
     # earlier run or the source text of this diagnostic command itself.
     return '\n'.join([
@@ -51,7 +51,7 @@ def preflight_code(port):
         " if any(t in files for t in ['board_capture.py','legacy_capture.py','boot.py','ipykernel_launcher']): busy.append(row)",
         "service=subprocess.run(['systemctl','is-active','bootpy.service'],capture_output=True,text=True).stdout.strip()",
         "ports=subprocess.run(['ss','-ltn'],capture_output=True,text=True).stdout.splitlines()",
-        'listening=any(any(p.split()[3].endswith(":"+str(n)) for n in [4010,'+str(port)+']) for p in ports[1:] if len(p.split())>=4)',
+        'listening=any(any(p.split()[3].endswith(":"+str(n)) for n in [4010,'+str(port)+','+str(control_port)+']) for p in ports[1:] if len(p.split())>=4)',
         "print(json.dumps(dict(board=board,machine=platform.machine(),busy=busy,service=service,listening=listening,hashes={p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() for p in expected})))",
     ])
 
@@ -73,6 +73,7 @@ def main():
                    help='keep every received wire frame (private run folder, windows/) for offline replay')
     p.add_argument('--save-captures', action='store_true',
                    help='validate mode: the helper keeps every full-RAM capture in its private stage folder')
+    p.add_argument('--no-board-controls', action='store_true', help='disable the separate live command socket')
     p.add_argument('--analyzer', choices=['integrated', 'vsa', 'both'], default='integrated',
                    help='integrated: owned MATLAB "Integrated Custom OFDM" analyzer/viewer on the same buffer '
                         '(no 89600 VSA started); vsa: native VSA per frame; both: integrated plus native VSA '
@@ -89,6 +90,9 @@ def main():
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', host) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*', user):
         raise ValueError('Use a plain endpoint and account name')
     port = int(cfg.get('legacy_stream_port', 4011))
+    control_port = int(cfg.get('control_port', port+1)) if a.receive=='window4' and not a.no_board_controls else 0
+    if control_port and (not 1024 <= control_port <= 65535 or control_port == port):
+        raise ValueError('Invalid or conflicting control port')
     vsa_port = int(cfg.get('vsa_startup_port', 60685))
     if not 1024 <= port <= 65535 or not 1024 <= vsa_port <= 65535:
         raise ValueError('Invalid stream/VSA startup port')
@@ -129,7 +133,7 @@ def main():
             raise RuntimeError(r.stderr.decode(errors='replace') or 'Board command failed')
         return r
 
-    pre = json.loads(remote('/usr/bin/python3 -c '+shlex.quote(preflight_code(port))).stdout)
+    pre = json.loads(remote('/usr/bin/python3 -c '+shlex.quote(preflight_code(port, control_port))).stdout)
     (out/'preflight.json').write_text(json.dumps(pre, indent=2)+'\n')
     if pre['board'] != 'RFSoC4x2' or pre['machine'] != 'aarch64' or pre['hashes'] != {**EXPECTED, '/boot/data.mat': SOURCE_SHA}:
         raise RuntimeError('Board identity or boot assets differ')
@@ -137,17 +141,19 @@ def main():
         raise RuntimeError('Board already has an owner/service; see private preflight.json')
     reference, reference_mat = build(original/'Signals/dac_ofdm_f_500.mat', out)
     helper = ROOT/'board/legacy_capture.py'
+    control_files = [ROOT/'board/control_service.py', ROOT/'board/board_commands.py']
     remote('mkdir -p '+shlex.quote(stage))
-    subprocess.run([pscp, *common, str(helper), str(reference), user+'@'+host+':'+stage+'/'], check=True, timeout=120)
-    staged = remote('sha256sum '+shlex.quote(stage+'/'+helper.name)+' '+shlex.quote(stage+'/'+reference.name)).stdout.decode()
-    if sha(helper) not in staged or sha(reference) not in staged:
+    subprocess.run([pscp, *common, str(helper), *map(str, control_files), str(reference), user+'@'+host+':'+stage+'/'], check=True, timeout=120)
+    staged = remote('sha256sum '+ ' '.join(shlex.quote(stage+'/'+f.name) for f in [helper, reference, *control_files])).stdout.decode()
+    if any(sha(f) not in staged for f in [helper, reference, *control_files]):
         raise RuntimeError('Staged files failed hash verification')
     continuous = a.mode == 'durable'
     seconds = a.max_seconds if continuous else 300
     window4 = a.receive == 'window4'
     app_cfg = dict(originalRepoPath=str(original), visible=True, directOnly=True,
-        allowBoardCommands=False, sendInitialTuning=False, vsaSetupFile=str(setup), vsa=1,
-        ch=1, dataChan=131072, fc=3e9, fsRfsoc=125e6, staleSeconds=2, frameTimeoutSeconds=.25, outputDir=str(out),
+        allowBoardCommands=bool(control_port), sendInitialTuning=False, vsaSetupFile=str(setup), vsa=1,
+        ch=1, dataChan=131072, fc=3e9, fc_d0=3e9, fc_d1=3e9, adcMirror=1, nyquistZone=2,
+        nyquistZone_d0=1, nyquistZone_d1=1, dacPow=[1,0,0,0], fsRfsoc=125e6, staleSeconds=2, frameTimeoutSeconds=.25, outputDir=str(out),
         uiTimingFile=str(out/'ui_timing.jsonl'), uiProbePeriodSeconds=.02, analyzer=a.analyzer,
         ofdm=dict(setupSha256=sha(setup), referenceMat=str(reference_mat), orientation='IplusjQ',
                   syncThreshold=0.8, lockThreshold=0.3, staleSeconds=2, logFile=str(out/'ofdm_frames.jsonl')))
@@ -162,7 +168,7 @@ def main():
         visible=True, allowContinuous=continuous, staleSeconds=2, expectSource='rfsoc4x2-hardware',
         logFile=str(out/'vsa_frames.jsonl'), rawDir=str(out/'windows') if a.save_windows else '',
         frameLogFile=str(out/'frames.jsonl'),
-        wireMode='window4' if window4 else 'adc-d-fullram', prefetchWithoutVsa=a.analyzer == 'integrated'),
+        controlPort=control_port, controlLogFile=str(out/'commands.jsonl'), wireMode='window4' if window4 else 'adc-d-fullram', prefetchWithoutVsa=a.analyzer == 'integrated'),
         session=dict(maxSeconds=seconds, stopFile=str(out/'STOP'), reportFile=str(out/'result.json')))
     settings_path = out/'frontend.json'
     settings_path.write_text(json.dumps(settings, indent=2)+'\n')
@@ -173,7 +179,7 @@ def main():
     args = [cfg.get('board_python', '/usr/local/share/pynq-venv/bin/python3'), stage+'/'+helper.name,
             '--exclusive-control', '--owner-stdin', '--reference', stage+'/'+reference.name,
             '--out', stage+'/manifest.json', *bounds, '--stream-bind', host, '--stream-port', str(port),
-            '--request-timeout', '120', '--dac', '0', '--rf-mhz', '3000', '--sampling-freq-unit', 'GHz',
+            '--request-timeout', '120', '--control-port', str(control_port), '--dac', '0', '--rf-mhz', '3000', '--sampling-freq-unit', 'GHz',
             '--wire-mode', 'window4' if window4 else 'adc-d-fullram', *(['--save-all-captures'] if a.save_captures else [])]
     command = "sudo -S -p '' env BOARD=RFSoC4x2 XILINX_XRT=/usr "+shlex.join(args)
     server = subprocess.Popen([*ssh, command], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

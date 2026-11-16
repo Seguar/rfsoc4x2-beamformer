@@ -154,5 +154,15 @@ class WindowSelectTests(unittest.TestCase):
         self.assertLess(len(payload), WIRE_BYTES3 + 36 + 8192)
 
 
+class WindowMetadataTests(unittest.TestCase):
+    def test_truncated_summary_retains_control_revision_and_fails_closed(self):
+        body = bytes(WIN * 16)
+        info = {'note': 'x'*3000, 'control_revision': 12, 'candidate': 'after-wrap'}
+        ext = frame_extension(0, .1, '00'*32, body, info)
+        summary = json.loads(ext[struct.calcsize(EXT3):])
+        self.assertEqual(summary['control_revision'], 12)
+        self.assertEqual(summary['candidate'], 'fallback')
+
+
 if __name__ == '__main__':
     unittest.main()

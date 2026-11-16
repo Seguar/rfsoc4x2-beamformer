@@ -355,7 +355,8 @@ def select_window(raw, ref, burst, ref_fft_conj=None, n=WIN):
 def frame_extension(start, select_s, full_sha_hex, window_bytes, info):
     js = json.dumps(info, separators=(',', ':')).encode()
     if len(js) > EXT3_JSON_MAX:
-        js = json.dumps({'note': 'summary truncated', 'start': start}).encode()
+        js = json.dumps({'note': 'summary truncated', 'start': start, 'candidate': 'fallback',
+                         'control_revision': info.get('control_revision', 0)}).encode()
     return struct.pack(EXT3, start, int(round(select_s * 1e6)), bytes.fromhex(full_sha_hex),
                        hashlib.sha256(window_bytes).digest(), len(js)) + js
 
@@ -478,7 +479,7 @@ def full_capture(overlay, previous_sha):
     return raw, refreshed, writable, sha
 
 
-def wait_request(client, timeout, deadline, pads):
+def wait_request(client, timeout, deadline, pads, controls=None):
     """Wait for one frame request b'N'; check owner and deadline every 0.25 s.
     b'W' asks for one PAD2 link warm-up filler (not ADC data; at most PAD_LIMIT)."""
     t0 = time.monotonic()
@@ -487,6 +488,12 @@ def wait_request(client, timeout, deadline, pads):
         owner_check()
         if deadline is not None and time.monotonic() > deadline:
             raise SystemExit('max-seconds reached: stopping')
+        if controls is not None:
+            controls.check()
+            if not controls.streaming:
+                t0 = time.monotonic()  # a deliberate pause is not a request timeout
+                time.sleep(.05)
+                continue
         try:
             req = client.recv(1)
         except socket.timeout:
@@ -542,6 +549,7 @@ def main():
     p.add_argument('--owner-stdin', action='store_true', required=True)
     p.add_argument('--stream-bind', required=True)
     p.add_argument('--stream-port', type=int, default=4011)
+    p.add_argument('--control-port', type=int, default=0, help='separate acknowledged command socket; window4 only')
     p.add_argument('--rf-mhz', type=int, default=3000)
     p.add_argument('--dac', choices=['0', '1'], default='0')
     p.add_argument('--sampling-freq-unit', choices=['GHz'], required=True)
@@ -553,6 +561,8 @@ def main():
                    help='bounded mode only: keep every full-RAM capture (raw_<seq>_<phase>.npy, 1 MiB each) '
                         'next to the manifest for offline diagnosis of host-refused windows')
     a = p.parse_args()
+    if a.control_port and (a.wire_mode != 'window4' or not 1024 <= a.control_port <= 65535 or a.control_port == a.stream_port):
+        p.error('control port must be a distinct unprivileged port in window4 mode')
     if a.rf_mhz != 3000:
         p.error('legacy profile validated only at 3000 MHz')
     if a.continuous:
@@ -603,6 +613,8 @@ def main():
     sys.path.insert(0, '/boot')
     from doa_mts import doaMtsOverlay
     overlay = listener = client = None
+    control_service = controls = None
+    hardware_lock = threading.RLock()
     output = Path(a.out)
     output.parent.mkdir(parents=True, exist_ok=True)
     failed = False
@@ -639,6 +651,16 @@ def main():
         manifest['adc_ram_words'] = RAM
         overlay.da = 0
         overlay.dacPower = [int(a.dac == '0'), 0, int(a.dac == '1'), 0]
+        if a.control_port:
+            from board_commands import BoardCommands
+            from control_service import ControlService
+            controls = BoardCommands(overlay, a.dac, WIN*8,
+                                     lambda: require_lock(overlay, manifest, 'control'),
+                                     lambda enabled: write_dac(overlay, words if enabled else np.zeros(RAM, dtype='<i2'), a.dac))
+            hardware_lock = controls.lock
+            control_service = ControlService(a.stream_bind, a.control_port, controls.apply, lock=hardware_lock)
+            control_service.start()
+            manifest['control_port'] = a.control_port
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind((a.stream_bind, a.stream_port))
@@ -659,7 +681,7 @@ def main():
         if v3:
             fft3, _ = _corr_fft()
             ref_fft_conj = np.conj(fft3(ref125.astype(np.complex64)))
-            header = json.dumps({'magic_version': 3, 'source': 'rfsoc4x2-hardware', 'board': board.decode(),
+            header = json.dumps({'magic_version': 3, 'control_port': a.control_port, 'control_protocol': 'jsonline-v1', 'source': 'rfsoc4x2-hardware', 'board': board.decode(),
                                  'format': WIRE_FORMAT3, 'adc_ram_words': RAM,
                                  'capture': 'full-ram-contiguous', 'window': 'same-capture-contiguous',
                                  'window_rows': WIN, 'capture_rows': RAM // 8,
@@ -713,13 +735,15 @@ def main():
                 continue
             target = words if kind == 'wave' else np.zeros(RAM, dtype='<i2')
             if loaded != kind:
-                write_dac(overlay, target, a.dac)
-                loaded = kind
-                overlay.dacs_control()  # enables the selected DAC only (dacPower)
+                with hardware_lock:
+                    enabled = overlay.dacPower[0 if a.dac=='0' else 2]
+                    write_dac(overlay, target if enabled else np.zeros(RAM, dtype='<i2'), a.dac)
+                    loaded = kind
+                    overlay.dacs_control()  # enables the selected DAC only (dacPower)
                 time.sleep(.01)
             for _ in range(value):
                 try:
-                    req_ns = wait_request(client, a.request_timeout, deadline, pads)
+                    req_ns = wait_request(client, a.request_timeout, deadline, pads, controls)
                 except SystemExit as exc:
                     if not str(exc).startswith('max-seconds reached'):
                         raise
@@ -728,9 +752,20 @@ def main():
                     manifest['stream_stop'] = str(exc)
                     bound_stop = True
                     break
-                require_lock(overlay, manifest, 'frame%d' % sequence)
-                raw, refreshed, writable, previous_sha = full_capture(overlay, previous_sha)
-                mono = time.monotonic_ns()
+                while True:
+                    owner_check()
+                    if deadline is not None and time.monotonic()>deadline:
+                        raise SystemExit('max-seconds reached: stopping')
+                    with hardware_lock:
+                        if controls is not None:
+                            controls.check()
+                        if controls is None or controls.streaming:
+                            require_lock(overlay, manifest, 'frame%d' % sequence)
+                            raw, refreshed, writable, previous_sha = full_capture(overlay, previous_sha)
+                            mono = time.monotonic_ns()
+                            control_revision = controls.revision if controls else 0
+                            break
+                    time.sleep(.05)
                 if not refreshed:
                     raise RuntimeError('ADC RAM not refreshed (sentinel kept or identical capture)')
                 label = kind.encode().ljust(8, b' ')
@@ -741,6 +776,7 @@ def main():
                     body = wire.tobytes()
                     if len(body) != WIRE_BYTES3 or wire.shape != (WIN, 8):
                         raise RuntimeError('window wire size differs')
+                    sel['control_revision'] = control_revision
                     ext = frame_extension(start, sel['select_s'], previous_sha, body, sel)
                     magic = b'IQZ3' if a.wire_codec == 'deflate' else b'IQL3'
                     mask = MASK3
@@ -799,6 +835,9 @@ def main():
         manifest['experiment_error'] = f'{type(exc).__name__}: {exc}'
         raise
     finally:
+        if control_service is not None:
+            control_service.close()
+            manifest['control_commands'] = controls.log
         manifest['frames_captured'] = sequence
         for connection in (client, listener):
             if connection is not None:
@@ -807,7 +846,8 @@ def main():
                 except Exception:
                     pass
         if overlay is not None:
-            shutdown(overlay, manifest)
+            with hardware_lock:
+                shutdown(overlay, manifest)
         else:
             manifest['shutdown_errors'] = ['Overlay construction did not return; output state unknown']
         try:

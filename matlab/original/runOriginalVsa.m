@@ -13,7 +13,7 @@ cal=cfg.calibration;
 if window4
     % Four-stream same-capture window: array DOA/pattern through the explicit
     % model, labelled as a common-feed diagnostic, uncalibrated, no coupling comp.
-    assert(~cfg.directOnly && ~cfg.allowBoardCommands && ~cfg.sendInitialTuning && ...
+    assert(~cfg.directOnly && (~cfg.allowBoardCommands || (isfield(s.backend,'controlPort') && s.backend.controlPort>0)) && ~cfg.sendInitialTuning && ...
         cfg.dataChan==32768 && cfg.fsRfsoc==125e6 && cfg.staleSeconds==2 && ~cfg.coupComp && ...
         contains(string(cfg.arrayLabel),"common-feed diagnostic") && isempty(cal.couplingMatrix) && ...
         isempty(cal.steeringCorrection) && isempty(cal.powCalibration), ...
@@ -32,6 +32,12 @@ backendGuard=onCleanup(@()delete(backend));
 app=[];
 try
     app=VSA_rfsoc_refactor(cfgWithBackend(cfg,backend));
+    if window4
+        app.dataChanEditField.Enable='off';
+        app.dataChanEditField.Tooltip='The active waveform profile has a fixed frame size; restart to change it.';
+        app.RecalibrateADCsButton.Enable='off';
+        app.RecalibrateADCsButton.Tooltip='Legacy automatic ADC calibration is unavailable in this controlled session.';
+    end
     guard=onCleanup(@()closeAppHandle(app)); %#ok<NASGU> value-captured handle, no nested-workspace teardown
     app.startAcquisition();
     assert(app.Controller.IsOpen,'origapp:Startup','Original app backend did not open.');

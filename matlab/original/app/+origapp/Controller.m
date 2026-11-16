@@ -19,6 +19,7 @@ classdef Controller < handle
         LastFrameTime = NaN         % posix seconds of the last accepted frame
         LastSequence = NaN
         LastError = ""
+        ControlRevision = 0
     end
 
     methods
@@ -72,9 +73,22 @@ classdef Controller < handle
                 return
             end
             line = strjoin(obj.Pending, '#');
-            obj.Backend.send(char(line));
+            try
+                obj.Backend.send(char(line));
+            catch err
+                if string(err.identifier)=="origapp:CommandRejected"
+                    obj.Pending=strings(0,1);  % explicit rejection is not a retryable transport failure
+                end
+                rethrow(err)
+            end
             obj.Sent(end+1,1) = line;
             obj.Pending = strings(0,1);
+            if origapp.Controller.hasOp(obj.Backend,"controlStatus")
+                state=obj.Backend.controlStatus();
+                if isstruct(state) && isfield(state,'revision')
+                    msg=sprintf('Board acknowledged applied settings revision %g.',state.revision);
+                end
+            end
         end
 
         function [frame, status] = acquire(obj)
@@ -93,6 +107,10 @@ classdef Controller < handle
             end
             assert(isstruct(raw) && isfield(raw,'samples'), 'origapp:Backend', ...
                 'next() must return a struct with .samples.');
+            if isfield(raw,'controlRevision') && raw.controlRevision~=obj.ControlRevision
+                obj.ControlRevision=raw.controlRevision;
+                error('origapp:NoSignal','Board settings changed: clear plots and averaging before the next frame.');
+            end
             x = raw.samples;
             assert(isnumeric(x) && size(x,2)==4 && size(x,1)>=16 && all(isfinite(x),'all'), ...
                 'origapp:Frame', 'Frame must be finite N-by-4 samples.');

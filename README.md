@@ -19,6 +19,10 @@ The original-app launcher now defaults to four measured streams from one capture
 with responsive plots, zoom/pan and Autoscale. Its DOA scale and receive pattern are
 explicitly uncalibrated common-feed/model diagnostics in the current splitter wiring.
 
+Live MATLAB frequency/phase, pause/resume and selected-DAC controls use a separate
+[acknowledged command socket](docs/BOARD_CONTROL.md), including capture revisions
+to discard data buffered before a setting change.
+
 **Status: direct ADC_D capture and live demodulation demonstrated with waveform2.**
 One hundred live frames had zero bit errors and no pilot-lock failures; measured
 EVM median3.79%, maximum9.98%. Raw timing loss remains, so constant EVM is not

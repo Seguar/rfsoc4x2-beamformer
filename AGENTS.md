@@ -188,3 +188,14 @@ reference lock .3, integrated preamble sync .8, native sync .9 and age 2 s; thes
 are distinct metrics. Invalid frames clear current values; history stays labelled.
 Native data-aided settings and different symbol coverage prevent an equivalence
 claim. Neither integrated BER nor data-aided equalization is implemented.
+
+## Live control
+
+Keep IQ and JSON-line commands on separate sockets. ACK means applied with mixer
+readback. Serialize all hardware mutation with capture; prevalidate whole batches.
+Latch driver failures and stop capture on uncertain partial application. Preserve
+per-frame control_revision and reject pre-ACK captures; reset averaging on a new
+revision. Never flush raw IQ to recover command boundaries. DAC OFF must zero
+selected RAM because the capture trigger also enables players. Frame size is fixed;
+reject resizing, calibration, upload and ZCU216-only commands explicitly. The
+launcher stages control_service.py and board_commands.py with the capture helper.

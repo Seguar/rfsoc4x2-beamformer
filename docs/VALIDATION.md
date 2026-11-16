@@ -665,3 +665,25 @@ callback can run; Controller failures persist to private errors.jsonl; launcher
 cleanup uses a value-captured handle. Follow-up software checks pass (34/34 OFDM cases, actual resize callbacks,
 three persisted error records, zero stray figures/timers, exit0 and completion
 sentinel). A visible launch checks the final launcher lifecycle. Investigate physical stream0 dropout separately.
+
+## Live MATLAB-to-board commands, 2026-11-16
+
+**Test:** separate control socket while the same RFSoC4x2 captures four-stream IQ.
+**How:** native MATLAB client/backend on DSP; staged helper owned over SSH by DGX.
+Legacy command names use the 4x2 wrapper. Capture and settings share a hardware
+lock; applied acknowledgements and acquisition revisions prevent old buffered data
+from entering plots after a settings change. No notebook kernel is required.
+**Results:** live test exits0 with BOARD_CONTROL_LIVE_COMPLETE and DSP sentinel.
+Eleven direct commands plus a queued batch pass: DAC phase45°/0° readback, ADC
+phase, same-frequency retuning/readback, fixed-size acknowledgement, pause/status/
+resume, DAC RAM off/on with signal disappearance/recovery. Four invalid commands
+are rejected; three obsolete captures are discarded. ACK0.15–0.33s. Both DAC RAMs
+zeroed/read back and enables commanded off, shutdown_errors empty. No helper left.
+61 Python cases pass with the reference supplied (no skips); DSP command-queue,
+admission and original/new-port MATLAB regression suites pass with completion
+sentinels and exit0, zero leaked figures/timers.
+**Conclusions:** commands work during acquisition; no FPS improvement, physical
+DOA, coherent dual-DAC gain, jammer rejection or independent RF-off claim.
+**Ways to resolve:** publish the reviewed control path. Fixed frame size, automatic
+ADC calibration, waveform upload and ZCU216-only commands remain explicitly
+unavailable in this session. Capture/transport optimization remains separate.
