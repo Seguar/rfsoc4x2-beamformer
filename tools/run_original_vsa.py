@@ -74,6 +74,7 @@ def main():
     p.add_argument('--save-captures', action='store_true',
                    help='validate mode: the helper keeps every full-RAM capture in its private stage folder')
     p.add_argument('--layout', choices=['clean','legacy'], default='clean', help='focused six-plot GUI or legacy full controls')
+    p.add_argument('--standalone', help='compiled RFSoCBeamformer.exe to run instead of MATLAB (clean layout only)')
     p.add_argument('--no-board-controls', action='store_true', help='disable the separate live command socket')
     p.add_argument('--analyzer', choices=['integrated', 'vsa', 'both'], default='integrated',
                    help='integrated: owned MATLAB "Integrated Custom OFDM" analyzer/viewer on the same buffer '
@@ -108,7 +109,10 @@ def main():
     if a.analyzer != 'integrated' and not dll.is_file():
         raise ValueError('VSA interfaces DLL missing')
     matlab = cfg.get('matlab_executable')
-    if not matlab or not Path(matlab).is_file():
+    if a.standalone:
+        if a.layout != 'clean' or not Path(a.standalone).is_file():
+            raise ValueError('--standalone needs the clean layout and an existing executable')
+    elif not matlab or not Path(matlab).is_file():
         raise ValueError('Set matlab_executable in private config')
     with socket.socket() as check:
         check.settimeout(.2)
@@ -165,6 +169,11 @@ def main():
                        arrayLabel='common-feed diagnostic / array model (ULA d=lambda/2 @3 GHz)')
     if a.layout == 'clean':
         app_cfg.update(periodSeconds=.02, frameTimeoutSeconds=.05)
+    if a.standalone:
+        # The compiled application cannot deploy the Antenna Toolbox patch element.
+        app_cfg.update(elementModel='isotropic')
+        if window4:
+            app_cfg['arrayLabel'] += ' · isotropic elements'
     settings = dict(app=app_cfg,
         backend=dict(host=host, port=port, referenceMat=str(reference_mat), orientation='IplusjQ',
         dllPath=str(dll), setupPath=str(setup), setupSha256=sha(setup), vsaPort=vsa_port,
@@ -201,8 +210,11 @@ def main():
         while not ready.wait(.25):
             if server.poll() is not None or time.monotonic()>deadline:
                 raise RuntimeError('Helper did not become ready; inspect board.log')
-        subprocess.run([matlab, '-wait', '-batch', 'run('+literal(entry)+')', '-logfile', str(out/'matlab.log')],
-                       check=True, timeout=seconds+600)
+        if a.standalone:
+            subprocess.run([a.standalone, str(settings_path)], check=True, timeout=seconds+600)
+        else:
+            subprocess.run([matlab, '-wait', '-batch', 'run('+literal(entry)+')', '-logfile', str(out/'matlab.log')],
+                           check=True, timeout=seconds+600)
     finally:
         server.stdin.close()
         try:

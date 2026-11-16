@@ -1,12 +1,25 @@
-function report=runOriginalVsa(settingsPath)
+function report=runOriginalVsa(settingsPath,opt)
 % Original App Designer UI + owned native VSA. Hardware lifetime is launcher-owned.
-root=fileparts(mfilename('fullpath')); addpath(fullfile(root,'app'),fileparts(root));
+if nargin<2,opt=struct();end
+% opt (standalone entry): seconds, snapshot folder, theme. All optional.
+if ~isdeployed,root=fileparts(mfilename('fullpath')); addpath(fullfile(root,'app'),fileparts(root));end
 s=jsondecode(fileread(settingsPath));
 assert(s.session.maxSeconds>0 && s.session.maxSeconds<=14400,'origapp:Bound','Invalid session duration.');
 cfg=origapp.defaultConfig(); names=fieldnames(s.app);
 for k=1:numel(names)
     assert(isfield(cfg,names{k}),'origapp:Config','Unknown app field %s',names{k});
     cfg.(names{k})=s.app.(names{k});
+end
+if isfield(opt,'theme') && ~isempty(opt.theme),cfg.theme=string(opt.theme);end
+limit=s.session.maxSeconds;
+if isfield(opt,'seconds') && isfinite(opt.seconds),limit=min(limit,opt.seconds);end
+if isdeployed
+    assert(string(cfg.frontend)=="clean",'origapp:Standalone','The standalone application runs the clean layout only.');
+    if string(cfg.elementModel)=="patch"
+        % The Antenna Toolbox patch element cannot be deployed. The compiled
+        % application uses isotropic model elements and says so in the scope.
+        cfg.elementModel="isotropic";cfg.arrayLabel=string(cfg.arrayLabel)+" · isotropic elements";
+    end
 end
 window4=isfield(s.backend,'wireMode') && string(s.backend.wireMode)=="window4";
 cal=cfg.calibration;
@@ -46,7 +59,7 @@ try
     app.startAcquisition();
     assert(app.Controller.IsOpen,'origapp:Startup','Original app backend did not open.');
     started=tic;
-    while isvalid(app) && ~backend.Ended && toc(started)<s.session.maxSeconds && ~isfile(s.session.stopFile)
+    while isvalid(app) && ~backend.Ended && toc(started)<limit && ~isfile(s.session.stopFile)
         pause(.1);
         if isvalid(app) && ~app.Controller.IsOpen
             assert(app.Controller.ConsecutiveErrors<cfg.maxConsecutiveErrors, ...
@@ -56,6 +69,9 @@ try
     end
     report=struct('deliveredFrames',numel(backend.Delivered),'vsaFrames',numel(backend.Log), ...
         'ended',backend.Ended,'source',backend.SourceTag,'metrics',backend.Log);
+    if isvalid(app) && isfield(opt,'snapshot') && ~isempty(opt.snapshot) && string(cfg.frontend)=="clean" && app.View.isOpen()
+        report.snapshot=app.View.saveSnapshot(fullfile(char(opt.snapshot),'snapshots'));
+    end
     if isvalid(app)
         c=app.Controller; report.uiFrames=c.FramesAccepted; report.uiErrors=c.TotalErrors;
         report.uiBoundaryFrames=c.BoundaryFrames; report.uiExpiredFrames=c.ExpiredFrames;

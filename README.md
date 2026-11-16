@@ -15,6 +15,9 @@ defaults to `--layout clean --analyzer integrated`; native VSA is an optional
 separately labelled comparison. `--layout legacy` retains the earlier App Designer
 interface. The new GUI reuses the original refactor's guarded DSP/transport core.
 
+A compiled [standalone application](docs/STANDALONE.md) with a built-in
+simulation mode is attached to the releases; it needs only the MATLAB Runtime.
+
 ![Synthetic fixture screenshot of the focused interface, not hardware data](docs/img/gui-dark-synthetic.png)
 
 ADC and DAC MTS now follow the installed library policy, with SYSREF on both

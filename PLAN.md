@@ -470,3 +470,16 @@ both DACs commanded off, no errors. 66 Python tests pass.
 Conclusions: GUI shows existing metrics and makes timing-slip frames visible;
 no new RF or beamforming claim. Ways to resolve: sample-loss work stays separate;
 phase repeatability across initializations needs its own multi-init run.
+
+## Standalone application — 2026-11-16
+
+Claim: parent completed build and one bounded live run; board released. User asked
+for a standalone application published to releases. New entry point
+`matlab/standalone/RFSoCBeamformer.m` (simulation with no argument, hardware with
+the launcher's settings JSON), simulated four-element source, build script and
+launcher option `--standalone`. Deployed sessions use isotropic model elements
+because the patch element cannot be deployed. Details: docs/STANDALONE.md.
+Results: source demo test passes; compiled v0.1.0 simulation run exit0; compiled
+hardware run exit0,38 accepted,4 rejections retained; RAMs zeroed/read back, both
+DACs commanded off, no shutdown errors. Runtime-only machine and a full launcher
+run with `--standalone` remain untested.

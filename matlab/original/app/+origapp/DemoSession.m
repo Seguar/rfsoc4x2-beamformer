@@ -20,7 +20,8 @@ classdef DemoSession < handle
         function obj=DemoSession(cfg)
             obj.Config=origapp.resolveConfig(cfg);
             obj.Config.cutter=0;obj.Config.c1=0;obj.Config.c2=0;obj.Config.coupComp=false;
-            if strlength(string(obj.Config.reviewedPath))>0,addpath(obj.Config.reviewedPath);end
+            % A compiled application already contains every dependency.
+            if ~isdeployed && strlength(string(obj.Config.reviewedPath))>0,addpath(obj.Config.reviewedPath);end
             if string(obj.Config.bfEngine)=="reviewed"
                 rc=obj.Config.reviewed;if isempty(fieldnames(rc)),rc=rfsoc.defaultConfig();end
                 obj.Config.reviewed=rc;
@@ -28,10 +29,10 @@ classdef DemoSession < handle
                 obj.Config.iter=rc.maxIterations;obj.Config.mis_ang=rc.mismatchDeg;obj.Config.alg_scan_res=rc.scanStepDeg;
             end
             cfg=obj.Config;
-            if strlength(string(cfg.originalRepoPath))>0
+            if ~isdeployed && strlength(string(cfg.originalRepoPath))>0
                 addpath(fullfile(cfg.originalRepoPath,'Functions'));
             end
-            if strlength(string(cfg.reviewedPath))>0,addpath(cfg.reviewedPath);end
+            if ~isdeployed && strlength(string(cfg.reviewedPath))>0,addpath(cfg.reviewedPath);end
             % Integrated metrics define the plotted constellation/EVM. Vendor
             % measurements are an optional separately labelled comparison.
             if string(obj.Config.analyzer)=="vsa",obj.Config.analyzer="both";end
