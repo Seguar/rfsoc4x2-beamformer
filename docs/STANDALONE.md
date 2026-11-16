@@ -3,7 +3,10 @@
 `RFSoCBeamformer.exe` is the focused MATLAB interface ([GUI.md](GUI.md)) compiled
 with MATLAB Compiler. It needs no MATLAB licence, only the free
 [MATLAB Runtime R2025b](https://www.mathworks.com/products/compiler/matlab-runtime.html)
-for Windows. Download it from the repository's Releases page.
+for Windows. Download it from the repository's Releases page. Two builds are
+attached: `win64` (MATLAB Runtime R2025b) and `win64-r2026a` (MATLAB Runtime
+R2026a, or an installed MATLAB R2026a with its `bin\win64` folder first on PATH
+for the launched process).
 
 ## Run
 
@@ -77,5 +80,8 @@ DAC RAMs and commanded both outputs off without shutdown errors.
 
 **Conclusions / Ways to resolve:** the compiled window works with simulated and
 real board samples on the build host, which has MATLAB installed. A machine with
-only the MATLAB Runtime was not tested. The launcher's `--standalone` option was
+only the MATLAB Runtime was not tested. The R2026a build also ran in simulation
+mode on a second Windows machine against its installed MATLAB R2026a, with no
+runtime: window up within about 3 minutes on first start, plots updating, no
+errors. The launcher's `--standalone` option was
 exercised only through its settings format, not by a full launcher run.
