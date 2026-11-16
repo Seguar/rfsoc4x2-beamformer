@@ -11,6 +11,7 @@ assert(mod(numel(args),2)==0, 'origapp:Config', 'Name-value pairs expected.');
 for k = 1:2:numel(args)
     cfg = mergeStruct(cfg, struct(char(args{k}), {args{k+1}}));
 end
+assert(any(string(cfg.frontend)==["legacy","clean"]), 'origapp:Config', 'Unknown frontend.');
 assert(any(string(cfg.bfEngine)==["original","reviewed"]), 'origapp:Config', ...
     'bfEngine must be "original" or "reviewed".');
 assert(any(string(cfg.elementModel)==["patch","isotropic"]), 'origapp:Config', ...

@@ -408,3 +408,20 @@ ACKs0.15–0.33s; shutdown RAMzero/readback/offcommands, no errors.
 Conclusions: controls now work during acquisition; this does not improve FPS.
 Ways to resolve: software regression and uncertain-ACK closure gates pass; publish. Speed optimization,
 physical array calibration, OTA and MXG remain separate pending work.
+
+## Focused GUI redesign — 2026-11-16
+
+Claim: parent owns release; live run ended and board released.
+Test/How: one code-based six-panel view and headless session, reusing guarded
+Controller/backend/processLegacyFrame/OfdmAnalyzer. Default launcher clean,
+legacy App Designer pair unchanged. Main RF/DSP/algorithm controls retained;
+unused/debug/device controls omitted.
+Results: synthetic resize/stale/callback/persistence/cleanup fixtures pass;
+reviewed loading changes actual weights. Live16 accepted frames, six real plots,
+pause/resume/phase/RF/beamformer actions pass. Final5.23%/−25.63dB,6complete5qualified,
+EVM outlier18% retained. Four expected stale/expiry/settings rejections.
+Both RAMs zero/readback, offcommands, no shutdown errors. Failed pause/callback
+attempts retained/fixed. Final Fit/short-window checks pass.
+Conclusions: redesigned GUI works with actual samples, no claimed FPS gain.
+Ways to resolve: publish default layout. Speed, physical array calibration/DOA,
+OTA tracking and MXG rejection remain separate open work.

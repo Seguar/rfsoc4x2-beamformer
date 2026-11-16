@@ -31,8 +31,12 @@ backend=origapp.LegacyVsaBackend(backendCfg);
 backendGuard=onCleanup(@()delete(backend));
 app=[];
 try
-    app=VSA_rfsoc_refactor(cfgWithBackend(cfg,backend));
-    if window4
+    if string(cfg.frontend)=="clean"
+        app=origapp.BeamformerApp(cfgWithBackend(cfg,backend));
+    else
+        app=VSA_rfsoc_refactor(cfgWithBackend(cfg,backend));
+    end
+    if window4 && string(cfg.frontend)~="clean"
         app.dataChanEditField.Enable='off';
         app.dataChanEditField.Tooltip='The active waveform profile has a fixed frame size; restart to change it.';
         app.RecalibrateADCsButton.Enable='off';

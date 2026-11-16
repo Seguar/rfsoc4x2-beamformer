@@ -6,9 +6,12 @@ This repository is specifically RFSoC4x2 / xczu48dr;
 ZCU216 overlays, clocks, DAC indexing and burst protocols do not apply.
 
 MATLAB work must also read docs/MATLAB_VSA.md. Keep the original reference .mlapp
-and exported .m unchanged unless both can be updated consistently. The user selected the original UI refactor in matlab/original/ with an integrated
-Custom OFDM viewer; native VSA is optional. The earlier replacement dashboard remains experimental;
-do not relaunch it as the requested app. The original-layout editable .mlapp and its export are a matched pair under
+and exported .m unchanged unless both can be updated consistently. The user's latest GUI request selects the clean six-panel
+layout (docs/GUI.md): keep DOA/pattern/spectrum/time/constellation/EVM and actual RF/
+DSP options, omit unused/debug controls. Use BeamformerView + headless DemoSession
+as the default frontend; never create hidden copies of the old GUI. Native VSA
+is an optional comparison. The earlier FFT256 dashboard remains experimental.
+ The original-layout editable .mlapp and its export are a matched pair under
 matlab/original/app. Rebuild both through the full App Designer serializer and
 verify model/code consistency after changes; never patch only document.xml. Maintain X*conj(w), training-only channel estimates and
 payload/pilot separation. Do not fit payload EVM away. Do not claim VSA lock from
@@ -199,3 +202,13 @@ revision. Never flush raw IQ to recover command boundaries. DAC OFF must zero
 selected RAM because the capture trigger also enables players. Frame size is fixed;
 reject resizing, calibration, upload and ZCU216-only commands explicitly. The
 launcher stages control_service.py and board_commands.py with the capture helper.
+
+## Focused view
+
+Keep UI rendering separate from DemoSession and existing DSP math. Six panels
+share the same admitted acquisition. Persistent graphics update only on new
+sequences; retain EVM outliers and mark history explicitly when current data
+clears. Pause/settings callbacks invalidate immediately. Reviewed-engine knobs
+must update real reviewed fields; do not expose inert controls. RF/phase changes
+clear model calibration. Preserve the original .mlapp/export as the legacy layout;
+the new code-based view is not an editable App Designer file.

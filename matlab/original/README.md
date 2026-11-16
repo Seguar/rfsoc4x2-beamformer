@@ -1,4 +1,11 @@
-# Original RFSoC4x2 App Designer interface
+# RFSoC4x2 MATLAB interface
+
+The launcher now defaults to the [focused six-panel view](../../docs/GUI.md), with
+main RF and DSP controls and no debug/device tabs. It reuses this folder's guarded
+processing/backend core. `--layout legacy` selects the original App Designer
+interface described below; its `.mlapp` and export remain unchanged.
+
+## Legacy App Designer interface
 
 This is a refactor of `vsa_rfsoc/VSA_rfsoc_exported.m`, retaining its original
 119 components and controls. VSA owns constellation and EVM; this MATLAB interface

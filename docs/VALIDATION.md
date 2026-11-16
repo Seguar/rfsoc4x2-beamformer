@@ -687,3 +687,26 @@ DOA, coherent dual-DAC gain, jammer rejection or independent RF-off claim.
 **Ways to resolve:** publish the reviewed control path. Fixed frame size, automatic
 ADC calibration, waveform upload and ZCU216-only commands remain explicitly
 unavailable in this session. Capture/transport optimization remains separate.
+
+## Focused six-panel GUI, 2026-11-16
+
+**Test:** retain DOA/pattern/spectrum/time/constellation/EVM and main RF/DSP controls
+in one responsive window, removing unused/debug/device controls from the default.
+**How:** code-based BeamformerView plus headless DemoSession reuse the existing
+Controller, transport, processLegacyFrame and inclusive OfdmAnalyzer. Synthetic
+fixtures verify actual resizing, user zoom, fixed graphics counts, callback rollback,
+calibration guards, reviewed-loading weight changes, immediate pause clearing,
+command strings, same-buffer vendor feed and zero leaked figures/timers.
+**Results:** GUI/session fixtures exit0 with completion sentinels;61 Python tests
+pass with no skips. A DSP-hosted bounded live run accepted16 frames, exercised
+pause/resume,15°→0° DAC phase, same-frequency apply and beamformer selection; all
+six panels displayed actual samples. Final frame5.23%/−25.63dB,6complete5qualified
+bursts; the EVM history retained its~18% outlier. Four rejections were stale/expiry
+and settings-revision clearing. Earlier failed pause/callback checks were fixed and
+retained. Both DAC RAMs zeroed/read back and enables off commanded, no shutdown
+errors. No old hidden GUI or separate integrated-viewer window was created.
+**Conclusions:** the redesigned layout works on hardware and retains metric guards.
+This is not a throughput benchmark or proof of physical angles/gain/jammer rejection.
+**Ways to resolve:** publish as launcher default; use --layout legacy for the earlier
+App Designer interface. Capture-loss/speed work and physical-array validation remain
+separate. The old .mlapp/export are unchanged; the clean frontend is code-based.

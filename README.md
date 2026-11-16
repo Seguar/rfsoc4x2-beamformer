@@ -4,24 +4,18 @@ Pilot-locked OFDM demodulation, frequency/phase tracking and four-channel
 adaptive combining for the RFSoC4x2. Uses the existing `doa_rfsoc/main` matched
 boot overlay and `vsa_rfsoc` sample conventions; no FPGA build is required.
 
-**Current UI:** the original `VSA_rfsoc` interface now has an integrated Custom
-OFDM viewer for constellation, spectrum, EVM and waveform parameters. Native
-89600 VSA is an optional comparison (`--analyzer vsa` or `both`); the launcher
-defaults to `--analyzer integrated`. The [original-app refactor](matlab/original/README.md)
-retains all119 original controls, adds32 components on a fifth tab and defaults
-to the reviewed beamformer core. See the [newer-app feature map](docs/NEW_APP_PORT.md). Synthetic
-UI/failure tests pass and the editable `.mlapp` passes headless model/code checks.
-The [original-app launcher](matlab/original/README.md#native-vsa-launch) and
-responsive four-stream path pass bounded hardware checks, including blank, boundary
-and display-age rejection. The integrated viewer passes bounded live checks (201 captures, 192 valid
-measurements, median inclusive payload EVM 4.83%). Editor round-trip testing remains pending. The separate dashboard below is retained as earlier experimental work.
-The original-app launcher now defaults to four measured streams from one capture,
-with responsive plots, zoom/pan and Autoscale. Its DOA scale and receive pattern are
-explicitly uncalibrated common-feed/model diagnostics in the current splitter wiring.
+**Current UI:** one focused [six-panel MATLAB window](docs/GUI.md): DOA, receive
+pattern, spectrum, time-domain I/Q, constellation and EVM in %/dB. Main RF controls
+and DSP options stay in a collapsible sidebar; unused/debug/device controls and
+separate measurement windows are removed from the default layout. The launcher
+defaults to `--layout clean --analyzer integrated`; native VSA is an optional
+separately labelled comparison. `--layout legacy` retains the earlier App Designer
+interface. The new GUI reuses the original refactor's guarded DSP/transport core.
 
 Live MATLAB frequency/phase, pause/resume and selected-DAC controls use a separate
-[acknowledged command socket](docs/BOARD_CONTROL.md), including capture revisions
-to discard data buffered before a setting change.
+[acknowledged command socket](docs/BOARD_CONTROL.md). Old buffered revisions are
+discarded. DOA and receive pattern remain explicitly uncalibrated common-feed
+model diagnostics in the current splitter wiring.
 
 **Status: direct ADC_D capture and live demodulation demonstrated with waveform2.**
 One hundred live frames had zero bit errors and no pilot-lock failures; measured

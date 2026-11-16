@@ -8,6 +8,7 @@ function cfg = defaultConfig()
 
 cfg = struct();
 %% Session / safety (refactor)
+cfg.frontend = "legacy";          % launcher selects the focused clean six-plot view
 cfg.backend = [];                 % injected backend (struct of handles or object); [] = idle
 cfg.originalRepoPath = "";        % read-only vsa_rfsoc checkout: Functions/, koef.mat, Settings/
 cfg.iqtoolsPath = "";             % only used by the IQtools button

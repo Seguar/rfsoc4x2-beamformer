@@ -73,6 +73,7 @@ def main():
                    help='keep every received wire frame (private run folder, windows/) for offline replay')
     p.add_argument('--save-captures', action='store_true',
                    help='validate mode: the helper keeps every full-RAM capture in its private stage folder')
+    p.add_argument('--layout', choices=['clean','legacy'], default='clean', help='focused six-plot GUI or legacy full controls')
     p.add_argument('--no-board-controls', action='store_true', help='disable the separate live command socket')
     p.add_argument('--analyzer', choices=['integrated', 'vsa', 'both'], default='integrated',
                    help='integrated: owned MATLAB "Integrated Custom OFDM" analyzer/viewer on the same buffer '
@@ -150,7 +151,7 @@ def main():
     continuous = a.mode == 'durable'
     seconds = a.max_seconds if continuous else 300
     window4 = a.receive == 'window4'
-    app_cfg = dict(originalRepoPath=str(original), visible=True, directOnly=True,
+    app_cfg = dict(frontend=a.layout, originalRepoPath=str(original), visible=True, directOnly=True,
         allowBoardCommands=bool(control_port), sendInitialTuning=False, vsaSetupFile=str(setup), vsa=1,
         ch=1, dataChan=131072, fc=3e9, fc_d0=3e9, fc_d1=3e9, adcMirror=1, nyquistZone=2,
         nyquistZone_d0=1, nyquistZone_d1=1, dacPow=[1,0,0,0], fsRfsoc=125e6, staleSeconds=2, frameTimeoutSeconds=.25, outputDir=str(out),
@@ -162,6 +163,8 @@ def main():
         # 4-element ULA model (d = lambda/2 at 3 GHz), uncalibrated; never an arrival angle.
         app_cfg.update(directOnly=False, ch=5, dataChan=32768, fcAnt=3e9, cutterAllowed=False,
                        arrayLabel='common-feed diagnostic / array model (ULA d=lambda/2 @3 GHz)')
+    if a.layout == 'clean':
+        app_cfg.update(periodSeconds=.02, frameTimeoutSeconds=.05)
     settings = dict(app=app_cfg,
         backend=dict(host=host, port=port, referenceMat=str(reference_mat), orientation='IplusjQ',
         dllPath=str(dll), setupPath=str(setup), setupSha256=sha(setup), vsaPort=vsa_port,
