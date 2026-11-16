@@ -1,4 +1,4 @@
-# RFSoC 4x2 loopback beamforming demo
+# RFSoC 4x2 beamformer
 
 Pilot-locked OFDM demodulation, frequency/phase tracking and four-channel
 adaptive combining for the RFSoC4x2. Uses the existing `doa_rfsoc/main` matched

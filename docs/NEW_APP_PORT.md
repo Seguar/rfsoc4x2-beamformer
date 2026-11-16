@@ -3,7 +3,7 @@
 Source of truth for the comparison (read-only):
 
 - **old** = public refactor `matlab/original/app/VSA_rfsoc_refactor_exported.m` at
-  Seguar/rfsoc4x2-loopback-demo **8133baa** (119 components, 65 callbacks), itself a
+  Seguar/rfsoc4x2-beamformer (then rfsoc4x2-loopback-demo) **8133baa** (119 components, 65 callbacks), itself a
   refactor of `vsa_rfsoc/VSA_rfsoc_exported.m` (118 typed components + UIFigure).
 - **new** = `vsa_rfsoc/VSA_rfsoc_new_exported.m` (3703 lines, sha256 6c879b42…, last
   changed bce5641) + `VSA_rfsoc_new.mlapp` (sha256 1dcc97ff…), `rfsocBf.m` (HEAD

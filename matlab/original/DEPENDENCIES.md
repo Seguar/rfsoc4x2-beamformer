@@ -45,7 +45,7 @@ transport and VSA roles go to the injected backend (BACKEND_CONTRACT.md).
 
 ## Reviewed demo package (default, `cfg.bfEngine="reviewed"`)
 
-`rfsoc4x2-loopback-demo/matlab/+rfsoc`: the refactor only adds it to the path, read-only,
+`rfsoc4x2-beamformer/matlab/+rfsoc`: the refactor only adds it to the path, read-only,
 and calls `rfsoc.beamform` and `rfsoc.defaultConfig` (fixture). `processFrame`, `FrameSource`,
 `VsaSession` and `spatialView` are not called by this original-UI layer. Reasons: processFrame is FFT256 and cannot
 demodulate the legacy FFT64 waveform; the explicit legacy transport profile needs separate stream ownership; the
