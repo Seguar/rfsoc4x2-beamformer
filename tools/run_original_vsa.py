@@ -73,6 +73,10 @@ def main():
                    help='keep every received wire frame (private run folder, windows/) for offline replay')
     p.add_argument('--save-captures', action='store_true',
                    help='validate mode: the helper keeps every full-RAM capture in its private stage folder')
+    p.add_argument('--analyzer', choices=['integrated', 'vsa', 'both'], default='integrated',
+                   help='integrated: owned MATLAB "Integrated Custom OFDM" analyzer/viewer on the same buffer '
+                        '(no 89600 VSA started); vsa: native VSA per frame; both: integrated plus native VSA '
+                        'as a separately labelled comparison')
     a = p.parse_args()
     if a.save_captures and a.mode != 'validate':
         p.error('--save-captures needs --mode validate (bounded schedule)')
@@ -95,15 +99,15 @@ def main():
     setup = original/'Settings/ofdm_iq_100_16_4x2.setx'
     if sha(setup) not in SETUP_SHAS:
         raise ValueError('SETX is not the matched legacy FFT64 profile')
-    dll = Path(cfg['vsa_dll_path']).resolve()
-    if not dll.is_file():
+    dll = Path(cfg.get('vsa_dll_path', 'unused-integrated')).resolve()
+    if a.analyzer != 'integrated' and not dll.is_file():
         raise ValueError('VSA interfaces DLL missing')
     matlab = cfg.get('matlab_executable')
     if not matlab or not Path(matlab).is_file():
         raise ValueError('Set matlab_executable in private config')
     with socket.socket() as check:
         check.settimeout(.2)
-        if check.connect_ex(('127.0.0.1', vsa_port)) == 0:
+        if a.analyzer != 'integrated' and check.connect_ex(('127.0.0.1', vsa_port)) == 0:
             raise RuntimeError('VSA startup port already occupied; choose a free port')
     plink, pscp = executable(cfg, 'plink', 'plink'), executable(cfg, 'pscp', 'pscp')
     common = ['-batch', '-hostkey', cfg['host_key'], '-l', user, '-pwfile', str(password_file)]
@@ -143,7 +147,10 @@ def main():
     window4 = a.receive == 'window4'
     app_cfg = dict(originalRepoPath=str(original), visible=True, directOnly=True,
         allowBoardCommands=False, sendInitialTuning=False, vsaSetupFile=str(setup), vsa=1,
-        ch=1, dataChan=131072, fc=3e9, fsRfsoc=125e6, staleSeconds=2, frameTimeoutSeconds=.25, outputDir=str(out))
+        ch=1, dataChan=131072, fc=3e9, fsRfsoc=125e6, staleSeconds=2, frameTimeoutSeconds=.25, outputDir=str(out),
+        uiTimingFile=str(out/'ui_timing.jsonl'), uiProbePeriodSeconds=.02, analyzer=a.analyzer,
+        ofdm=dict(setupSha256=sha(setup), referenceMat=str(reference_mat), orientation='IplusjQ',
+                  syncThreshold=0.8, lockThreshold=0.3, staleSeconds=2, logFile=str(out/'ofdm_frames.jsonl')))
     if window4:
         # Common splitter feed: DOA/pattern are a cable diagnostic through the explicit
         # 4-element ULA model (d = lambda/2 at 3 GHz), uncalibrated; never an arrival angle.
@@ -155,7 +162,7 @@ def main():
         visible=True, allowContinuous=continuous, staleSeconds=2, expectSource='rfsoc4x2-hardware',
         logFile=str(out/'vsa_frames.jsonl'), rawDir=str(out/'windows') if a.save_windows else '',
         frameLogFile=str(out/'frames.jsonl'),
-        wireMode='window4' if window4 else 'adc-d-fullram'),
+        wireMode='window4' if window4 else 'adc-d-fullram', prefetchWithoutVsa=a.analyzer == 'integrated'),
         session=dict(maxSeconds=seconds, stopFile=str(out/'STOP'), reportFile=str(out/'result.json')))
     settings_path = out/'frontend.json'
     settings_path.write_text(json.dumps(settings, indent=2)+'\n')

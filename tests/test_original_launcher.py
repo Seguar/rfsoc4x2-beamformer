@@ -50,6 +50,16 @@ class OriginalLauncherTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_schedule('wave:31')
 
+    def test_analyzer_selection_is_explicit(self):
+        # --analyzer integrated|vsa|both, default integrated; the integrated
+        # path gets the pinned SETX sha, the transmitted reference, the same
+        # orientation as the VSA feed and its own logged sync threshold.
+        src = (Path(__file__).resolve().parents[1]/'tools'/'run_original_vsa.py').read_text(encoding='utf-8')
+        self.assertIn("p.add_argument('--analyzer', choices=['integrated', 'vsa', 'both'], default='integrated'", src)
+        self.assertIn("if a.analyzer != 'integrated' and not dll.is_file():", src)
+        self.assertIn("ofdm=dict(setupSha256=sha(setup), referenceMat=str(reference_mat), orientation='IplusjQ'", src)
+        self.assertIn("logFile=str(out/'ofdm_frames.jsonl')", src)
+
 
 if __name__ == '__main__':
     unittest.main()

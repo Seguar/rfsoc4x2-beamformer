@@ -147,3 +147,74 @@ selector fallbacks are refused. VSA's separate old block analysis can still refu
 some continuous windows. Two later bounded gates passed24/24 and22/22 host wave
 windows; VSA valid22/24 and19/22 with EVM medians2.255% and2.382%. These are
 combined-output metrics with no same-frame single-stream gain comparison.
+
+## Integrated Custom OFDM analyzer
+
+`cfg.analyzer` selects the per-frame OFDM measurement:
+
+- `integrated`: the launcher default. It runs the owned MATLAB analyzer and its owned viewer window,
+  "Integrated Custom OFDM", and starts no 89600 VSA.
+- `vsa`: the earlier native-VSA path, unchanged.
+- `both`: the integrated analyzer, plus native VSA as a separately labelled comparison.
+
+The VSA checkbox switches the analyzer too. Launcher option: `--analyzer integrated|vsa|both`.
+
+The analyzer (`+origapp/ofdmProfile`, `ofdmAnalyze`, `OfdmAnalyzer`, `OfdmViewer`) reads every OFDM parameter from
+the pinned SETX: FFT 64, CP 16, 100 MS/s, guard 6/5, resource map, preamble and pilot values, modulation per row,
+and SymTimeAdj. It checks the pilots and the 30-symbol burst against the transmitted loop. It then demodulates the
+same buffer the app hands to VSA:
+
+- 80-point FFT per symbol at 125 MS/s, with no resampling.
+- Channel estimate from the training rows only; pilot phase, timing and amplitude tracking.
+- No data-aided step.
+
+It shows:
+
+- constellation (payload 16QAM, header BPSK and pilots, kept separate);
+- spectrum;
+- EVM in % and dB, per symbol and per subcarrier;
+- CFO, common phase, pilot timing and an estimated sampling error;
+- sync peak, reference lock and RX level;
+- the profile parameters.
+
+Guards:
+
+- its own preamble sync threshold (0.8; not the vendor 0.9 quantity);
+- reference lock ≥ 0.3;
+- the 2 s age bound;
+- training consistency and pilot-timing checks flag complete bursts affected by sample slips;
+- incomplete bursts are counted but never padded or included in EVM.
+
+Invalid frames clear the current values. Only a labelled history line remains.
+
+Primary payload EVM includes **every complete detected and analyzed burst**, including bursts
+flagged for training inconsistency or timing slips. The viewer shows a yellow DEGRADED
+status and qualified/complete/detected counts when those bursts occur. Qualified-only
+EVM is a separate, explicitly labelled diagnostic. If no burst qualifies, the frame is
+unavailable; complete-burst diagnostics are still logged. Detection and partial-burst
+coverage are reported, so this is not a measure of undetected or incomplete bursts.
+Channel estimation uses training; tracking uses known pilots. Evaluation payload
+symbols are never used to fit the equalizer, gain or phase.
+
+Its EVM is not equivalent to vendor EVM. The pinned SETX enables data-aided equalisation
+and tracking, and vendor headline EVM includes preamble/pilot cells over six symbols.
+The integrated metric covers payload cells over complete 30-symbol frames. On twelve
+recorded signal buffers from a separate live gate, primary inclusive EVM had a median
+of 6.00%; qualified-only EVM was 4.46%. An independent NumPy implementation agreed
+with MATLAB to numerical precision on all fifteen signal/blank buffers. Earlier
+reported integrated medians around 4% used qualified bursts only.
+Data-aided EQ and BER are not implemented.
+
+Plots reuse graphics objects and appear before any optional vendor call; a watchdog
+clears values older than two seconds. A single outstanding capture request can overlap
+integrated analysis. This does not imply a particular display frame rate. The
+launcher sends an end marker at bounded expiry and shuts down both DACs.
+
+Selecting `MVDRman` or `MVDRman_corr` without matching calibration tables is now refused in the DOA list callback.
+The callback reverts the value and states the reason, before `app.doa` changes. Before this fix, such a selection
+stopped acquisition after 5 frames.
+
+Controller failures append their identifier, message, stack and last received sequence
+to private `outputDir/errors.jsonl`. This includes blank/boundary/expiry rejections;
+sequence identifies the last received frame if a transport failure produced none.
+The viewer uses actual resize events for its narrow scrollable layout.

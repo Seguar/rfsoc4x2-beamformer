@@ -367,3 +367,30 @@ live check before leaving the updated app visible. No RF/clock/route changes.
   physical DOA, OTA motion tracking and MXG rejection remain pending. VSA's separate
   old block check can still refuse continuous windows; it fails closed. The host
   model has finite edge resolution and is restricted to the pinned legacy profile.
+
+## Integrated OFDM viewer — parent review, 2026-11-16
+
+Claim: parent owns repository integration; no hardware claim is held.
+Test/How: review a1's integrated viewer and compare every recorded buffer with
+an independent NumPy implementation. Primary EVM now retains timing-slip bursts;
+qualified-only results remain diagnostic. Rebuild the editable app/export together.
+Results: fifteen replay buffers agree to 1.8e-14 EVM percentage points, including
+complete/qualified coverage. Twelve signal buffers: primary median6.00%,
+qualified-only4.46%. Final MATLAB gate passes (exit0, completion sentinel, OFDM34/34, no
+stray figures/timers); revised bounded hardware run is delegated to a1.
+Conclusions: own OFDM visualization is implemented, with no vendor-equivalence
+claim. Parent also fixed failed-startup figure cleanup, viewer sizing/age checks
+and enabled one-request prefetch explicitly for integrated mode.
+Ways to resolve: complete final gates, then publish and launch exact source.
+Physical DOA, OTA tracking, MXG rejection and capture-loss repair remain open.
+
+## Reviewed integrated live result and release
+
+Claim: parent owns release; a1 hardware claim released after bounded checks.
+Both gates exit0, shutdown RAMzero/readback/offcommand. G2:201 captures,192valid,
+primary EVM4.83% median,1026complete742qualified; median plotage0.49s,1.75Hz.
+Blank/pause clear/recover; stream0 dropout sixframes safely refused. One runtime
+error unidentified; all193 analyzed frames replay exactly. Parent fixes actual
+resize callback (AutoResizeChildren off), append-only Controller error logging
+and launcher cleanup capture. Core analyzer/board/guards unchanged. Confirm fixes,
+publish, launch visible exact head. Capture loss/OTA/MXG remain separate open tasks.

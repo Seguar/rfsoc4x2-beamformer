@@ -1,6 +1,8 @@
 function validateWindowAdmission()
 % Controller admission independent of VSA enable; no board, UI or VSA.
 cfg=origapp.defaultConfig(); cfg.directOnly=false; cfg.dataChan=16;
+cfg.outputDir=string(tempname); mkdir(cfg.outputDir);
+folderGuard=onCleanup(@()rmdir(cfg.outputDir,'s')); %#ok<NASGU>
 i=0; fields={false,1,true};
 cfg.backend=struct('open',@()[],'close',@()[], 'next',@nextFrame, ...
     'availableChannels',@()true(1,4));
@@ -22,6 +24,11 @@ assert(origapp.LegacyVsaBackend.validWindowSummary(struct('candidate','after-wra
 for s={struct(),struct('candidate','fallback'),struct('candidate','none'),struct('candidate',[])}
     assert(~origapp.LegacyVsaBackend.validWindowSummary(s{1}),'Invalid selector summary accepted.');
 end
+records=splitlines(strtrim(fileread(fullfile(cfg.outputDir,'errors.jsonl'))));
+assert(numel(records)==3,'Every Controller failure must be persisted.');
+entry=jsondecode(records{3});
+assert(string(entry.identifier)=="origapp:Expired" && entry.lastReceivedSequence==3 && ...
+    isfield(entry,'stack') && isfield(entry,'timestamp'),'Error diagnostics incomplete.');
 disp('WINDOW_ADMISSION_PASS');
     function f=nextFrame(~)
         i=i+1;

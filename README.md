@@ -4,14 +4,17 @@ Pilot-locked OFDM demodulation, frequency/phase tracking and four-channel
 adaptive combining for the RFSoC4x2. Uses the existing `doa_rfsoc/main` matched
 boot overlay and `vsa_rfsoc` sample conventions; no FPGA build is required.
 
-**Current UI direction:** rework the original `VSA_rfsoc` interface and use native
-VSA for constellation/EVM. The [original-app refactor](matlab/original/README.md)
+**Current UI:** the original `VSA_rfsoc` interface now has an integrated Custom
+OFDM viewer for constellation, spectrum, EVM and waveform parameters. Native
+89600 VSA is an optional comparison (`--analyzer vsa` or `both`); the launcher
+defaults to `--analyzer integrated`. The [original-app refactor](matlab/original/README.md)
 retains all119 original controls, adds32 components on a fifth tab and defaults
 to the reviewed beamformer core. See the [newer-app feature map](docs/NEW_APP_PORT.md). Synthetic
 UI/failure tests pass and the editable `.mlapp` passes headless model/code checks.
 The [original-app launcher](matlab/original/README.md#native-vsa-launch) and
 responsive four-stream path pass bounded hardware checks, including blank, boundary
-and display-age rejection. The latest source is awaiting its exact-head relaunch. Editor round-trip testing remains pending. The separate dashboard below is retained as earlier experimental work.
+and display-age rejection. The integrated viewer passes bounded live checks (201 captures, 192 valid
+measurements, median inclusive payload EVM 4.83%). Editor round-trip testing remains pending. The separate dashboard below is retained as earlier experimental work.
 The original-app launcher now defaults to four measured streams from one capture,
 with responsive plots, zoom/pan and Autoscale. Its DOA scale and receive pattern are
 explicitly uncalibrated common-feed/model diagnostics in the current splitter wiring.

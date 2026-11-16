@@ -700,7 +700,10 @@ def main():
         loaded = None
         previous_sha = None
         pads = [0]
+        bound_stop = False
         for kind, value in phases:
+            if bound_stop:
+                break
             if kind == 'pause':
                 manifest['frames'].append({'pause_s': value, 'at_ns': time.monotonic_ns()})
                 t_end = time.monotonic() + value
@@ -715,7 +718,16 @@ def main():
                 overlay.dacs_control()  # enables the selected DAC only (dacPower)
                 time.sleep(.01)
             for _ in range(value):
-                req_ns = wait_request(client, a.request_timeout, deadline, pads)
+                try:
+                    req_ns = wait_request(client, a.request_timeout, deadline, pads)
+                except SystemExit as exc:
+                    if not str(exc).startswith('max-seconds reached'):
+                        raise
+                    # Orderly time bound: fall through to END3/END2 so the client
+                    # sees a normal end of stream (not a disconnect); shutdown as usual.
+                    manifest['stream_stop'] = str(exc)
+                    bound_stop = True
+                    break
                 require_lock(overlay, manifest, 'frame%d' % sequence)
                 raw, refreshed, writable, previous_sha = full_capture(overlay, previous_sha)
                 mono = time.monotonic_ns()

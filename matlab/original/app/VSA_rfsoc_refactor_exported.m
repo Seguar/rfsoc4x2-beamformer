@@ -195,6 +195,16 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
         dacGain = [0 0 0 0]; adcGain = [0 0 0 0]; d_iq_phase = [0 0 0 0]
         a_iq_phase = [0 0 0 0]; adcPhase = [0 0 0 0]
         calSum = []; calCount = 0; RandomStream; lastRaw = []
+        % Smoother live display (a1-smooth): persistent pattern line (updated
+        % in place, recreated only by prepPlots on reset/config change), the
+        % acquisition time/sequence of what is currently drawn, the title
+        % parts so the EVM part can be refreshed for the same frame, and the
+        % optional per-frame UI timing log + owned UI-latency probe timer.
+        patternLine = []
+        DisplayTimestamp = NaN; DisplaySequence = NaN
+        TitleParts = struct('doa', '', 'spectrumNote', '')
+        ProbeTimer = []; ProbeLast = NaN; ProbeMaxLate = 0; ProbeCount = 0
+        TickMarks = struct()
     end
 
     properties (Access = public)
@@ -222,6 +232,14 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
         AxesLastSet = {[], []}      % limits last set by the app (not by the user)
         AxesButtons = {}            % Autoscale state buttons in the axes toolbars
         AxesSetting = false         % true while the app itself sets limits
+        DisplayExpiredDuringVsa = 0 % displays cleared by the age watchdog while VSA blocked
+        PlotObjectsCreated = 0      % pattern/xline objects created (persistent handles: only on reset)
+        % Integrated Custom OFDM analyzer (cfg.analyzer "integrated"/"both"): the
+        % owned analyzer session and its owned viewer window (created on first
+        % use while the VSA checkbox is on; deleted in releaseResources).
+        Ofdm = []
+        OfdmView = []
+        OfdmLastResult = []         % last analyzer result (valid or not) of this session
     end
 
     methods (Access = public)
@@ -285,6 +303,7 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                 end
             end
             app.AxesLastSet{k} = [xl yl];
+            if isequal(ax.XLim, xl) && isequal(ax.YLim, yl), return; end   % no relayout
             app.AxesSetting = true; c = onCleanup(@() clearAxesSetting(app));
             ax.XLim = xl; ax.YLim = yl;
         end
@@ -321,6 +340,9 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             if strcmp(app.AcqTimer.Running, 'off')
                 start(app.AcqTimer);
             end
+            if ~isempty(app.ProbeTimer) && isvalid(app.ProbeTimer) && strcmp(app.ProbeTimer.Running, 'off')
+                start(app.ProbeTimer);
+            end
             setStatus(app, "running");
         end
 
@@ -328,6 +350,9 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             if nargin < 2, reason = "stopped"; end
             if ~isempty(app.AcqTimer) && isvalid(app.AcqTimer) && strcmp(app.AcqTimer.Running, 'on')
                 stop(app.AcqTimer);
+            end
+            if ~isempty(app.ProbeTimer) && isvalid(app.ProbeTimer) && strcmp(app.ProbeTimer.Running, 'on')
+                stop(app.ProbeTimer);
             end
             if ~isempty(app.Controller), app.Controller.close(); end
             clearCurrent(app, reason);
@@ -338,6 +363,10 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             if app.Busy, return; end
             app.Busy = true;
             busyGuard = onCleanup(@() setBusy(app, false));
+            app.TickMarks = struct('tickStart', origapp.Controller.nowSeconds());
+            % A drawn frame never stays on screen past staleSeconds, also
+            % while the backend has no new frame yet.
+            displayWatchdog(app);
             try
                 if app.reset_req
                     resetApp(app);
@@ -351,6 +380,9 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                     end
                     return
                 end
+                app.TickMarks.acquired = origapp.Controller.nowSeconds();
+                app.TickMarks.sequence = frame.sequence;
+                app.TickMarks.timestamp = frame.timestamp;
                 if app.Config.directOnly
                     processDirect(app, frame);
                 else
@@ -358,9 +390,121 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                     setStatus(app, sprintf('running: frame %g', frame.sequence));
                 end
                 app.Controller.recordSuccess();
+                uiTimingLog(app, "accepted", "");
             catch err
                 handleFailure(app, err);
+                uiTimingLog(app, "rejected", string(err.identifier));
             end
+        end
+
+        function displayWatchdog(app)
+            % Clears the drawn DOA/pattern once its acquisition is older than
+            % staleSeconds. Called at every tick and from inside a blocking
+            % native-VSA measurement (backend idle hook), so a frame drawn
+            % before VSA can never remain shown as current past the bound.
+            if ~isvalid(app), return; end
+            ofdmWatchdog(app);
+            if ~isfinite(app.DisplayTimestamp), return; end
+            age = origapp.Controller.nowSeconds() - app.DisplayTimestamp;
+            if age > app.Config.staleSeconds
+                if app.Busy && isfield(app.TickMarks, 'rendered')
+                    app.DisplayExpiredDuringVsa = app.DisplayExpiredDuringVsa + 1;
+                end
+                clearCurrent(app, sprintf('display expired: frame %g age %.2f s > %g s', ...
+                    app.DisplaySequence, age, app.Config.staleSeconds));
+                drawnow limitrate nocallbacks
+            end
+        end
+
+        function ofdmWatchdog(app)
+            % The analyzer's current result never stays shown past staleSeconds
+            % (also in directOnly mode, where no DOA timestamp exists).
+            if isempty(app.Ofdm) || isempty(app.Ofdm.Current), return; end
+            age = origapp.Controller.nowSeconds() - app.Ofdm.Current.timestamp;
+            if age > app.Config.staleSeconds
+                ofdmClear(app, sprintf('expired: frame %g age %.2f s > %g s', ...
+                    app.Ofdm.Current.sequence, age, app.Config.staleSeconds), []);
+            end
+        end
+
+        function tf = useVsa(app)
+            % Native VSA measurement path (external, optional comparison).
+            tf = logical(app.vsa) && any(string(app.Config.analyzer) == ["vsa","both"]);
+        end
+
+        function tf = useIntegrated(app)
+            % Integrated Custom OFDM analyzer; the VSA checkbox switches it too.
+            tf = logical(app.vsa) && any(string(app.Config.analyzer) == ["integrated","both"]) && ~isempty(app.Ofdm);
+        end
+
+        function R = integratedStep(app, buffer, frame, kind)
+            % Analyse the SAME buffer native VSA would get; draw or clear the
+            % owned viewer. Returns the result (valid or not).
+            R = app.Ofdm.analyze(buffer, struct('sequence', frame.sequence, ...
+                'timestamp', frame.timestamp, 'kind', kind));
+            app.OfdmLastResult = R;
+            app.TickMarks.ofdmDone = origapp.Controller.nowSeconds();
+            if isempty(app.OfdmView) || ~app.OfdmView.isOpen()
+                if ~isempty(app.OfdmView), delete(app.OfdmView); end
+                app.OfdmView = origapp.OfdmViewer(app.Ofdm.Profile, "app buffer (same as the VSA feed)", ...
+                    logical(app.Config.visible));
+            end
+            % Creating a viewer can itself take time on the first frame.
+            % Check the display deadline again after construction, before showing metrics.
+            if R.valid && origapp.Controller.nowSeconds()-R.timestamp > app.Config.staleSeconds
+                R.valid=false; R.state="EXPIRED"; R.reason="frame expired while preparing the viewer";
+                app.Ofdm.invalidate(R.reason); app.OfdmLastResult=R;
+            end
+            if R.valid
+                app.OfdmView.show(R, app.Ofdm.History);
+            else
+                app.OfdmView.clear(R.state + ": " + string(R.reason), app.Ofdm.History, R);
+            end
+        end
+
+        function ofdmClear(app, reason, R)
+            if isempty(app.Ofdm), return; end
+            app.Ofdm.invalidate(reason);
+            if ~isempty(app.OfdmView) && app.OfdmView.isOpen()
+                app.OfdmView.clear(reason, app.Ofdm.History, R);
+            end
+        end
+
+        function uiTimingLog(app, outcome, reason)
+            % Optional per-frame timing record (cfg.uiTimingFile): acquisition
+            % time, when the frame was acquired by the UI, drawn (flushed),
+            % when VSA returned and the tick ended, plus the owned probe's
+            % worst event-serving lateness since the previous record.
+            if strlength(string(app.Config.uiTimingFile)) == 0, return; end
+            m = app.TickMarks;
+            if ~isfield(m, 'sequence'), return; end
+            m.tickEnd = origapp.Controller.nowSeconds();
+            m.outcome = string(outcome); m.reason = string(reason);
+            m.ageAtAcquire = m.acquired - m.timestamp;
+            if isfield(m, 'rendered'), m.ageAtPlot = m.rendered - m.timestamp; end
+            if isfield(m, 'vsaDone'), m.ageAtVsaDone = m.vsaDone - m.timestamp; end
+            m.ageAtTickEnd = m.tickEnd - m.timestamp;
+            m.probeMaxLateS = app.ProbeMaxLate; m.probeCount = app.ProbeCount;
+            m.plotObjectsCreated = app.PlotObjectsCreated;
+            m.displayExpiredDuringVsa = app.DisplayExpiredDuringVsa;
+            app.ProbeMaxLate = 0; app.ProbeCount = 0;
+            fid = fopen(app.Config.uiTimingFile, 'a');
+            if fid < 0, return; end
+            fprintf(fid, '%s\n', jsonencode(m)); fclose(fid);
+        end
+
+        function probeFire(app)
+            % Owned UI-latency probe: MATLAB serves timer and UI events only
+            % when the thread is free (or inside pause/drawnow), so the delay
+            % beyond the probe period is how long user events wait.
+            if ~isvalid(app), return; end
+            t = origapp.Controller.nowSeconds();
+            if isfinite(app.ProbeLast)
+                late = t - app.ProbeLast - app.Config.uiProbePeriodSeconds;
+                app.ProbeMaxLate = max(app.ProbeMaxLate, late);
+                app.ProbeCount = app.ProbeCount + 1;
+            end
+            app.ProbeLast = t;
         end
     end
 
@@ -557,6 +701,21 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             assert(ok, 'origapp:DacBf', '%s', why);
         end
 
+        function [ok, why] = doaSelectable(app, doa)
+            % Manual MVDR modes need session calibration tables on the current
+            % scan axis (installed calibration lives in app.Config.calibration;
+            % processLegacyFrame would refuse every frame otherwise
+            % and stop acquisition after maxConsecutiveErrors).
+            ok = true; why = "";
+            if ~any(doa == ["MVDRman","MVDRman_corr"]), return; end
+            cal = app.Config.calibration; G = numel(app.scan_axis);
+            if isempty(cal.powCalibration) || ~isequal(size(cal.powCalibration), [G 4])
+                ok = false; why = doa + " needs calibration.powCalibration (" + G + "-by-4) on the current scan axis; none loaded";
+            elseif doa == "MVDRman_corr" && (~isfield(cal, 'steeringCorrection') || ~isequal(size(cal.steeringCorrection), [G 4]))
+                ok = false; why = doa + " needs calibration.steeringCorrection (" + G + "-by-4); none loaded";
+            end
+        end
+
         function t = calibrationLabel(app)
             % UNCALIBRATED unless the session holds a calibration table
             % (config tables or an angle calibration installed this session).
@@ -570,17 +729,33 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             t = string(t);
         end
 
-        function evmText = evmTitle(app)
+        function evmText = evmTitle(app, sequence)
             % EVM checkbox: guarded native-VSA EVM (never a raw SCPI read here).
+            % The frame is drawn before its VSA measurement: a guarded result
+            % is shown only when it belongs to the drawn frame (sequence).
             evmText = '';
             if ~app.EVM_check, return; end
+            if useIntegrated(app)
+                cur = app.Ofdm.Current;
+                if ~isempty(cur) && (nargin < 2 || isequal(cur.sequence, sequence))
+                    evmText = sprintf(' EVM = %.2f %% (%.1f dB, Integrated Custom OFDM)', cur.evmPercent, cur.evmDb);
+                else
+                    evmText = sprintf(' EVM = unavailable (Integrated Custom OFDM: %s)', app.Ofdm.LastReason);
+                end
+                if ~useVsa(app), return; end
+            end
+            intText = evmText;
             v = app.Controller.vsaStatus();
-            if isstruct(v) && isfield(v, 'valid') && v.valid && isfield(v, 'evmPercent')
+            same = nargin < 2 || ~(isstruct(v) && isfield(v, 'sequence')) || isequal(v.sequence, sequence);
+            if isstruct(v) && isfield(v, 'valid') && v.valid && isfield(v, 'evmPercent') && same
                 evmText = sprintf(' EVM = %.2f %% (%.1f dB, guarded VSA)', v.evmPercent, ...
                     20*log10(v.evmPercent/100));
+            elseif ~same && app.vsa
+                evmText = sprintf(' EVM = pending (VSA measuring frame %g)', sequence);
             else
                 evmText = ' EVM = unavailable (no guarded VSA result)';
             end
+            if ~isempty(intText), evmText = [intText ' |' strrep(evmText, ' EVM =', ' VSA:')]; end
         end
 
         function resetApp(app)
@@ -591,7 +766,7 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             % vsaSetup (VISA hislip load of the .setx). VSA is backend-owned.
             request = struct('fs', app.fsRfsoc, 'dataChan', app.dataChan, ...
                 'setupFile', string(app.Config.vsaSetupFile));
-            if app.vsa && ~app.Controller.vsaReset(request)
+            if useVsa(app) && ~app.Controller.vsaReset(request)
                 note(app, "VSA reset not available from backend (VSA is backend-owned)");
             end
             app.reset_req = 0;
@@ -654,7 +829,11 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             % Original plotPrep with cla instead of clf on uiaxes.
             cla(app.UIAxes); cla(app.UIAxes2);
             app.lineHandles = struct('am',[],'bs',[],'cs',[],'am2',[],'bs2',[],'cs2',[],'adac',[],'adac2',[]);
-            app.plot_handle = plot(app.UIAxes, app.scan_axis, nan(size(app.scan_axis)));
+            app.plot_handle = plot(app.UIAxes, app.scan_axis, nan(size(app.scan_axis)), 'LineWidth', 1.5);
+            % Persistent pattern line: frames update its YData (no cla/plot per frame).
+            app.patternLine = plot(app.UIAxes2, app.scan_axis, nan(size(app.scan_axis)), 'LineWidth', 1.5);
+            app.PlotObjectsCreated = app.PlotObjectsCreated + 2;
+            app.DisplayTimestamp = NaN; app.DisplaySequence = NaN;
             % Initial limits as the original ([0 1], [-30 0.5]); with
             % Autoscale on they then follow the data (applyAxesLimits).
             app.AxesLastSet = {[app.scan_axis(1) app.scan_axis(end) 0 1], ...
@@ -694,7 +873,17 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
         function processDirect(app, frame)
             % Direct/conducted mode: one RF path, so no physical DOA/pattern.
             clearCurrent(app, "directOnly: no physical DOA/pattern");
-            if app.vsa
+            if useIntegrated(app)
+                chn = app.ch; if chn > 4, chn = 1; end
+                R = integratedStep(app, frame.samples(:,chn)/2^16, frame, "raw-column");
+                if R.valid
+                    app.Status = "directOnly: " + sprintf('[Integrated Custom OFDM] seq %g: EVM %.2f %% (%.1f dB), %d bursts', ...
+                        frame.sequence, R.evmPercent, R.evmDb, R.bursts);
+                else
+                    app.Status = "directOnly: [Integrated Custom OFDM] unavailable: " + string(R.reason);
+                end
+            end
+            if useVsa(app)
                 chn = app.ch; if chn > 4, chn = 1; end
                 m = true(1,4);
                 if isfield(frame,'availableChannels'), m = frame.availableChannels; end
@@ -742,11 +931,8 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             vsaKind = "combined"; if app.ch <= 4, vsaKind = "weighted-channel"; end
             vsaInfo = struct('kind', vsaKind, ...
                 'sequence', frame.sequence, 'channel', app.ch, 'weights', out.weights);
-            if app.vsa && ~app.Controller.sendVsa(out.vsaBuffer, vsaInfo)
-                note(app, "VSA send not available from backend");
-            end
-            % VSA may block: receipt-time freshness does not establish that
-            % these samples are still current when the plots are drawn.
+            % Draw the frame as soon as it is processed (before the blocking
+            % native-VSA measurement), only while its acquisition is fresh.
             age = origapp.Controller.nowSeconds() - frame.timestamp;
             assert(age <= app.Config.staleSeconds && age >= -0.5, 'origapp:Expired', ...
                 'Acquisition expired before plotting (age %.2f s).', age);
@@ -754,14 +940,38 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             estimated_angle = out.estimated_angle;
             dacBfStep(app, estimated_angle);
             if app.plotUpd
-                renderArray(app, out, estimated_angle);
+                renderArray(app, out, estimated_angle, frame.sequence);
             end
+            app.CurrentDoa = estimated_angle;
+            app.DisplayTimestamp = frame.timestamp; app.DisplaySequence = frame.sequence;
+            drawnow limitrate nocallbacks     % on screen now; no callback re-entry here
+            app.TickMarks.rendered = origapp.Controller.nowSeconds();
+            % VSA may block (it pumps events every 10 ms): the backend idle hook
+            % runs displayWatchdog, so the drawn frame is cleared the moment it
+            % ages past staleSeconds, and it is re-checked when VSA returns.
+            if useIntegrated(app)
+                integratedStep(app, out.vsaBuffer, frame, vsaKind);
+                if app.plotUpd, refreshDoaTitle(app, frame.sequence); end
+            end
+            if useVsa(app) && ~app.Controller.sendVsa(out.vsaBuffer, vsaInfo)
+                note(app, "VSA send not available from backend");
+            end
+            if useVsa(app)
+                app.TickMarks.vsaDone = origapp.Controller.nowSeconds();
+                age = app.TickMarks.vsaDone - frame.timestamp;
+                assert(age <= app.Config.staleSeconds, 'origapp:Expired', ...
+                    'Acquisition expired during VSA (age %.2f s): display cleared.', age);
+                if app.plotUpd
+                    refreshDoaTitle(app, frame.sequence);   % EVM of this same frame
+                end
+            end
+            % (VSA off: the tick-start watchdog clears the display past the bound.)
             saveStep(app, out.rawData);
             phaseCalStep(app, out.rawData);
-            app.CurrentDoa = estimated_angle;
         end
 
-        function renderArray(app, out, estimated_angle)
+        function renderArray(app, out, estimated_angle, sequence)
+            if nargin < 4, sequence = NaN; end
             w = conj(app.weights);
             p_manual = beamPatternCalc(w, app.fc, app.scan_axis, length(w));
             [p_manual_mean_vec, app.p_manual_mean] = avgData(p_manual, app.p_manual_mean);
@@ -782,7 +992,7 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                     yspec_mean_vec = yspec_mean_vec.*(1./app.koef);
                 end
                 if mir, yspec_mean_vec = flip(yspec_mean_vec); end
-                set(app.plot_handle, 'YData', yspec_mean_vec/max(yspec_mean_vec), 'LineWidth', 1.5);
+                set(app.plot_handle, 'YData', yspec_mean_vec/max(yspec_mean_vec));
             else
                 set(app.plot_handle, 'YData', nan(size(app.scan_axis)));
                 spectrumNote = [newline '(angle-only estimator: no spectrum)'];
@@ -792,39 +1002,47 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             % cable diagnostic through the explicit ULA model, never a
             % physical arrival angle. Calibration state is always shown.
             scope = string(app.Config.arrayLabel) + ", " + calibrationLabel(app);
-            app.UIAxes.Title.String = ['DOA spectrum [' char(scope) ']' mirNote newline 'Model angle = ' ...
-                num2str(showAngles) ' deg  DAC Angles = ' num2str(showDac) evmTitle(app) spectrumNote];
-            cla(app.UIAxes2);
-            app.lineHandles.am2 = []; app.lineHandles.bs2 = []; app.lineHandles.cs2 = [];
-            app.lineHandles.adac2 = [];
-            plot(app.UIAxes2, app.scan_axis, showPattern, 'LineWidth', 1.5);
+            app.TitleParts = struct('doa', ['DOA spectrum [' char(scope) ']' mirNote newline 'Model angle = ' ...
+                num2str(showAngles) ' deg  DAC Angles = ' num2str(showDac)], 'spectrumNote', spectrumNote);
+            refreshDoaTitle(app, sequence);
+            % Pattern: persistent line, YData only (prepPlots recreates it on
+            % reset/config change; a deleted handle is recreated defensively).
+            if isempty(app.patternLine) || ~isvalid(app.patternLine) || numel(app.patternLine.XData) ~= numel(app.scan_axis)
+                app.patternLine = plot(app.UIAxes2, app.scan_axis, nan(size(app.scan_axis)), 'LineWidth', 1.5);
+                app.PlotObjectsCreated = app.PlotObjectsCreated + 1;
+            end
+            set(app.patternLine, 'XData', app.scan_axis, 'YData', showPattern);
             main.line = '-b'; main.txt = 'Main'; sub.line = '--c'; sub.txt = 'Sub';
             ea = [showAngles NaN NaN];
             L = app.lineHandles;
-            L.am = guiXline(L.am, app.UIAxes, main, ea(1), 'right');
-            L.am2 = guiXline(L.am2, app.UIAxes2, main, ea(1), 'right');
+            L.am = placeXline(app, L.am, app.UIAxes, main, ea(1), 'right');
+            L.am2 = placeXline(app, L.am2, app.UIAxes2, main, ea(1), 'right');
             if app.dacBFon
                 % VSA_rfsoc_new: DAC (TX) angle line on both axes (model command angle)
                 dacmain.line = '-m'; dacmain.txt = 'Dac';
-                L.adac = guiXline(L.adac, app.UIAxes, dacmain, showDac, 'left');
-                L.adac2 = guiXline([], app.UIAxes2, dacmain, showDac, 'left');
-            elseif ~isempty(L.adac) && isvalid(L.adac)
-                delete(L.adac); L.adac = [];
+                L.adac = placeXline(app, L.adac, app.UIAxes, dacmain, showDac, 'left');
+                L.adac2 = placeXline(app, L.adac2, app.UIAxes2, dacmain, showDac, 'left');
+            else
+                hideXline(app, L.adac); hideXline(app, L.adac2);
             end
             if sum(~isnan(ea)) > 1
-                L.bs = guiXline(L.bs, app.UIAxes, sub, ea(2), 'center');
-                L.bs2 = guiXline(L.bs2, app.UIAxes2, sub, ea(2), 'center');
+                L.bs = placeXline(app, L.bs, app.UIAxes, sub, ea(2), 'center');
+                L.bs2 = placeXline(app, L.bs2, app.UIAxes2, sub, ea(2), 'center');
                 null_diff = round(showPattern(app.scan_axis == ea(1)) - showPattern(app.scan_axis == ea(2)));
                 if sum(~isnan(ea)) > 2
-                    L.cs = guiXline(L.cs, app.UIAxes, sub, ea(3), 'center');
-                    L.cs2 = guiXline(L.cs2, app.UIAxes2, sub, ea(3), 'center');
+                    L.cs = placeXline(app, L.cs, app.UIAxes, sub, ea(3), 'center');
+                    L.cs2 = placeXline(app, L.cs2, app.UIAxes2, sub, ea(3), 'center');
+                else
+                    hideXline(app, L.cs); hideXline(app, L.cs2);
                 end
             else
+                % lines of an earlier frame are never left at old angles
+                hideXline(app, L.bs); hideXline(app, L.bs2); hideXline(app, L.cs); hideXline(app, L.cs2);
                 null_diff = round(showPattern(app.scan_axis == ea(1)) - min(showPattern));
             end
             app.lineHandles = L;
-            app.UIAxes2.Title.String = ['Model pattern of applied weights [' char(app.Config.bfEngine) ' ' char(app.bf) ']' mirNote ...
-                newline 'Gain Difference = ' num2str(abs(null_diff)) ' dB (array model, ' char(calibrationLabel(app)) ')'];
+            setTitle(app, app.UIAxes2, ['Model pattern of applied weights [' char(app.Config.bfEngine) ' ' char(app.bf) ']' mirNote ...
+                newline 'Gain Difference = ' num2str(abs(null_diff)) ' dB (array model, ' char(calibrationLabel(app)) ')']);
             applyAxesLimits(app, 1);
             applyAxesLimits(app, 2);
             if app.MatlabPattern
@@ -835,6 +1053,29 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                     app.patternCount = app.patternCount + 1;
                 end
             end
+        end
+
+        function refreshDoaTitle(app, sequence)
+            if isempty(app.TitleParts.doa), return; end
+            setTitle(app, app.UIAxes, [app.TitleParts.doa evmTitle(app, sequence) app.TitleParts.spectrumNote]);
+        end
+
+        function h = placeXline(app, h, ax, type, value, position)
+            % guiXline (original helper) reuses a valid handle; count creations.
+            if isempty(h) || ~isvalid(h), app.PlotObjectsCreated = app.PlotObjectsCreated + 1; end
+            h = guiXline(h, ax, type, value, position);
+            if ~strcmp(h.Visible, 'on'), h.Visible = 'on'; end
+        end
+
+        function hideXline(~, h)
+            % Hide a persistent xline (kept for reuse by the next accepted frame).
+            if ~isempty(h) && isvalid(h) && ~strcmp(h.Visible, 'off'), h.Visible = 'off'; end
+        end
+
+        function setTitle(~, ax, str)
+            % Set a title only when its text changes (avoids a relayout per frame).
+            if ~isvalid(ax), return; end
+            if ~isequal(ax.Title.String, str), ax.Title.String = str; end
         end
 
         function openPatternFigure(app)
@@ -959,22 +1200,27 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             % older frames never reappear inside a later "current" pattern.
             if ~isempty(app.p_manual_mean), app.p_manual_mean(:) = 0; end
             if ~isempty(app.yspec_mean), app.yspec_mean(:) = 0; end
-            if ~isempty(app.plot_handle) && isvalid(app.plot_handle)
-                set(app.plot_handle, 'YData', nan(size(app.scan_axis)));
+            app.DisplayTimestamp = NaN; app.DisplaySequence = NaN;
+            app.TitleParts = struct('doa', '', 'spectrumNote', '');
+            if ~(app.Config.directOnly && startsWith(string(reason), "directOnly"))
+                ofdmClear(app, reason, []);
+            end
+            % Blank in place: nothing current stays visible, and the persistent
+            % line/xline objects are reused by the next accepted frame.
+            for hh = {app.plot_handle, app.patternLine}
+                h = hh{1};
+                if ~isempty(h) && isvalid(h), set(h, 'YData', nan(size(h.XData))); end
             end
             names = fieldnames(app.lineHandles);
             for k = 1:numel(names)
-                h = app.lineHandles.(names{k});
-                if ~isempty(h) && isvalid(h), delete(h); end
-                app.lineHandles.(names{k}) = [];
+                hideXline(app, app.lineHandles.(names{k}));
             end
-            if isvalid(app.UIAxes2), cla(app.UIAxes2); end
             if isvalid(app.UIAxes)
                 % Titles get a short line; the full reason stays in app.Status.
                 short = char(reason);
                 if numel(short) > 44, short = [short(1:42) '..']; end
-                app.UIAxes.Title.String = ['Direction of Arrival: unavailable' newline short];
-                app.UIAxes2.Title.String = ['Beam Pattern: unavailable' newline short];
+                setTitle(app, app.UIAxes, ['Direction of Arrival: unavailable' newline short]);
+                setTitle(app, app.UIAxes2, ['Beam Pattern: unavailable' newline short]);
             end
             setStatus(app, reason);
         end
@@ -1030,6 +1276,10 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                 stop(app.AcqTimer);
                 delete(app.AcqTimer);
             end
+            if ~isempty(app.ProbeTimer) && isvalid(app.ProbeTimer)
+                stop(app.ProbeTimer);
+                delete(app.ProbeTimer);
+            end
             if ~isempty(app.Controller) && isvalid(app.Controller)
                 try
                     app.Controller.close();
@@ -1041,6 +1291,8 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             for k = 1:numel(app.ExternalFigures)
                 if isvalid(app.ExternalFigures(k)), delete(app.ExternalFigures(k)); end
             end
+            if ~isempty(app.OfdmView) && isvalid(app.OfdmView), delete(app.OfdmView); end
+            app.OfdmView = [];
             % Called from the UIFigure ObjectBeingDestroyed listener (startupFcn).
         end
 
@@ -1107,6 +1359,7 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
         % Code that executes after component creation
         function startupFcn(app, varargin)
             addlistener(app.RFSoCBeamformerUIFigure, 'ObjectBeingDestroyed', @(~,~) releaseResources(app));
+            try
             cfg = origapp.resolveConfig(varargin{:});
             app.Config = cfg;
             if strlength(string(cfg.originalRepoPath)) > 0
@@ -1121,6 +1374,23 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             syncControlsFromState(app);
             if ~cfg.cutterAllowed, refuseCutter(app); end
             app.Controller = origapp.Controller(cfg);
+            if any(string(cfg.analyzer) == ["integrated","both"])
+                % Explicit start-up error (never a silent fallback): pinned SETX,
+                % transmitted reference and buffer orientation must be given.
+                o = cfg.ofdm;
+                b = cfg.backend;
+                if isobject(b) && isprop(b, 'Config') && isfield(b.Config, 'orientation')
+                    assert(string(b.Config.orientation) == string(o.orientation), 'origapp:Config', ...
+                        'cfg.ofdm.orientation (%s) differs from the backend VSA feed (%s).', ...
+                        string(o.orientation), string(b.Config.orientation));
+                end
+                app.Ofdm = origapp.OfdmAnalyzer(o, cfg.vsaSetupFile, cfg.fsRfsoc);
+                if cfg.vsa
+                    % owned viewer window ready before the first frame
+                    app.OfdmView = origapp.OfdmViewer(app.Ofdm.Profile, "app buffer (same as the VSA feed)", ...
+                        logical(cfg.visible));
+                end
+            end
             if cfg.sendInitialTuning
                 queueFc(app);
                 queueCommand(app, ['dataChan ' num2str(app.dataChan*8)]);
@@ -1129,6 +1399,13 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             app.AcqTimer = timer('ExecutionMode', 'fixedSpacing', 'BusyMode', 'drop', ...
                 'Period', cfg.periodSeconds, 'Name', 'VSA_rfsoc_refactor', ...
                 'TimerFcn', @(~,~) app.tick(), 'ErrorFcn', @(t,e) app.onTimerError(t,e));
+            if cfg.uiProbePeriodSeconds > 0
+                app.ProbeTimer = timer('ExecutionMode', 'fixedRate', 'BusyMode', 'drop', ...
+                    'Period', cfg.uiProbePeriodSeconds, 'Name', 'VSA_rfsoc_refactor_probe', ...
+                    'TimerFcn', @(~,~) app.probeFire());
+            end
+            % Display age watchdog inside a blocking native-VSA measurement.
+            app.Controller.setVsaIdle(@() app.displayWatchdog());
             setupAxesInteraction(app);
             if cfg.visible
                 % Fit a landscape window to the primary screen (the design size
@@ -1151,11 +1428,23 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             if cfg.autoStart
                 startAcquisition(app);
             end
+            catch err
+                if ~isempty(app.RFSoCBeamformerUIFigure) && isvalid(app.RFSoCBeamformerUIFigure)
+                    delete(app.RFSoCBeamformerUIFigure);
+                end
+                rethrow(err);
+            end
         end
 
         % Value changed function: VSACheckBox
         function VSACheckBoxValueChanged(app, event)
             app.vsa = app.VSACheckBox.Value;
+            if ~isempty(app.OfdmView) && app.OfdmView.isOpen()
+                if ~app.vsa
+                    ofdmClear(app, "analysis off (VSA checkbox)", []);
+                end
+                app.OfdmView.setVisible(app.vsa && app.Config.visible);
+            end
         end
 
         % Value changed function: ChannelselectListBox
@@ -1270,6 +1559,14 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
 
         % Value changed function: DOAtypeListBox
         function DOAtypeListBoxValueChanged(app, event)
+            [ok, why] = doaSelectable(app, string(app.DOAtypeListBox.Value));
+            if ~ok
+                % Refused before app.doa changes: the running estimator stays.
+                app.DOAtypeListBox.Value = app.doa;
+                portMessage(app, "DOA type refused: " + why);
+                note(app, "DOA type refused: " + why);
+                return
+            end
             app.doa = app.DOAtypeListBox.Value;
             app.part_reset_req = 1;
         end

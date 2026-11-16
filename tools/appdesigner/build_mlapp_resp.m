@@ -65,7 +65,7 @@ try
         h.(r.Property) = r.New;
         assert(isequal(h.(r.Property), r.New), 'build:Spec', '%s.%s not accepted', r.CodeName, r.Property);
     end
-    for name = unique({spec.CodeName})
+    for name = reshape(unique({spec.CodeName}), 1, [])   % none for a code-only rebuild
         h = byName(name{1}); d = h.DesignTimeProperties;
         d.ComponentCode = gen.getComponentGenerationCode(h, feval(amap(class(h))), 'Standard');
         h.DesignTimeProperties = d;

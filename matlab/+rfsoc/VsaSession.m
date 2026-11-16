@@ -3,6 +3,10 @@ classdef VsaSession < handle
     properties (SetAccess=private)
         Config
         ConfigurationName
+        IdleErrors = 0
+    end
+    properties
+        IdleFcn = []   % optional: run by sendFrame while it waits (owner's display watchdog)
     end
     properties (Access=private)
         App = []
@@ -110,6 +114,9 @@ classdef VsaSession < handle
                         offset=offset+take; r.sentFloats=offset;
                     end
                     pause(0.01);
+                    if ~isempty(obj.IdleFcn)
+                        try obj.IdleFcn(); catch, obj.IdleErrors=obj.IdleErrors+1; end
+                    end
                 end
                 if r.fresh
                     [r.evmPercent,r.evmDb,r.status,r.quality]=obj.readEvm();

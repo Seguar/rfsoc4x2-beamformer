@@ -6,8 +6,8 @@ This repository is specifically RFSoC4x2 / xczu48dr;
 ZCU216 overlays, clocks, DAC indexing and burst protocols do not apply.
 
 MATLAB work must also read docs/MATLAB_VSA.md. Keep the original reference .mlapp
-and exported .m unchanged unless both can be updated consistently. The user selected the original UI refactor in matlab/original/ with native VSA
-for constellation/EVM. The earlier replacement dashboard remains experimental;
+and exported .m unchanged unless both can be updated consistently. The user selected the original UI refactor in matlab/original/ with an integrated
+Custom OFDM viewer; native VSA is optional. The earlier replacement dashboard remains experimental;
 do not relaunch it as the requested app. The original-layout editable .mlapp and its export are a matched pair under
 matlab/original/app. Rebuild both through the full App Designer serializer and
 verify model/code consistency after changes; never patch only document.xml. Maintain X*conj(w), training-only channel estimates and
@@ -176,3 +176,15 @@ refuses coupling compensation after a failed known-angle simulation. Do not remo
 that block without independent validation. New IQ/phase/command/upload controls
 are simulation-tested; no current backend supports custom waveform upload or the
 ZCU216 burst/on-board beamforming commands. Keep unsupported actions explicit.
+
+## Integrated OFDM metrics
+
+Use only the pinned FFT64/CP16 SETX at 100 MHz system rate (80-point receive
+FFT at 125 MHz). No FFT256 fallback. Primary EVM includes all complete analyzed
+bursts, even quality-flagged timing-slip bursts; qualified-only EVM is secondary.
+Log complete/qualified/detected coverage and display DEGRADED for quality failures.
+Never select clean bursts to improve the primary metric. Preserve independent
+reference lock .3, integrated preamble sync .8, native sync .9 and age 2 s; these
+are distinct metrics. Invalid frames clear current values; history stays labelled.
+Native data-aided settings and different symbol coverage prevent an equivalence
+claim. Neither integrated BER nor data-aided equalization is implemented.

@@ -218,6 +218,12 @@ classdef Controller < handle
             end
         end
 
+        function setVsaIdle(obj, fn)
+            % Optional: a backend whose native VSA call blocks may run fn while
+            % it waits (display age watchdog). Backends without it ignore it.
+            if origapp.Controller.hasOp(obj.Backend, "setVsaIdle"), obj.Backend.setVsaIdle(fn); end
+        end
+
         function done = vsaReset(obj, request)
             done = origapp.Controller.hasOp(obj.Backend, "vsaReset");
             if done, obj.Backend.vsaReset(request); end
@@ -231,6 +237,24 @@ classdef Controller < handle
         function mustStop = recordFailure(obj, err)
             obj.TotalErrors = obj.TotalErrors + 1;
             obj.LastError = string(err.identifier) + ": " + string(err.message);
+            % Append each failure before later successes/rejections replace LastError.
+            % Sequence is the last frame received by Controller, not an assertion
+            % that a transport failure produced a new frame.
+            if strlength(string(obj.Config.outputDir)) > 0
+                try
+                    if ~isfolder(obj.Config.outputDir), mkdir(obj.Config.outputDir); end
+                    entry=struct('timestamp',obj.nowSeconds(), 'lastReceivedSequence',obj.LastSequence, ...
+                        'lastFrameTimestamp',obj.LastFrameTime, 'identifier',string(err.identifier), ...
+                        'message',string(err.message), 'stack',err.stack, 'totalErrors',obj.TotalErrors);
+                    fid=fopen(fullfile(obj.Config.outputDir,'errors.jsonl'),'a');
+                    assert(fid>=0,'origapp:ErrorLog','Cannot open errors.jsonl.');
+                    logGuard=onCleanup(@()fclose(fid));
+                    fprintf(fid,'%s\n',jsonencode(entry));
+                    clear logGuard
+                catch logError
+                    warning('origapp:ErrorLog','Could not persist frame error: %s',logError.message);
+                end
+            end
             if string(err.identifier) == "origapp:Boundary"
                 obj.BoundaryFrames = obj.BoundaryFrames + 1;
                 mustStop = false;

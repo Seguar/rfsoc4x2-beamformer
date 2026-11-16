@@ -34,6 +34,14 @@ cfg.elementModel = "patch";       % "patch" = original antPrep; "isotropic" = ex
 cfg.generator = struct('address',"",'port',5025);
 cfg.calibration = struct('powCalibration',[],'steeringCorrection',[],'koef',[],'couplingMatrix',[]);
 cfg.vsaSetupFile = "";            % .setx handed to backend.vsaReset (VSA is backend-owned)
+cfg.uiTimingFile = "";            % optional per-frame UI timing JSON lines (acquired/drawn/VSA/tick ages)
+cfg.uiProbePeriodSeconds = 0;     % >0: owned probe timer measuring UI event-serving lateness
+cfg.analyzer = "vsa";             % "integrated" (owned MATLAB Custom OFDM analyzer + viewer), "vsa" (native
+                                  % 89600 VSA, backend-owned) or "both" (VSA as a separately labelled comparison)
+cfg.ofdm = struct('setupSha256', "", 'referenceMat', "", 'orientation', "", ...
+    'syncThreshold', 0.8, 'lockThreshold', 0.3, 'staleSeconds', 2, 'logFile', "", 'maxBursts', Inf);
+                                  % integrated analyzer: pinned SETX sha, transmitted loop (.mat ref125),
+                                  % buffer orientation (as the VSA feed), OWN preamble-correlation threshold
 
 %% Original algorithm / UI state (VSA_rfsoc_exported property names)
 cfg.vsa = 1; cfg.ch = 5; cfg.bf = 'Steering'; cfg.doa = 'MVDR';

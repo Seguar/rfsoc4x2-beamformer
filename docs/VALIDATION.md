@@ -603,3 +603,65 @@ rejection and transfer-latency work remains with the separate backend campaign.
 - **Ways to resolve:** VSA-side window choice still uses the burst-ambiguous block
   analysis (may refuse continuous windows); a durable window4 run after parent
   review; physical DOA needs geometry, connector mapping and calibration.
+
+## Integrated Custom OFDM viewer — parent audit, 2026-11-16
+
+**Test:** visualize and demodulate the original app's actual output buffer without
+requiring a native VSA measurement each frame. Preserve the original controls,
+DOA/pattern, current-data clearing and waveform/setup pairing.
+
+**How:** a1 implemented a SETX-pinned FFT64/CP16 profile, using an 80-point receive
+FFT at 125 MHz. Training estimates the channel; known pilots track phase, timing
+and amplitude. The parent independently reimplemented synchronization and
+complete-burst EVM in NumPy and replayed every one of fifteen saved G1 buffers.
+Payload samples never fit the equalizer. This audit is offline replay of measured
+buffers, not a new hardware run.
+
+**Results:** MATLAB and NumPy match complete/qualified counts on every buffer;
+maximum primary-EVM difference is 1.8e-14 percentage points. The twelve signal
+buffers have primary median EVM 6.00%, including all 64 complete bursts, of which
+51 qualify. Qualified-only median is 4.46%. Three blank buffers remain unavailable.
+Primary EVM retains timing-slip/training-quality failures and reports DEGRADED.
+Incomplete and undetected bursts are outside that metric; coverage is displayed.
+39 Python tests pass (seven optional environment-dependent tests skipped).
+
+Earlier a1 live results used qualified-only EVM: eleven signal frames at
+4.30–5.06% in a blank/pause gate; a 200 s integrated-only run had 215/216 locked
+frames, 1.29 frames/s, median plot age0.48 s and EVM age0.53 s. Those figures
+predate the inclusive primary metric and the parent's one-request prefetch fix;
+they are historical implementation evidence, not a benchmark of the final source.
+Both runs ended with both DAC RAMs zeroed/read back and off commanded.
+
+**Conclusions:** integrated visualization and payload metrics work on the matched
+legacy waveform. Vendor EVM is a separate metric: its pinned setup enables
+data-aided equalization/tracking and different symbol/cell coverage. No numerical
+equivalence is claimed. BER and data-aided equalization are unimplemented.
+
+The parent final MATLAB gate also passes: App Designer rebuild/independent verify,
+original/new-port/admission/smoothing regressions, OFDM34/34, zero stray figures
+or timers, process exit0 and PARENT_CUSTOM_OFDM_COMPLETE sentinel.
+
+**Ways to resolve:** finish a bounded live run of the reviewed source, then launch
+that version visibly. Physical arrival angles,
+OTA motion tracking, spatial jammer rejection and capture-loss repair remain open.
+
+### Reviewed integrated-only hardware gates
+
+**Test/How:** frozen rebuilt source, DAC_B only (peak≤1200), common hybrid/splitter
+feed to all four ADCs; integrated analyzer, unchanged integrity/.3 lock/.8 sync/2 s
+guards. All windows saved; no vendor VSA started.
+**Results:** blank/pause gate and 150 s continuous bound both exit0, clean RAM
+zero/readback and DAC-off commands. Continuous:201 captures,192 valid integrated
+measurements,169 degraded; primary EVM median4.83% (−26.3 dB), range3.86–20.3%,
+qualified-only median4.08%,1026 complete/742 qualified bursts. Offline replay
+reproduces all193 analyzed frames exactly. Acquisition cadence1.75Hz, median plot
+age0.49s; one no-prefetch comparison1.23Hz. This is one run each, not a general
+performance guarantee. Six stream0 dropouts were refused and recovered. One
+unidentified runtime error remains; its buffer replays cleanly.
+**Conclusions:** inclusive EVM and capture prefetch work live. No physical DOA,
+combining gain, vendor equivalence, MXG rejection or independently observed RF-off.
+**Ways to resolve:** viewer AutoResizeChildren is now disabled so the actual resize
+callback can run; Controller failures persist to private errors.jsonl; launcher
+cleanup uses a value-captured handle. Follow-up software checks pass (34/34 OFDM cases, actual resize callbacks,
+three persisted error records, zero stray figures/timers, exit0 and completion
+sentinel). A visible launch checks the final launcher lifecycle. Investigate physical stream0 dropout separately.

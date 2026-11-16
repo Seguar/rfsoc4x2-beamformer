@@ -19,8 +19,10 @@ function results = runWindow4Fixture(port, referenceMat, originalRepoPath, outDi
 % windows, ~100 ppm one-row advances and a single one-row loss are accepted.
 % In "vsa-stub" mode the backend is wrapped in a struct whose vsaSend is an
 % offline stub (no VSA): host-refused windows must never reach it, and a 2.3 s
-% stub delay pushes one frame past the 2 s age bound before plotting
-% (origapp:Expired clears the plots, no stop). The Cutter is refused for
+% stub delay pushes one frame past the 2 s age bound while VSA runs: it was
+% drawn while fresh, and origapp:Expired clears the plots when VSA returns (the
+% struct stub has no idle hook; the native backend clears it inside the call),
+% no stop. The Cutter is refused for
 % window4 (cfg.cutterAllowed=false) before any zero-filled buffer exists.
 % No VSA session, board or instrument. Prints WINDOW4_FIXTURE_COMPLETE.
 root = fileparts(fileparts(mfilename('fullpath')));
@@ -67,7 +69,7 @@ assert(isequal(b.availableChannels(), true(1,4)), 'w4:Mask', 'v3 must report fou
 
 B = "crosses a loop boundary";
 if mode == "vsa-stub"
-    expect = {20, 20, B, 20, B, B, 20, "expired before plotting", -35};
+    expect = {20, 20, B, 20, B, B, 20, "expired during VSA", -35};
 else
     expect = {20, 20, -35, "No wanted-signal lock", "No wanted-signal lock on stream(s) 2", ...
         "Repeated full-capture", "Window SHA256 differs", 10, B, B, B, B, B, B, B, B, B, 20, 20, 20, -35};
@@ -134,8 +136,8 @@ if mode == "vsa-off" && isfield(b.LastFrameMeta, 'sequence')
 elseif mode == "vsa-off"
     v.lastFrameMissing = false;
 else
-    % host-refused windows never reached VSA; the expired frame did (VSA first),
-    % then was refused before plotting
+    % host-refused windows never reached VSA; the expired frame did (drawn
+    % while fresh, then cleared as Expired when the blocking VSA returned)
     v.stubCallsExactlyAccepted = isequal(stubCalls, [0 1 3 6 7 8]);
 end
 results.vsaInput = v;

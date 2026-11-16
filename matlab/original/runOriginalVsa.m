@@ -29,9 +29,10 @@ for name={'orientation','expectSource','logFile','rawDir','wireMode'}
 end
 backend=origapp.LegacyVsaBackend(backendCfg);
 backendGuard=onCleanup(@()delete(backend));
-app=[]; guard=onCleanup(@closeApp);
+app=[];
 try
     app=VSA_rfsoc_refactor(cfgWithBackend(cfg,backend));
+    guard=onCleanup(@()closeAppHandle(app)); %#ok<NASGU> value-captured handle, no nested-workspace teardown
     app.startAcquisition();
     assert(app.Controller.IsOpen,'origapp:Startup','Original app backend did not open.');
     started=tic;
@@ -50,16 +51,16 @@ try
         report.uiBoundaryFrames=c.BoundaryFrames; report.uiExpiredFrames=c.ExpiredFrames;
         report.uiNoSignalFrames=c.NoSignalFrames; report.uiLastError=c.LastError;
     end
-    closeApp(); backend.close();
+    closeAppHandle(app); backend.close();
     fid=fopen(s.session.reportFile,'w'); assert(fid>=0); fileGuard=onCleanup(@()fclose(fid));
     fprintf(fid,'%s\n',jsonencode(report));
     disp('ORIGINAL_NATIVE_VSA_COMPLETE');
 catch err
-    closeApp(); backend.close(); rethrow(err);
+    closeAppHandle(app); backend.close(); rethrow(err);
 end
-    function closeApp()
-        if ~isempty(app) && isvalid(app), delete(app); end
-    end
+end
+function closeAppHandle(app)
+if ~isempty(app) && isvalid(app), delete(app); end
 end
 function cfg=cfgWithBackend(cfg,backend)
 cfg.backend=backend;

@@ -74,6 +74,7 @@ classdef LegacyVsaBackend < handle
         LastMeasured4 = []         % v3: measured N-by-4 (I - jQ)/2^16 of the last frame
         LastCaptureSha = ""
         VsaStartError = ""         % first owned-VSA start failure; never retried in this session
+        VsaIdleFcn = []            % app callback run while the owned VSA measurement is pending
     end
     properties (Access = private)
         Client = []
@@ -124,7 +125,7 @@ classdef LegacyVsaBackend < handle
                 'logFile',"",'syncCorrThreshold',0.9,'vendorReadThreshold',1e-6, ...
                 'staleSeconds',2,'allowContinuous',false,'rawDir',"",'maxTimestampDelaySeconds',2, ...
                 'expectSource',"rfsoc4x2-hardware",'prefetch',true,'warmup',true, ...
-                'wireMode',"adc-d-fullram",'vsaStartupTimeoutSeconds',120,'frameLogFile',"");
+                'wireMode',"adc-d-fullram",'vsaStartupTimeoutSeconds',120,'frameLogFile',"",'prefetchWithoutVsa',false);
             f = fieldnames(d);
             for k = 1:numel(f)
                 if ~isfield(cfg,f{k}), cfg.(f{k}) = d.(f{k}); end
@@ -263,6 +264,7 @@ classdef LegacyVsaBackend < handle
                 obj.VsaStartError = string(er.message);
                 rethrow(er);
             end
+            if isprop(obj.Session, 'IdleFcn'), obj.Session.IdleFcn = obj.VsaIdleFcn; end
             obj.DisplaySupported = ismethod(obj.Session, 'setDisplayStatus');
             obj.showStatus("RFSoC native VSA [" + obj.SourceTag + "] | waiting for first frame (legacy FFT64, guard lock>=" + ...
                 obj.Config.lockThreshold + " sync>=" + obj.Config.syncCorrThreshold + ")");
@@ -382,6 +384,15 @@ classdef LegacyVsaBackend < handle
                 s.reason, r.status);
             if strlength(string(obj.Config.logFile)) > 0
                 fid = fopen(obj.Config.logFile,'a'); fprintf(fid,'%s\n',jsonencode(e)); fclose(fid);
+            end
+        end
+
+        function setVsaIdle(obj, fn)
+            % App display watchdog run inside the owned session's polling loop.
+            assert(isempty(fn) || isa(fn, 'function_handle'), 'a2live:Config', 'VSA idle hook must be a function handle');
+            obj.VsaIdleFcn = fn;
+            if ~isempty(obj.Session) && isvalid(obj.Session) && isprop(obj.Session, 'IdleFcn')
+                obj.Session.IdleFcn = fn;
             end
         end
 
@@ -739,10 +750,12 @@ classdef LegacyVsaBackend < handle
             % now, so its transfer overlaps this frame's VSA processing; the
             % board still acquires only on request and the timestamp is the
             % capture time (an unread prefetched frame simply ages).
-            % Only once VSA has shown it answers fast (last measurement < 1 s),
+            % Integrated analysis explicitly enables the same one-request pipeline.
+            % Native VSA waits until it has answered fast (last measurement < 1 s),
             % so a prefetched frame does not age during VSA warm-up.
-            if obj.Config.prefetch && ~obj.PrefetchHold && ~isempty(obj.Log) && ...
-                    obj.Log(end).elapsedSeconds < 1 && ...
+            ready = obj.Config.prefetchWithoutVsa || ...
+                (~isempty(obj.Log) && obj.Log(end).elapsedSeconds < 1);
+            if obj.Config.prefetch && ~obj.PrefetchHold && ready && ...
                     (obj.Metadata.continuous || seq + 1 < obj.Metadata.frames_planned)
                 obj.sendRequest();
             end
