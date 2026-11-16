@@ -26,3 +26,14 @@ This supports code-body/property changes with the existing119-component model an
 App Designer authoring and renewed validation. An editor open/save/export round trip
 has not been performed. The thumbnail comes from the original component model and
 is not live measurement evidence.
+
+## Component-model extension (VSA_rfsoc_new port)
+
+`build_mlapp_ext(root, sourceExport, baseExport)` adds the components listed in
+`uiExtensionSpec.m` to a copy of the shipped 119-component model. It first checks
+that `adComponentCode` reproduces the shipped export's component blocks
+byte-exactly, then creates the spec components with App Designer's
+ComponentCodeGenerator, regenerates both component blocks from the model, splices
+them into the edited source and saves model and code together.
+`verify_mlapp_ext(root, export)` (fresh process) checks the result; it prints
+`VERIFY_MLAPP_EXT_COMPLETE`. Same R2026a internal-API caveats as above.

@@ -484,3 +484,27 @@ rejection and transfer-latency work remains with the separate backend campaign.
   pause/recovery before a durable visible session. Preserve all outliers. Raw
   sample loss, physical beamforming/DOA, jammer rejection and observed RF-off remain
   unproven. App Designer editor round trip remains untested.
+
+
+## Newer-app feature port (2026-11-16)
+
+- **Test:** compatible VSA_rfsoc_new functions in the original App Designer UI;
+  simulation and full-model serialization only, no hardware.
+- **How:** explicit32-component extension on a fifth tab; regenerate binary/export
+  together; independent fresh-process readback verifies original119 fingerprints,
+  new spec and83 callback bindings. Reference helper comparisons and negative controls.
+- **Results:**151 components, zero load warnings, deterministic export and passing
+  original/new fixtures in the delivered candidate and independent parent rebuild.
+  Review disabled known-bad coupling compensation, corrected custom-waveform RAM
+  capacity to524288 complex samples and capped preparation peak at1200. Final
+  independent fixture rerun passes (MATLAB exit0 and completion sentinel); all31
+  Python tests pass. Coupling refusals and32 periods per524288-sample RAM verified.
+- **Conclusions:** IQ compensation, phase/power compensation, guarded EVM percent/dB,
+  mirror display, phase diagnostics and custom-file preparation are software ports.
+  Upload remains unavailable in current backend. Coupling tables are diagnostic:
+  the legacy method moved20degrees to-41 in simulation. ZCU216 burst/on-board BF
+  commands are explicitly refused; the native acquisition guards are unchanged.
+- **Ways to resolve:** validate extended UI on hardware after final software gates.
+  Editor round trip, measured antenna calibration, live IQ-comp benefit and physical
+  DOA remain unproven. Remaining unported mmW/device/autocal features and hardware
+  dependencies are listed in docs/NEW_APP_PORT.md.

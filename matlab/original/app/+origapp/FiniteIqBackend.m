@@ -16,6 +16,12 @@ classdef FiniteIqBackend < handle
         StaleAt = []
         RepeatAt = []
         Sequence = 0
+        Uploads = struct('port', {}, 'samples', {})
+        LastVsaBuffer = []        % last buffer handed to vsaSend (raw-feed checks)
+    end
+    properties   % fixture knobs a test may change between ticks (VSA_rfsoc_new port)
+        Capabilities = struct()   % declared capabilities (default: none)
+        VsaStatus = []            % guarded native-VSA status to report ([] = none)
     end
     methods
         function obj = FiniteIqBackend(frames, varargin)
@@ -53,6 +59,17 @@ classdef FiniteIqBackend < handle
         function vsaSend(obj, buffer)
             assert(all(isfinite(buffer)), 'fixture:Vsa', 'Non-finite VSA buffer.');
             obj.Calls(end+1) = "vsaSend"; obj.VsaFrames = obj.VsaFrames + 1;
+            obj.LastVsaBuffer = buffer;
+        end
+        function c = capabilities(obj)
+            obj.Calls(end+1) = "capabilities"; c = obj.Capabilities;
+        end
+        function uploadDacWaveform(obj, port, interleaved)
+            obj.Calls(end+1) = "uploadDacWaveform";
+            obj.Uploads(end+1) = struct('port', string(port), 'samples', interleaved);
+        end
+        function s = vsaStatus(obj)
+            s = obj.VsaStatus;
         end
         function close(obj)
             obj.Calls(end+1) = "close"; obj.IsOpen = false; obj.CloseCount = obj.CloseCount + 1;

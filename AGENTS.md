@@ -155,3 +155,13 @@ frames by EVM magnitude. Only ADC_D is measured by its compressed transport; thr
 zero placeholder columns must never enter physical DOA or beamforming. Rebuild both
 editable binary and export after UI changes; native backend-only changes do not
 change the component model. Freeze source/config before final physical gates.
+
+The newer-app port adds32 components on a fifth tab (151 total), preserving the
+119 original fingerprints. Use tools/appdesigner/build_mlapp_ext.m and
+verify_mlapp_ext.m with uiExtensionSpec.m to rebuild/check this extended pair;
+the original119-only builder is for older artifacts. Calibration coupling matrices
+from the legacy algorithm are diagnostic only: processLegacyFrame explicitly
+refuses coupling compensation after a failed known-angle simulation. Do not remove
+that block without independent validation. New IQ/phase/command/upload controls
+are simulation-tested; no current backend supports custom waveform upload or the
+ZCU216 burst/on-board beamforming commands. Keep unsupported actions explicit.

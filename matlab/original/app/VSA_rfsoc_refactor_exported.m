@@ -114,6 +114,38 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
         CutoffsetEditField             matlab.ui.control.NumericEditField
         CutoffsetEditFieldLabel        matlab.ui.control.Label
         GetPatternButton               matlab.ui.control.StateButton
+        NewTab                         matlab.ui.container.Tab
+        PortStatusLabel                matlab.ui.control.Label
+        DACfileButton                  matlab.ui.control.Button
+        DACportDropDown                matlab.ui.control.DropDown
+        DACportDropDownLabel           matlab.ui.control.Label
+        Ch4Spinner                     matlab.ui.control.Spinner
+        Ch4SpinnerLabel                matlab.ui.control.Label
+        Ch3Spinner                     matlab.ui.control.Spinner
+        Ch3SpinnerLabel                matlab.ui.control.Label
+        Ch2Spinner                     matlab.ui.control.Spinner
+        Ch2SpinnerLabel                matlab.ui.control.Label
+        Ch1Spinner                     matlab.ui.control.Spinner
+        Ch1SpinnerLabel                matlab.ui.control.Label
+        ChannelcontrolDropDown         matlab.ui.control.DropDown
+        ChannelcontrolDropDownLabel    matlab.ui.control.Label
+        BurstLenSpinner                matlab.ui.control.Spinner
+        BurstLenSpinnerLabel           matlab.ui.control.Label
+        RFSOCBFmodeListBox             matlab.ui.control.ListBox
+        RFSOCBFmodeListBoxLabel        matlab.ui.control.Label
+        DACBFmodeListBox               matlab.ui.control.ListBox
+        DACBFmodeListBoxLabel          matlab.ui.control.Label
+        PrintphasemissmatchButton      matlab.ui.control.Button
+        MirrorCheckBox_3               matlab.ui.control.CheckBox
+        EVMCheckBox                    matlab.ui.control.CheckBox
+        CouplingcompCheckBox           matlab.ui.control.CheckBox
+        PhasecompCheckBox              matlab.ui.control.CheckBox
+        MUstepEditField                matlab.ui.control.NumericEditField
+        MUstepEditFieldLabel           matlab.ui.control.Label
+        LsizeEditField                 matlab.ui.control.NumericEditField
+        LsizeEditFieldLabel            matlab.ui.control.Label
+        AdaptiveIQcompCheckBox         matlab.ui.control.CheckBox
+        IQCompCheckBox                 matlab.ui.control.CheckBox
         ResetButton                    matlab.ui.control.StateButton
         PlutoButton                    matlab.ui.control.Button
         IQtoolsButton                  matlab.ui.control.Button
@@ -152,10 +184,17 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
         dphase; dacPow; da; bwDac; fsOrig; dacFilt; resmp; adcMirror; dacAngle
         dacSignalType; dacFc; dacFe; dacSR; dacAmp
         p_manual_mean; yspec_mean; plot_handle
-        lineHandles = struct('am',[],'bs',[],'cs',[],'am2',[],'bs2',[],'cs2',[])
+        lineHandles = struct('am',[],'bs',[],'cs',[],'am2',[],'bs2',[],'cs2',[],'adac',[],'adac2',[])
         patternCount = 1; fileCnt = 1; saveFile = struct('raw', {})
         Busy = false
         ExternalFigures = gobjects(0)
+        % VSA_rfsoc_new port state (same names as VSA_rfsoc_new where they exist)
+        IQcomp; adIQcomp; sizeL; stepMU; phComp; coupComp; correct_filter
+        manualMvdrFormula; EVM_check; plotMirror; dacBF; dacBFon = 0; dacTestArray = []
+        dphaseCorr; manualControlState = "DAC phase"
+        dacGain = [0 0 0 0]; adcGain = [0 0 0 0]; d_iq_phase = [0 0 0 0]
+        a_iq_phase = [0 0 0 0]; adcPhase = [0 0 0 0]
+        calSum = []; calCount = 0; RandomStream; lastRaw = []
     end
 
     properties (Access = public)
@@ -173,6 +212,9 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
         CurrentDoa = []          % estimated angles of the last accepted frame, [] when invalid
         CurrentPattern = []      % averaged pattern (dB) of the last accepted frame, [] when invalid
         LastResult = []
+        PortMessages = strings(0,1) % VSA_rfsoc_new port: explicit unsupported/refused/result messages
+        DacPrepared = []            % last prepared custom DAC waveform (int16) and its info
+        SessionCalibration = []     % last angle calibration installed in this session (model)
     end
 
     methods (Access = public)
@@ -256,10 +298,15 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                 'start_ang','step_ang','dataStream','nyquistZone','nyquistZone_d0', ...
                 'nyquistZone_d1','fc_d0','fc_d1','dphase','dacPow','da','bwDac','fsOrig', ...
                 'dacFilt','resmp','adcMirror','dacAngle','dacSignalType','dacFc','dacFe', ...
-                'dacSR','dacAmp','fcInt','stateInt','powInt','modInt'};
+                'dacSR','dacAmp','fcInt','stateInt','powInt','modInt', ...
+                'IQcomp','adIQcomp','sizeL','stepMU','phComp','coupComp','manualMvdrFormula', ...
+                'EVM_check','plotMirror','dacBF','dphaseCorr'};
             for k = 1:numel(names)
                 app.(names{k}) = cfg.(names{k});
             end
+            app.correct_filter = zeros(app.sizeL, 4);
+            app.dacBFon = ~strcmp(app.dacBF, 'Off');
+            app.RandomStream = RandStream('twister', 'Seed', cfg.randomSeed);
         end
 
         function syncControlsFromState(app)
@@ -314,6 +361,128 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             app.gainGenSpinner.Value = app.powInt;
             app.PowerCheckBox.Value = logical(app.stateInt);
             app.ModCheckBox.Value = logical(app.modInt);
+            % VSA_rfsoc_new port controls (New tab)
+            app.IQCompCheckBox.Value = logical(app.IQcomp);
+            app.AdaptiveIQcompCheckBox.Value = logical(app.adIQcomp);
+            app.LsizeEditField.Value = app.sizeL;
+            app.MUstepEditField.Value = app.stepMU;
+            app.PhasecompCheckBox.Value = logical(app.phComp);
+            app.CouplingcompCheckBox.Value = logical(app.coupComp);
+            app.EVMCheckBox.Value = logical(app.EVM_check);
+            app.MirrorCheckBox_3.Value = logical(app.plotMirror);
+            app.DACBFmodeListBox.Value = char(app.dacBF);
+            app.RFSOCBFmodeListBox.Value = 'Off';
+            app.BurstLenSpinner.Value = 1;
+            app.ChannelcontrolDropDown.Value = char(app.manualControlState);
+            showChannelControl(app);
+        end
+
+        function s = onOff(~, value)
+            if value, s = "on"; else, s = "off"; end
+        end
+
+        function portMessage(app, msg)
+            % Explicit, visible outcome of a VSA_rfsoc_new-port control: shown
+            % in the New tab status label, kept in PortMessages and Status.
+            msg = string(msg);
+            app.PortMessages(end+1,1) = msg;
+            if isvalid(app.PortStatusLabel), app.PortStatusLabel.Text = char(msg); end
+            setStatus(app, msg);
+        end
+
+        function [vals, lim, verb, scale] = channelControlState(app)
+            % VSA_rfsoc_new "Channel control": state vector, limits, command verb.
+            switch app.manualControlState
+                case "DAC gain",       vals = app.dacGain;    lim = [0 199];        verb = "dgain";    scale = 1;
+                case "DAC phase",      vals = app.dphase;     lim = [-179 179];     verb = "dphase";   scale = 100;
+                case "DAC I phase",    vals = app.d_iq_phase; lim = [-26.49 26.49]; verb = "diqphase"; scale = 100;
+                case "ADC gain",       vals = app.adcGain;    lim = [1 199];        verb = "again";    scale = 1;
+                case "ADC phase",      vals = app.adcPhase;   lim = [-179 179];     verb = "phase";    scale = 100;
+                case "ADC I phase",    vals = app.a_iq_phase; lim = [-26.49 26.49]; verb = "aiqphase"; scale = 100;
+                case "DAC phase corr", vals = app.dphaseCorr; lim = [-179 179];     verb = "dphase";   scale = 100;
+                otherwise, error('origapp:ChannelControl', 'Unknown channel control "%s".', app.manualControlState);
+            end
+        end
+
+        function showChannelControl(app)
+            [vals, lim] = channelControlState(app);
+            sp = [app.Ch1Spinner app.Ch2Spinner app.Ch3Spinner app.Ch4Spinner];
+            for k = 1:4
+                sp(k).Limits = lim;
+                sp(k).Value = min(max(vals(k), lim(1)), lim(2));
+            end
+        end
+
+        function channelControlChanged(app, k, value)
+            % VSA_rfsoc_new Ch1..Ch4 spinners: update the state and queue the
+            % command only if the backend declares it (commandPolicy).
+            [vals, ~, verb, scale] = channelControlState(app);
+            vals(k) = value;
+            cmd = verb + " " + strjoin(string(round(vals*scale)), "/");
+            [ok, why] = app.Controller.queueChecked(cmd);
+            if ~ok
+                showChannelControl(app);   % revert the spinner to the unchanged state
+                portMessage(app, "Channel control refused: " + why);
+                return
+            end
+            switch app.manualControlState
+                case "DAC gain",       app.dacGain = vals;
+                case "DAC phase",      app.dphase = vals;
+                case "DAC I phase",    app.d_iq_phase = vals;
+                case "ADC gain",       app.adcGain = vals;
+                case "ADC phase",      app.adcPhase = vals;
+                case "ADC I phase",    app.a_iq_phase = vals;
+                case "DAC phase corr", app.dphaseCorr = vals;
+            end
+            portMessage(app, "queued: " + cmd + " (sent at next part reset if cfg.allowBoardCommands)");
+            app.part_reset_req = 1;
+        end
+
+        function [ok, why] = dacBfAllowed(app, mode)
+            % DAC BF needs a steerable TX array declared by the backend, and
+            % Tracking/Retracking need array-mode DOA from measured channels.
+            ok = true; why = "";
+            if mode == "Off", return; end
+            caps = app.Controller.capabilities();
+            if caps.txArrayElements < app.num_elements
+                ok = false;
+                why = sprintf(['DAC BF "%s" needs a %d-element steerable TX array; backend ' ...
+                    'declares %d (RFSoC4x2 has two DAC outputs, no 4-element TX array).'], ...
+                    mode, app.num_elements, caps.txArrayElements);
+            elseif any(mode == ["Tracking","Retracking"]) && app.Config.directOnly
+                ok = false;
+                why = sprintf('DAC BF "%s" needs array-mode DOA; directOnly has no physical DOA.', mode);
+            elseif ~any(caps.commands == "dphase")
+                ok = false;
+                why = 'DAC BF needs the backend to declare the dphase command.';
+            end
+        end
+
+        function dacBfStep(app, estimated_angle)
+            % Per accepted frame (original "%% DAC BF" block): new TX angle and
+            % a dphase command (x100 integer form of the original).
+            if ~app.dacBFon, return; end
+            if isempty(app.dacTestArray), app.dacTestArray = app.scan_axis; end
+            [ang, app.dacTestArray, ph] = origapp.dacBeamSteering(string(app.dacBF), ...
+                app.dacTestArray, app.AngleSpinner.Value, estimated_angle, app.scan_bw, ...
+                app.ula, app.fcAnt, app.dphaseCorr, app.RandomStream);
+            app.dacAngle = ang;
+            app.dphase = ph;
+            [ok, why] = app.Controller.queueChecked("dphase " + strjoin(string(round(ph*100)), "/"));
+            assert(ok, 'origapp:DacBf', '%s', why);
+        end
+
+        function evmText = evmTitle(app)
+            % EVM checkbox: guarded native-VSA EVM (never a raw SCPI read here).
+            evmText = '';
+            if ~app.EVM_check, return; end
+            v = app.Controller.vsaStatus();
+            if isstruct(v) && isfield(v, 'valid') && v.valid && isfield(v, 'evmPercent')
+                evmText = sprintf(' EVM = %.2f %% (%.1f dB, guarded VSA)', v.evmPercent, ...
+                    20*log10(v.evmPercent/100));
+            else
+                evmText = ' EVM = unavailable (no guarded VSA result)';
+            end
         end
 
         function resetApp(app)
@@ -345,6 +514,7 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             app.Controller.setDataChan(app.dataChan);
             app.ula = buildArray(app);
             app.scan_axis = -app.scan_bw/2:app.scan_res:app.scan_bw/2;
+            app.dacTestArray = [];   % VSA_rfsoc_new resetApp: DAC scan restarts on the new axis
             prepPlots(app);
             app.p_manual_mean = zeros(length(app.scan_axis), app.avg_factor);
             app.yspec_mean = zeros(length(app.scan_axis), app.avg_factor);
@@ -385,7 +555,7 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
         function prepPlots(app)
             % Original plotPrep with cla instead of clf on uiaxes.
             cla(app.UIAxes); cla(app.UIAxes2);
-            app.lineHandles = struct('am',[],'bs',[],'cs',[],'am2',[],'bs2',[],'cs2',[]);
+            app.lineHandles = struct('am',[],'bs',[],'cs',[],'am2',[],'bs2',[],'cs2',[],'adac',[],'adac2',[]);
             app.plot_handle = plot(app.UIAxes, app.scan_axis, nan(size(app.scan_axis)));
             app.UIAxes.XLim = [app.scan_axis(1) app.scan_axis(end)];
             app.UIAxes2.XLim = [app.scan_axis(1) app.scan_axis(end)];
@@ -411,7 +581,11 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                 'alg_scan_res', app.alg_scan_res, 'mis_ang', app.mis_ang, ...
                 'alpha', app.alpha, 'gamma', app.gamma, 'iter', app.iter, ...
                 'calibration', app.Config.calibration, ...
-                'bfEngine', string(app.Config.bfEngine), 'reviewed', app.Config.reviewed);
+                'bfEngine', string(app.Config.bfEngine), 'reviewed', app.Config.reviewed, ...
+                'iqAdaptive', logical(app.adIQcomp), 'iqStatic', logical(app.IQcomp), ...
+                'iqFilter', app.correct_filter, 'iqMu', app.stepMU, ...
+                'coupComp', logical(app.coupComp), 'phComp', logical(app.phComp), ...
+                'manualMvdrFormula', string(app.manualMvdrFormula));
         end
 
         function processDirect(app, frame)
@@ -455,11 +629,14 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                 error('origapp:NoSignal', 'No signal (NaN weights).');
             end
             app.weights = out.weights;
+            app.correct_filter = out.iqFilter;   % adaptive IQ state carries to the next frame
+            app.lastRaw = out.rawData;
             if app.vsa && ~app.Controller.sendVsa(out.vsaBuffer)
                 note(app, "VSA send not available from backend");
             end
             app.LastResult = out;
             estimated_angle = out.estimated_angle;
+            dacBfStep(app, estimated_angle);
             if app.plotUpd
                 renderArray(app, out, estimated_angle);
             end
@@ -474,6 +651,12 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             [p_manual_mean_vec, app.p_manual_mean] = avgData(p_manual, app.p_manual_mean);
             p_manual_mean_db = 20*log10(p_manual_mean_vec) - max(20*log10(p_manual_mean_vec));
             app.CurrentPattern = p_manual_mean_db;
+            % VSA_rfsoc_new Mirror plot: display only (CurrentDoa/CurrentPattern stay unmirrored).
+            mir = app.plotMirror ~= 0;
+            showPattern = p_manual_mean_db; showAngles = estimated_angle; showDac = app.dacAngle;
+            if mir
+                showPattern = flip(showPattern(:)).'; showAngles = -estimated_angle; showDac = -app.dacAngle;
+            end
             spectrumNote = '';
             if out.spectrumAvailable
                 [yspec_mean_vec, app.yspec_mean] = avgData(out.yspec(:), app.yspec_mean);
@@ -482,34 +665,45 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                         'patternCorr needs koef (cfg.calibration.koef or originalRepoPath/koef.mat).');
                     yspec_mean_vec = yspec_mean_vec.*(1./app.koef);
                 end
+                if mir, yspec_mean_vec = flip(yspec_mean_vec); end
                 set(app.plot_handle, 'YData', yspec_mean_vec/max(yspec_mean_vec), 'LineWidth', 1.5);
             else
                 set(app.plot_handle, 'YData', nan(size(app.scan_axis)));
                 spectrumNote = [newline '(angle-only estimator: no spectrum)'];
             end
-            app.UIAxes.Title.String = ['Direction of Arrival (array model):' newline 'Estimated Angles = ' ...
-                num2str(estimated_angle) newline 'DAC Angles = ' num2str(app.dacAngle) spectrumNote];
+            mirNote = ''; if mir, mirNote = ' [mirrored]'; end
+            app.UIAxes.Title.String = ['Direction of Arrival (array model)' mirNote ':' newline 'Estimated Angles = ' ...
+                num2str(showAngles) newline 'DAC Angles = ' num2str(showDac) evmTitle(app) spectrumNote];
             cla(app.UIAxes2);
             app.lineHandles.am2 = []; app.lineHandles.bs2 = []; app.lineHandles.cs2 = [];
-            plot(app.UIAxes2, app.scan_axis, p_manual_mean_db, 'LineWidth', 1.5);
+            app.lineHandles.adac2 = [];
+            plot(app.UIAxes2, app.scan_axis, showPattern, 'LineWidth', 1.5);
             main.line = '-b'; main.txt = 'Main'; sub.line = '--c'; sub.txt = 'Sub';
-            ea = [estimated_angle NaN NaN];
+            ea = [showAngles NaN NaN];
             L = app.lineHandles;
             L.am = guiXline(L.am, app.UIAxes, main, ea(1), 'right');
             L.am2 = guiXline(L.am2, app.UIAxes2, main, ea(1), 'right');
+            if app.dacBFon
+                % VSA_rfsoc_new: DAC (TX) angle line on both axes (model command angle)
+                dacmain.line = '-m'; dacmain.txt = 'Dac';
+                L.adac = guiXline(L.adac, app.UIAxes, dacmain, showDac, 'left');
+                L.adac2 = guiXline([], app.UIAxes2, dacmain, showDac, 'left');
+            elseif ~isempty(L.adac) && isvalid(L.adac)
+                delete(L.adac); L.adac = [];
+            end
             if sum(~isnan(ea)) > 1
                 L.bs = guiXline(L.bs, app.UIAxes, sub, ea(2), 'center');
                 L.bs2 = guiXline(L.bs2, app.UIAxes2, sub, ea(2), 'center');
-                null_diff = round(p_manual_mean_db(app.scan_axis == ea(1)) - p_manual_mean_db(app.scan_axis == ea(2)));
+                null_diff = round(showPattern(app.scan_axis == ea(1)) - showPattern(app.scan_axis == ea(2)));
                 if sum(~isnan(ea)) > 2
                     L.cs = guiXline(L.cs, app.UIAxes, sub, ea(3), 'center');
                     L.cs2 = guiXline(L.cs2, app.UIAxes2, sub, ea(3), 'center');
                 end
             else
-                null_diff = round(p_manual_mean_db(app.scan_axis == ea(1)) - min(p_manual_mean_db));
+                null_diff = round(showPattern(app.scan_axis == ea(1)) - min(showPattern));
             end
             app.lineHandles = L;
-            app.UIAxes2.Title.String = ['Beam Pattern [' char(app.Config.bfEngine) ' ' char(app.bf) ']' ...
+            app.UIAxes2.Title.String = ['Beam Pattern [' char(app.Config.bfEngine) ' ' char(app.bf) ']' mirNote ...
                 newline 'Gain Difference = ' num2str(abs(null_diff)) ' dB'];
             if app.MatlabPattern
                 if app.patternCount >= app.updrate
@@ -549,8 +743,17 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
 
         function phaseCalStep(app, rawData)
             % Non-blocking version of the original uiwait loop: each button
-            % press captures the next processed frame for the current angle.
+            % press captures the next calibrationFramesPerAngle processed
+            % frames (VSA_rfsoc_new averaged avg_factor frames) for the
+            % current angle. After the last angle the VSA_rfsoc_new chain
+            % computes steering, power and coupling calibration (model).
             if ~app.phase_cal || ~app.phase_cal_capture, return; end
+            if isempty(app.calSum), app.calSum = zeros(size(rawData)); end
+            app.calSum = app.calSum + rawData;
+            app.calCount = app.calCount + 1;
+            if app.calCount < app.Config.calibrationFramesPerAngle, return; end
+            rawData = app.calSum/app.calCount;
+            app.calSum = []; app.calCount = 0;
             app.phase_cal_capture = 0;
             save(fullfile(app.phase_cal_dir, [num2str(app.cur_ang) '.mat']), 'rawData');
             if app.cur_ang == -(app.start_ang)
@@ -561,17 +764,41 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
                     s = load(fullfile(app.phase_cal_dir, [num2str(phase_scan_axis(k)) '.mat']));
                     meas_mat(:,:,k) = s.rawData; %#ok<AGROW>
                 end
-                % Original passed (..., fc, c) too; phase_pattern_generator takes 4 inputs.
-                figsBefore = findall(groot, 'Type', 'figure');
-                [steering_correction, ~, ~] = phase_pattern_generator(meas_mat, phase_scan_axis, ...
-                    app.scan_res, app.num_elements);
-                % The helper plots; own any new figure so delete(app) removes it.
-                newFigs = setdiff(findall(groot, 'Type', 'figure'), figsBefore);
-                for k = 1:numel(newFigs), app.ExternalFigures(end+1) = newFigs(k); end
+                % VSA_rfsoc_new chain, figure-free (origapp.angleCalibration).
+                cal = origapp.angleCalibration(meas_mat, phase_scan_axis, app.scan_res, ...
+                    app.ula, app.fcAnt, app.c, app.Config.couplingIterations);
+                steering_correction = cal.steeringCorrection;
+                pow_claibration_intrp = cal.powCalibration;
+                coupling_matrix = cal.couplingMatrix;
                 save(fullfile(app.phase_cal_dir, 'steering_correction.mat'), 'steering_correction');
+                save(fullfile(app.phase_cal_dir, 'pow_claibration_intrp.mat'), 'pow_claibration_intrp');
+                couplingOk = all(isfinite(coupling_matrix), 'all');
+                if couplingOk
+                    save(fullfile(app.phase_cal_dir, 'coupling_matrix.mat'), 'coupling_matrix');
+                end
+                app.SessionCalibration = cal;
+                msg = sprintf('Angle calibration (model) saved: %d angles, grid %g..%g deg', ...
+                    numel(phase_scan_axis), cal.gridDeg(1), cal.gridDeg(end));
+                if ~couplingOk
+                    msg = [msg '; coupling matrix non-finite (degenerate captures): not saved'];
+                end
+                tablesOk = all(isfinite(steering_correction), 'all') && all(isfinite(pow_claibration_intrp), 'all');
+                if app.Config.installSessionCalibration && ~(couplingOk && tablesOk)
+                    msg = [msg '; NOT installed: non-finite calibration'];
+                elseif app.Config.installSessionCalibration
+                    if isequal(cal.gridDeg, app.scan_axis)
+                        app.Config.calibration.steeringCorrection = steering_correction;
+                        app.Config.calibration.powCalibration = pow_claibration_intrp;
+                        app.Config.calibration.couplingMatrix = coupling_matrix;
+                        msg = [msg '; installed for this session'];
+                    else
+                        msg = [msg '; NOT installed: calibration grid differs from the scan axis'];
+                    end
+                end
                 app.StartphasecalibrationsButton.Text = 'Press to start calibrations';
                 app.phase_cal = 0;
                 app.cur_ang = 0;
+                portMessage(app, msg);
             else
                 app.cur_ang = app.cur_ang + app.step_ang;
                 app.StartphasecalibrationsButton.Text = ['Set ' num2str(app.cur_ang) ' deg and press'];
@@ -589,6 +816,7 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             app.CurrentDoa = [];
             app.CurrentPattern = [];
             app.weights = [];
+            app.lastRaw = [];
             if ~isempty(app.plot_handle) && isvalid(app.plot_handle)
                 set(app.plot_handle, 'YData', nan(size(app.scan_axis)));
             end
@@ -712,6 +940,11 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             end
             if cfg.directOnly
                 app.UIAxes.Title.String = ['Direction of Arrival: unavailable' newline 'directOnly'];
+            end
+            [okBf, whyBf] = dacBfAllowed(app, string(app.dacBF));
+            if ~okBf
+                app.dacBF = 'Off'; app.dacBFon = 0; app.DACBFmodeListBox.Value = 'Off';
+                portMessage(app, "cfg.dacBF refused at startup: " + whyBf);
             end
             setStatus(app, "idle: press Reset (or call startAcquisition) to start");
             if cfg.autoStart
@@ -1064,6 +1297,11 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
 
         % Button pushed function: StartphasecalibrationsButton
         function StartphasecalibrationsButtonPushed(app, event)
+            if app.Config.directOnly
+                portMessage(app, ['Angle calibration needs array mode with four measured channels; ' ...
+                    'directOnly has no physical DOA.']);
+                return
+            end
             if app.phase_cal
                 app.phase_cal_capture = 1;   % capture next frame at app.cur_ang
                 return
@@ -1156,6 +1394,164 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             queueSource(app);
             app.part_reset_req = 1;
         end
+        % Value changed function: IQCompCheckBox
+        function IQCompCheckBoxValueChanged(app, event)
+            app.IQcomp = app.IQCompCheckBox.Value;
+            portMessage(app, "Static IQ comp " + onOff(app, app.IQcomp) + ...
+                " (array processing only; the direct VSA feed stays raw)");
+        end
+
+        % Value changed function: AdaptiveIQcompCheckBox
+        function AdaptiveIQcompCheckBoxValueChanged(app, event)
+            app.adIQcomp = app.AdaptiveIQcompCheckBox.Value;
+            portMessage(app, "Adaptive IQ comp " + onOff(app, app.adIQcomp) + ...
+                sprintf(" (L=%d, MU=%g; array processing only)", app.sizeL, app.stepMU));
+        end
+
+        % Value changed function: LsizeEditField
+        function LsizeEditFieldValueChanged(app, event)
+            app.sizeL = app.LsizeEditField.Value;
+            app.correct_filter = zeros(app.sizeL, 4);   % VSA_rfsoc_new resets the filter
+            portMessage(app, sprintf("IQ filter length L=%d; filter reset to zero", app.sizeL));
+        end
+
+        % Value changed function: MUstepEditField
+        function MUstepEditFieldValueChanged(app, event)
+            app.stepMU = app.MUstepEditField.Value;
+        end
+
+        % Value changed function: PhasecompCheckBox
+        function PhasecompCheckBoxValueChanged(app, event)
+            app.phComp = app.PhasecompCheckBox.Value;
+            portMessage(app, "Phase/power comp " + onOff(app, app.phComp) + ...
+                " (needs steeringCorrection and powCalibration on the scan grid; model calibration)");
+        end
+
+        % Value changed function: CouplingcompCheckBox
+        function CouplingcompCheckBoxValueChanged(app, event)
+            app.coupComp = app.CouplingcompCheckBox.Value;
+            portMessage(app, "Coupling comp " + onOff(app, app.coupComp) + " (needs calibration.couplingMatrix)");
+        end
+
+        % Value changed function: EVMCheckBox
+        function EVMCheckBoxValueChanged(app, event)
+            app.EVM_check = app.EVMCheckBox.Value;
+        end
+
+        % Value changed function: MirrorCheckBox_3
+        function MirrorCheckBox_3ValueChanged(app, event)
+            app.plotMirror = app.MirrorCheckBox_3.Value;
+        end
+
+        % Button pushed function: PrintphasemissmatchButton
+        function PrintphasemissmatchButtonPushed(app, event)
+            % VSA_rfsoc_new PAcheck: per-channel phase relative to channel 1
+            % of the last accepted array frame (after receive corrections).
+            if app.Config.directOnly || isempty(app.lastRaw)
+                portMessage(app, "Phase mismatch unavailable: needs a current array-mode frame " + ...
+                    "with four measured channels.");
+                return
+            end
+            deg = origapp.phaseMismatch(app.lastRaw, 1);
+            portMessage(app, "Phase mismatch vs Ch1 (deg): " + strjoin(compose("%.2f", deg), " / "));
+        end
+
+        % Value changed function: DACBFmodeListBox
+        function DACBFmodeListBoxValueChanged(app, event)
+            mode = string(app.DACBFmodeListBox.Value);
+            [ok, why] = dacBfAllowed(app, mode);
+            if ~ok
+                app.DACBFmodeListBox.Value = char(app.dacBF);
+                portMessage(app, "DAC BF refused: " + why);
+                return
+            end
+            app.dacBF = char(mode);
+            app.dacBFon = mode ~= "Off";
+            app.dacTestArray = [];   % seeded from the current scan axis at the next frame
+            portMessage(app, "DAC BF mode " + mode + " (model TX steering command; not measured)");
+        end
+
+        % Value changed function: RFSOCBFmodeListBox
+        function RFSOCBFmodeListBoxValueChanged(app, event)
+            mode = string(app.RFSOCBFmodeListBox.Value);
+            app.RFSOCBFmodeListBox.Value = 'Off';
+            if mode ~= "Off"
+                [~, why] = origapp.commandPolicy("dacbf " + lower(mode), app.Controller.capabilities());
+                portMessage(app, "RFSoC BF " + mode + " refused: " + why);
+            end
+        end
+
+        % Value changed function: BurstLenSpinner
+        function BurstLenSpinnerValueChanged(app, event)
+            n = app.BurstLenSpinner.Value;
+            app.BurstLenSpinner.Value = 1;
+            if n ~= 1
+                [~, why] = origapp.commandPolicy("stream " + n, app.Controller.capabilities());
+                portMessage(app, "Burst length " + n + " refused: " + why + ...
+                    " The RFSoC4x2 transport stays one request per frame.");
+            end
+        end
+
+        % Value changed function: ChannelcontrolDropDown
+        function ChannelcontrolDropDownValueChanged(app, event)
+            app.manualControlState = string(app.ChannelcontrolDropDown.Value);
+            showChannelControl(app);
+        end
+
+        % Value changed function: Ch1Spinner
+        function Ch1SpinnerValueChanged(app, event)
+            channelControlChanged(app, 1, app.Ch1Spinner.Value);
+        end
+
+        % Value changed function: Ch2Spinner
+        function Ch2SpinnerValueChanged(app, event)
+            channelControlChanged(app, 2, app.Ch2Spinner.Value);
+        end
+
+        % Value changed function: Ch3Spinner
+        function Ch3SpinnerValueChanged(app, event)
+            channelControlChanged(app, 3, app.Ch3Spinner.Value);
+        end
+
+        % Value changed function: Ch4Spinner
+        function Ch4SpinnerValueChanged(app, event)
+            channelControlChanged(app, 4, app.Ch4Spinner.Value);
+        end
+
+        % Button pushed function: DACfileButton
+        function DACfileButtonPushed(app, event)
+            % Custom DAC file (original sigPrepare; its buttons were never wired).
+            % Uses the System-tab Resample / Filter / Orig FS / Filt BW state.
+            file = string(app.Config.dacFile);
+            if strlength(file) == 0
+                if ~externalAllowed(app, "DAC file dialog"), return; end
+                [f, d] = uigetfile('*.mat', 'DAC waveform (.mat with Y, XDelta)');
+                if isequal(f, 0), return; end
+                file = string(fullfile(d, f));
+            end
+            try
+                [i16, info] = origapp.prepareDacWaveform(file, 'fsOrig', app.fsOrig, ...
+                    'fsDac', app.fsDAC, 'resample', logical(app.resmp), 'filter', logical(app.dacFilt), ...
+                    'bwDac', app.bwDac, 'peakCode', app.Config.dacPeakCode, ...
+                    'ramComplex', app.Config.dacRamComplex);
+            catch err
+                app.DacPrepared = [];
+                portMessage(app, "DAC file rejected: " + string(err.message));
+                return
+            end
+            port = string(app.DACportDropDown.Value);
+            app.DacPrepared = struct('samples', i16, 'info', info, 'port', port);
+            try
+                app.Controller.uploadDac(port, i16);
+                portMessage(app, sprintf("DAC file uploaded to %s: %d samples, sha256 %s", ...
+                    port, info.complexSamples, extractBefore(info.sha256, 13)));
+            catch err
+                portMessage(app, sprintf("DAC file prepared (%d samples x%d in RAM, peak %d, sha256 %s); %s", ...
+                    info.complexSamples, info.periodsInRam, info.peakCode, ...
+                    extractBefore(info.sha256, 13), err.message));
+            end
+        end
+
         % Changes arrangement of the app based on UIFigure width
         function updateAppLayout(app, event)
             currentFigureWidth = app.RFSoCBeamformerUIFigure.Position(3);
@@ -1859,6 +2255,201 @@ classdef VSA_rfsoc_refactor_exported < matlab.apps.AppBase
             app.SaveButton.ButtonPushedFcn = createCallbackFcn(app, @SaveButtonPushed, true);
             app.SaveButton.Position = [82 117 100 22];
             app.SaveButton.Text = 'Save';
+
+            % Create NewTab
+            app.NewTab = uitab(app.TabGroup);
+            app.NewTab.Title = 'New';
+
+            % Create IQCompCheckBox
+            app.IQCompCheckBox = uicheckbox(app.NewTab);
+            app.IQCompCheckBox.ValueChangedFcn = createCallbackFcn(app, @IQCompCheckBoxValueChanged, true);
+            app.IQCompCheckBox.Text = 'IQ comp';
+            app.IQCompCheckBox.Position = [10 640 75 22];
+
+            % Create AdaptiveIQcompCheckBox
+            app.AdaptiveIQcompCheckBox = uicheckbox(app.NewTab);
+            app.AdaptiveIQcompCheckBox.ValueChangedFcn = createCallbackFcn(app, @AdaptiveIQcompCheckBoxValueChanged, true);
+            app.AdaptiveIQcompCheckBox.Text = 'Adaptive IQ comp';
+            app.AdaptiveIQcompCheckBox.Position = [90 640 120 22];
+
+            % Create LsizeEditFieldLabel
+            app.LsizeEditFieldLabel = uilabel(app.NewTab);
+            app.LsizeEditFieldLabel.HorizontalAlignment = 'right';
+            app.LsizeEditFieldLabel.Position = [5 612 40 22];
+            app.LsizeEditFieldLabel.Text = 'L size';
+
+            % Create LsizeEditField
+            app.LsizeEditField = uieditfield(app.NewTab, 'numeric');
+            app.LsizeEditField.Limits = [1 50];
+            app.LsizeEditField.RoundFractionalValues = 'on';
+            app.LsizeEditField.ValueChangedFcn = createCallbackFcn(app, @LsizeEditFieldValueChanged, true);
+            app.LsizeEditField.Position = [50 612 40 22];
+            app.LsizeEditField.Value = 4;
+
+            % Create MUstepEditFieldLabel
+            app.MUstepEditFieldLabel = uilabel(app.NewTab);
+            app.MUstepEditFieldLabel.HorizontalAlignment = 'right';
+            app.MUstepEditFieldLabel.Position = [95 612 50 22];
+            app.MUstepEditFieldLabel.Text = 'MU step';
+
+            % Create MUstepEditField
+            app.MUstepEditField = uieditfield(app.NewTab, 'numeric');
+            app.MUstepEditField.Limits = [1e-31 1];
+            app.MUstepEditField.ValueChangedFcn = createCallbackFcn(app, @MUstepEditFieldValueChanged, true);
+            app.MUstepEditField.Position = [150 612 60 22];
+            app.MUstepEditField.Value = 1e-16;
+
+            % Create PhasecompCheckBox
+            app.PhasecompCheckBox = uicheckbox(app.NewTab);
+            app.PhasecompCheckBox.ValueChangedFcn = createCallbackFcn(app, @PhasecompCheckBoxValueChanged, true);
+            app.PhasecompCheckBox.Text = 'Phase/power comp';
+            app.PhasecompCheckBox.Position = [10 584 125 22];
+
+            % Create CouplingcompCheckBox
+            app.CouplingcompCheckBox = uicheckbox(app.NewTab);
+            app.CouplingcompCheckBox.ValueChangedFcn = createCallbackFcn(app, @CouplingcompCheckBoxValueChanged, true);
+            app.CouplingcompCheckBox.Text = 'Coupling comp';
+            app.CouplingcompCheckBox.Position = [10 558 110 22];
+
+            % Create EVMCheckBox
+            app.EVMCheckBox = uicheckbox(app.NewTab);
+            app.EVMCheckBox.ValueChangedFcn = createCallbackFcn(app, @EVMCheckBoxValueChanged, true);
+            app.EVMCheckBox.Text = 'EVM';
+            app.EVMCheckBox.Position = [10 532 50 22];
+
+            % Create MirrorCheckBox_3
+            app.MirrorCheckBox_3 = uicheckbox(app.NewTab);
+            app.MirrorCheckBox_3.ValueChangedFcn = createCallbackFcn(app, @MirrorCheckBox_3ValueChanged, true);
+            app.MirrorCheckBox_3.Text = 'Mirror plot';
+            app.MirrorCheckBox_3.Position = [90 532 85 22];
+
+            % Create PrintphasemissmatchButton
+            app.PrintphasemissmatchButton = uibutton(app.NewTab, 'push');
+            app.PrintphasemissmatchButton.ButtonPushedFcn = createCallbackFcn(app, @PrintphasemissmatchButtonPushed, true);
+            app.PrintphasemissmatchButton.Position = [10 502 200 23];
+            app.PrintphasemissmatchButton.Text = 'Print phase mismatch';
+
+            % Create DACBFmodeListBoxLabel
+            app.DACBFmodeListBoxLabel = uilabel(app.NewTab);
+            app.DACBFmodeListBoxLabel.Position = [10 472 95 22];
+            app.DACBFmodeListBoxLabel.Text = 'DAC BF mode';
+
+            % Create DACBFmodeListBox
+            app.DACBFmodeListBox = uilistbox(app.NewTab);
+            app.DACBFmodeListBox.Items = {'GUI', 'Random', 'Scaning', 'Rescaning', 'Tracking', 'Retracking', 'Off'};
+            app.DACBFmodeListBox.ValueChangedFcn = createCallbackFcn(app, @DACBFmodeListBoxValueChanged, true);
+            app.DACBFmodeListBox.Position = [10 352 95 118];
+            app.DACBFmodeListBox.Value = 'Off';
+
+            % Create RFSOCBFmodeListBoxLabel
+            app.RFSOCBFmodeListBoxLabel = uilabel(app.NewTab);
+            app.RFSOCBFmodeListBoxLabel.Position = [115 472 95 22];
+            app.RFSOCBFmodeListBoxLabel.Text = 'RFSoC BF mode';
+
+            % Create RFSOCBFmodeListBox
+            app.RFSOCBFmodeListBox = uilistbox(app.NewTab);
+            app.RFSOCBFmodeListBox.Items = {'Tracking', 'Retracking', 'Off'};
+            app.RFSOCBFmodeListBox.ValueChangedFcn = createCallbackFcn(app, @RFSOCBFmodeListBoxValueChanged, true);
+            app.RFSOCBFmodeListBox.Position = [115 412 95 58];
+            app.RFSOCBFmodeListBox.Value = 'Off';
+
+            % Create BurstLenSpinnerLabel
+            app.BurstLenSpinnerLabel = uilabel(app.NewTab);
+            app.BurstLenSpinnerLabel.HorizontalAlignment = 'right';
+            app.BurstLenSpinnerLabel.Position = [112 382 55 22];
+            app.BurstLenSpinnerLabel.Text = 'Burst len';
+
+            % Create BurstLenSpinner
+            app.BurstLenSpinner = uispinner(app.NewTab);
+            app.BurstLenSpinner.Limits = [1 100];
+            app.BurstLenSpinner.RoundFractionalValues = 'on';
+            app.BurstLenSpinner.ValueChangedFcn = createCallbackFcn(app, @BurstLenSpinnerValueChanged, true);
+            app.BurstLenSpinner.Position = [170 382 40 22];
+            app.BurstLenSpinner.Value = 1;
+
+            % Create ChannelcontrolDropDownLabel
+            app.ChannelcontrolDropDownLabel = uilabel(app.NewTab);
+            app.ChannelcontrolDropDownLabel.Position = [10 320 90 22];
+            app.ChannelcontrolDropDownLabel.Text = 'Channel control';
+
+            % Create ChannelcontrolDropDown
+            app.ChannelcontrolDropDown = uidropdown(app.NewTab);
+            app.ChannelcontrolDropDown.Items = {'DAC gain', 'DAC phase', 'DAC I phase', 'ADC gain', 'ADC phase', 'ADC I phase', 'DAC phase corr'};
+            app.ChannelcontrolDropDown.ValueChangedFcn = createCallbackFcn(app, @ChannelcontrolDropDownValueChanged, true);
+            app.ChannelcontrolDropDown.Position = [100 320 110 22];
+            app.ChannelcontrolDropDown.Value = 'DAC phase';
+
+            % Create Ch1SpinnerLabel
+            app.Ch1SpinnerLabel = uilabel(app.NewTab);
+            app.Ch1SpinnerLabel.HorizontalAlignment = 'right';
+            app.Ch1SpinnerLabel.Position = [5 290 30 22];
+            app.Ch1SpinnerLabel.Text = 'Ch1';
+
+            % Create Ch1Spinner
+            app.Ch1Spinner = uispinner(app.NewTab);
+            app.Ch1Spinner.Limits = [-179 179];
+            app.Ch1Spinner.ValueChangedFcn = createCallbackFcn(app, @Ch1SpinnerValueChanged, true);
+            app.Ch1Spinner.Position = [40 290 65 22];
+
+            % Create Ch2SpinnerLabel
+            app.Ch2SpinnerLabel = uilabel(app.NewTab);
+            app.Ch2SpinnerLabel.HorizontalAlignment = 'right';
+            app.Ch2SpinnerLabel.Position = [105 290 30 22];
+            app.Ch2SpinnerLabel.Text = 'Ch2';
+
+            % Create Ch2Spinner
+            app.Ch2Spinner = uispinner(app.NewTab);
+            app.Ch2Spinner.Limits = [-179 179];
+            app.Ch2Spinner.ValueChangedFcn = createCallbackFcn(app, @Ch2SpinnerValueChanged, true);
+            app.Ch2Spinner.Position = [140 290 70 22];
+
+            % Create Ch3SpinnerLabel
+            app.Ch3SpinnerLabel = uilabel(app.NewTab);
+            app.Ch3SpinnerLabel.HorizontalAlignment = 'right';
+            app.Ch3SpinnerLabel.Position = [5 262 30 22];
+            app.Ch3SpinnerLabel.Text = 'Ch3';
+
+            % Create Ch3Spinner
+            app.Ch3Spinner = uispinner(app.NewTab);
+            app.Ch3Spinner.Limits = [-179 179];
+            app.Ch3Spinner.ValueChangedFcn = createCallbackFcn(app, @Ch3SpinnerValueChanged, true);
+            app.Ch3Spinner.Position = [40 262 65 22];
+
+            % Create Ch4SpinnerLabel
+            app.Ch4SpinnerLabel = uilabel(app.NewTab);
+            app.Ch4SpinnerLabel.HorizontalAlignment = 'right';
+            app.Ch4SpinnerLabel.Position = [105 262 30 22];
+            app.Ch4SpinnerLabel.Text = 'Ch4';
+
+            % Create Ch4Spinner
+            app.Ch4Spinner = uispinner(app.NewTab);
+            app.Ch4Spinner.Limits = [-179 179];
+            app.Ch4Spinner.ValueChangedFcn = createCallbackFcn(app, @Ch4SpinnerValueChanged, true);
+            app.Ch4Spinner.Position = [140 262 70 22];
+
+            % Create DACportDropDownLabel
+            app.DACportDropDownLabel = uilabel(app.NewTab);
+            app.DACportDropDownLabel.Position = [10 222 60 22];
+            app.DACportDropDownLabel.Text = 'DAC port';
+
+            % Create DACportDropDown
+            app.DACportDropDown = uidropdown(app.NewTab);
+            app.DACportDropDown.Items = {'DAC_B (dac0)', 'DAC_A (dac1)'};
+            app.DACportDropDown.Position = [75 222 135 22];
+            app.DACportDropDown.Value = 'DAC_B (dac0)';
+
+            % Create DACfileButton
+            app.DACfileButton = uibutton(app.NewTab, 'push');
+            app.DACfileButton.ButtonPushedFcn = createCallbackFcn(app, @DACfileButtonPushed, true);
+            app.DACfileButton.Position = [10 192 200 23];
+            app.DACfileButton.Text = 'Prepare DAC file';
+
+            % Create PortStatusLabel
+            app.PortStatusLabel = uilabel(app.NewTab);
+            app.PortStatusLabel.VerticalAlignment = 'top';
+            app.PortStatusLabel.WordWrap = 'on';
+            app.PortStatusLabel.Position = [10 10 200 175];
+            app.PortStatusLabel.Text = 'VSA_rfsoc_new port: idle';
 
             % Create AvgSpinnerLabel
             app.AvgSpinnerLabel = uilabel(app.LeftPanel);

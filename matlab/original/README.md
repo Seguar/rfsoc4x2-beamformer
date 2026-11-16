@@ -89,3 +89,38 @@ wanted EVM 4.61%, all blanks rejected and receipt age 0.58–1.32 s. A separate
 raw sample loss, OTA beamforming and jammer rejection remain unresolved. These
 measurements precede the public launcher's final hardware validation, including
 its stricter acquisition-age check at measurement completion.
+
+## VSA_rfsoc_new port (New tab)
+
+A fifth tab, **New**, carries the VSA_rfsoc_new (vsa_rfsoc HEAD 2d8610a) controls
+that have an RFSoC4x2 meaning; the original four tabs and their 119 components
+are unchanged. See `FEATURE_PARITY.md` (delivered with the candidate) for every
+VSA_rfsoc_new control, its source and its state here.
+
+- Receive IQ compensation (adaptive LMS, static), L size, MU step; coupling
+  compensation; phase/power compensation from the angle calibration. Array
+  processing only: the direct native-VSA feed stays the raw measured channel.
+- Angle calibration (Downconverter tab button) now runs the VSA_rfsoc_new chain:
+  `calibrationFramesPerAngle` frames per angle, steering + power + coupling tables
+  saved under `cfg.outputDir` and installed for the session when the grid matches.
+  These are model tables from operator-labelled captures, not physical DOA
+  calibration; a common splitter/cable feed carries no angle information.
+- EVM checkbox shows the guarded native-VSA EVM (percent and dB) only; Mirror plot
+  is display-only; Print phase mismatch needs a current array-mode frame.
+- DAC BF mode (MATLAB-side TX steering) needs `capabilities().txArrayElements`
+  >= 4 and `dphase`; RFSoC4x2 has two DAC outputs, so it is refused by default.
+- RFSoC BF mode (`dacbf`) and Burst len (`stream N`) are ZCU216 features and are
+  always refused on RFSoC4x2 with a visible reason; nothing is queued.
+- Channel control queues `dgain/again/phase/diqphase/aiqphase` only when the
+  backend declares them; `dphase` keeps the original 4x2 behaviour.
+- Prepare DAC file: original sigPrepare with 4x2 checks (RAM tiling, peak 1200,
+  I + jQ int16). Upload only through a declared `uploadDacWaveform` backend op
+  and `cfg.allowBoardCommands`; no current backend provides it.
+
+Simulation fixture: `tests/runPortAll.m` (runs `runAll` and `runNewPortFixture`).
+
+Parent review: coupling compensation is disabled with an explicit error, including
+when a matrix is supplied. The ported legacy calibration demonstrably gives wrong
+DOA on an ideal synthetic array; its stored coupling tables are diagnostic only.
+Phase/power and IQ controls remain separate. This restriction needs an independently
+validated coupling algorithm before removal.

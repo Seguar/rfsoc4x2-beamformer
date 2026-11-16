@@ -28,7 +28,7 @@ cfg.reviewed = struct();          % rfsoc.defaultConfig-style struct for bfEngin
 cfg.reviewedPath = "";            % folder containing +rfsoc (reviewed demo matlab/)
 cfg.elementModel = "patch";       % "patch" = original antPrep; "isotropic" = explicit alternative
 cfg.generator = struct('address',"",'port',5025);
-cfg.calibration = struct('powCalibration',[],'steeringCorrection',[],'koef',[]);
+cfg.calibration = struct('powCalibration',[],'steeringCorrection',[],'koef',[],'couplingMatrix',[]);
 cfg.vsaSetupFile = "";            % .setx handed to backend.vsaReset (VSA is backend-owned)
 
 %% Original algorithm / UI state (VSA_rfsoc_exported property names)
@@ -48,4 +48,24 @@ cfg.da = 1; cfg.bwDac = 499e6; cfg.fsOrig = 60e6; cfg.dacFilt = 0; cfg.resmp = 0
 cfg.adcMirror = -1; cfg.dacAngle = 0; cfg.dacSignalType = 4; cfg.dacFc = 0;
 cfg.dacFe = 50; cfg.dacSR = 1; cfg.dacAmp = 2^14-1;
 cfg.fcInt = 5.7e9; cfg.stateInt = 0; cfg.powInt = 0; cfg.modInt = 0;
+
+%% VSA_rfsoc_new port (vsa_rfsoc HEAD 2d8610a); all off by default
+cfg.IQcomp = 0;                   % static receive IQ compensation (frozen filter)
+cfg.adIQcomp = 0;                 % adaptive receive IQ compensation (LMS)
+cfg.sizeL = 4;                    % IQ filter length L
+cfg.stepMU = 1e-16;               % LMS step (original default)
+cfg.phComp = 0;                   % phase/power comp from steeringCorrection/powCalibration
+cfg.coupComp = 0;                 % coupling comp from calibration.couplingMatrix
+cfg.manualMvdrFormula = "45e726b";% MVDRman formula: "45e726b" (default) or "head" (m_mvdr)
+cfg.EVM_check = 0;                % show guarded native-VSA EVM (dB and %) in the titles
+cfg.plotMirror = 0;               % mirror DOA/pattern display (display only)
+cfg.dacBF = 'Off';                % MATLAB-side DAC BF mode (GUI/Random/Scaning/Rescaning/Tracking/Retracking/Off)
+cfg.dphaseCorr = [0 0 0 0];       % DAC phase correction (deg) used by DAC BF
+cfg.calibrationFramesPerAngle = 1;% frames averaged per calibration angle (VSA_rfsoc_new: avg_factor)
+cfg.couplingIterations = 20;      % adaptiveCouplingMatrixCalculation iterations
+cfg.installSessionCalibration = true; % angle calibration result replaces cfg.calibration in this session
+cfg.dacPeakCode = 1200;           % custom DAC file peak per I/Q rail (AGENTS: start low)
+cfg.dacRamComplex = 524288;        % DAC RAM capacity (complex samples) for file preparation
+cfg.randomSeed = 20261116;        % RandStream seed for DAC BF "Random"
+cfg.dacFile = "";                 % custom DAC .mat (Y, XDelta); empty = file dialog (needs allowExternalWindows)
 end

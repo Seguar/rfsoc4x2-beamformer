@@ -69,3 +69,19 @@ substitute.
   error**.
 - `patternCorr`: needs `koef` (`cfg.calibration.koef` or `originalRepoPath/koef.mat`),
   else **explicit error**.
+
+## New tab (VSA_rfsoc_new port)
+
+| Control (VSA_rfsoc_new name) | Refactor |
+|---|---|
+| IQ comp, Adaptive IQ comp, L size, MU step | **ported** (`origapp.iqCompensate`, numerically equal to `adaptiveIQCompensation`); array processing only; static with a zero filter is an explicit error |
+| Phase/power comp (Phasecomp; Powercomp was unwired) | **ported**; needs steering/power tables on the scan grid; explicit error with c1 |
+| Coupling comp | **ported verbatim**; needs `calibration.couplingMatrix`. The original coupling calibration does not return ~identity on ideal simulated captures (see FEATURE_PARITY) |
+| EVM | **changed**: guarded native-VSA status only (no raw SCPI query); % and dB |
+| Mirror plot (MirrorCheckBox_3) | **ported**, display only |
+| Print phase mismatch | **ported** (`origapp.phaseMismatch` = cphase), text output, array mode only |
+| DAC BF mode | **gated**: capability `txArrayElements>=4` + `dphase`; Tracking needs array mode; wraps phase correctly (original fold bug not reproduced) |
+| RFSoC BF mode, Burst len | **explicit unsupported** (ZCU216 `dacbf`/`stream N`), value reverts |
+| Channel control + Ch1..Ch4 | **gated** per command verb by `capabilities()`; refused changes revert the spinner |
+| DAC port + Prepare DAC file (new) | **ported** sigPrepare with 4x2 checks; upload only through declared capability |
+| Start angle calibrations (existing Downconverter button) | **extended** to the VSA_rfsoc_new chain (power + coupling, averaging) |

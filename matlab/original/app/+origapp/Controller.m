@@ -140,6 +140,44 @@ classdef Controller < handle
             end
         end
 
+        function c = capabilities(obj)
+            % Optional backend op (VSA_rfsoc_new port). Declares which new
+            % commands/operations the backend really supports; nothing is
+            % assumed from the board name or a network address.
+            %   commands        string array of command verbs it accepts
+            %   txArrayElements DAC channels usable as one steerable TX array
+            %   uploadDac       true when uploadDacWaveform(port, int16) exists
+            c = struct('commands', strings(1,0), 'txArrayElements', 0, 'uploadDac', false);
+            if obj.hasBackend() && origapp.Controller.hasOp(obj.Backend, "capabilities")
+                d = obj.Backend.capabilities();
+                assert(isstruct(d), 'origapp:Capabilities', 'capabilities() must return a struct.');
+                f = fieldnames(c);
+                for k = 1:numel(f)
+                    if isfield(d, f{k}), c.(f{k}) = d.(f{k}); end
+                end
+                c.commands = reshape(string(c.commands), 1, []);
+                assert(isscalar(c.txArrayElements) && c.txArrayElements >= 0 && ...
+                    islogical(c.uploadDac) && isscalar(c.uploadDac), 'origapp:Capabilities', ...
+                    'capabilities(): txArrayElements >= 0 and logical uploadDac expected.');
+            end
+        end
+
+        function [ok, reason] = queueChecked(obj, command)
+            % Queue a VSA_rfsoc_new command only if the policy allows it.
+            [ok, reason] = origapp.commandPolicy(string(command), obj.capabilities());
+            if ok, obj.queue(command); end
+        end
+
+        function uploadDac(obj, port, interleaved)
+            c = obj.capabilities();
+            assert(c.uploadDac && origapp.Controller.hasOp(obj.Backend, "uploadDacWaveform"), ...
+                'origapp:Unsupported', ['DAC waveform upload is not provided by this backend ' ...
+                '(capabilities().uploadDac=false); the file was prepared only.']);
+            assert(obj.Config.allowBoardCommands, 'origapp:Unsupported', ...
+                'DAC waveform upload held: cfg.allowBoardCommands=false.');
+            obj.Backend.uploadDacWaveform(string(port), interleaved);
+        end
+
         function n = expectedSamples(obj)
             n = obj.Config.dataChan;
         end

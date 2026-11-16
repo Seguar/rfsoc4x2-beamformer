@@ -80,3 +80,15 @@ that mask as `availableChannels`; zero placeholders are not measurements. Partia
 masks forbid array mode. `vsaStatus()` returns current guarded validity, reason,
 source and EVM. A successful `vsaSend` call alone does not imply valid demodulation.
 The owned VSA title distinguishes hardware, unavailable, acquiring and stale data.
+
+## VSA_rfsoc_new port: optional capability ops
+
+| Operation | Contract |
+|---|---|
+| `c = capabilities()` | struct: `commands` (string array of accepted command verbs), `txArrayElements` (DAC channels usable as one steerable TX array), `uploadDac` (logical). Absent = none declared. Nothing is inferred from board names or addresses. |
+| `uploadDacWaveform(port, int16)` | Only called when `capabilities().uploadDac` and `cfg.allowBoardCommands`. Interleaved I,Q int16 (I + jQ), length tiling the DAC RAM. No current backend implements it. |
+
+`dacbf`, `dacbfcorr` and `stream N` are refused even when declared (ZCU216-only).
+`dgain`, `again`, `phase`, `diqphase`, `aiqphase` need declaration. The staged 4x2
+parser (`board/legacy_server.py`) accepts only fc/cal/phase/dphase/dataChan/
+dataStream/da/dacPow. `LegacyVsaBackend` declares nothing and has no `send`.

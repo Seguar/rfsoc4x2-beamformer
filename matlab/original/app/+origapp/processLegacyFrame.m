@@ -16,9 +16,40 @@ function out = processLegacyFrame(rawData, p)
 % c2 fsRfsoc bw c estimator estimatorKind alg_scan_res mis_ang alpha gamma
 % iter calibration bfEngine reviewed
 
+%
+% VSA_rfsoc_new additions (vsa_rfsoc HEAD 2d8610a rfsocBf.m), all optional
+% fields with the HEAD order IQ -> coupling -> band filter -> DOA -> phase comp:
+%   p.iqAdaptive / p.iqStatic / p.iqFilter (L-by-4) / p.iqMu : receive IQ compensation
+%   p.coupComp + p.calibration.couplingMatrix (4-by-4)       : coupling compensation
+%   p.phComp + steeringCorrection/powCalibration            : phase/power compensation
+%   p.manualMvdrFormula "45e726b" (default) | "head" (m_mvdr power-weighted manifold)
+% out.iqFilter returns the updated adaptive filter state.
+
 out = struct('yspec',[],'estimated_angle',[],'bfSig',[],'weights',[], ...
-    'rawData',[],'vsaBuffer',[],'spectrumAvailable',false,'engine',string(p.bfEngine));
+    'rawData',[],'vsaBuffer',[],'spectrumAvailable',false,'engine',string(p.bfEngine), ...
+    'iqFilter',[],'corrections',strings(1,0));
 assert(size(rawData,2)==4, 'origapp:Frame', 'Need N-by-4 data.');
+p = withDefaults(p);
+
+%% Receive IQ compensation (VSA_rfsoc_new: adaptive first, then static)
+if p.iqAdaptive
+    [rawData, p.iqFilter] = origapp.iqCompensate(rawData, p.iqFilter, "adaptive", p.iqMu);
+    out.corrections(end+1) = "adaptiveIQ";
+end
+if p.iqStatic
+    assert(any(p.iqFilter ~= 0, 'all'), 'origapp:IqComp', ['Static IQ comp needs a ' ...
+        'nonzero IQ filter (run Adaptive IQ comp first); an all-zero filter is a no-op.']);
+    rawData = origapp.iqCompensate(rawData, p.iqFilter, "static");
+    out.corrections(end+1) = "staticIQ";
+end
+out.iqFilter = p.iqFilter;
+
+%% Coupling compensation (VSA_rfsoc_new: rawData = (C*rawData.').')
+if p.coupComp
+    error('origapp:CouplingUnreviewed', ['Coupling compensation is disabled pending review: ' ...
+        'the legacy calibration moved a known 20-degree source to -41 degrees in simulation. ' ...
+        'Stored couplingMatrix tables are diagnostic only.']);
+end
 
 %% Band filter (original filtSig)
 rawData = filtSig(rawData, p.fsRfsoc, p.bw);
@@ -35,7 +66,16 @@ switch p.estimatorKind
         assert(size(pow,1)==numel(p.scan_axis) && size(pow,2)==4, 'origapp:Calibration', ...
             'powCalibration must be %d-by-4.', numel(p.scan_axis));
         yspec = zeros(1, numel(p.scan_axis));
-        for t = 1:numel(p.scan_axis)
+        if p.manualMvdrFormula == "head"
+            % VSA_rfsoc_new Functions/m_mvdr.m: manifold weighted by the power
+            % table, unnormalised data, linear output.
+            Rinv = (rawData'*rawData)^(-1);
+            for t = 1:numel(p.scan_axis)
+                A_fixed = exp(-1j*pi*(0:3)'*sind(p.scan_axis(t))).*estimator(t,:)'.*pow(t,:).';
+                yspec(t) = abs(1/(A_fixed'*Rinv*A_fixed));
+            end
+        end
+        for t = 1:numel(p.scan_axis)*(p.manualMvdrFormula ~= "head")
             A = exp(-1j*pi*(0:3)'*sind(p.scan_axis(t)));
             A_fixed = A.*estimator(t,:)';
             sig_final_fixed = rawData./(pow(t,:).^0.5);
@@ -90,6 +130,26 @@ if p.c1
     ang_idx = find(p.scan_axis == estimated_angle(1), 1);
     assert(~isempty(ang_idx), 'origapp:Calibration', 'Estimated angle is not on the scan grid.');
     rawData = conj(estimator(ang_idx,:)).*rawData./(pow(ang_idx,:).^0.5);
+end
+
+%% Phase/power comp (VSA_rfsoc_new phComp/powComp; replaces c1 there)
+if p.phComp
+    assert(~p.c1, 'origapp:Calibration', ['c1 and Phase/power comp apply the same ' ...
+        'correction; enable only one.']);
+    if p.estimatorKind == "manual" && size(estimator,2) == 4
+        sc = estimator;                       % HEAD: estimator(ang_idx,:) first
+    else
+        sc = p.calibration.steeringCorrection;
+    end
+    pow = p.calibration.powCalibration;
+    G = numel(p.scan_axis);
+    assert(isequal(size(sc), [G 4]) && isequal(size(pow), [G 4]), 'origapp:Calibration', ...
+        ['Phase/power comp needs steeringCorrection and powCalibration of %d-by-4 ' ...
+        '(the current scan grid); got %s and %s.'], G, mat2str(size(sc)), mat2str(size(pow)));
+    ang_idx = find(p.scan_axis == estimated_angle(1), 1);
+    assert(~isempty(ang_idx), 'origapp:Calibration', 'Estimated angle is not on the scan grid.');
+    rawData = conj(sc(ang_idx,:)).*rawData./(pow(ang_idx,:).^0.5);
+    out.corrections(end+1) = "phasePower";
 end
 
 %% Beamforming
@@ -197,4 +257,18 @@ if rc.algorithm == "LCMV"
 end
 [~, w] = rfsoc.beamform(rawData, rc);
 weights = conj(w(:)).';
+end
+
+function p = withDefaults(p)
+% VSA_rfsoc_new fields are optional so existing callers keep 45e726b behaviour.
+d = struct('iqAdaptive', false, 'iqStatic', false, 'iqFilter', zeros(4,4), 'iqMu', 1e-16, ...
+    'coupComp', false, 'phComp', false, 'manualMvdrFormula', "45e726b");
+f = fieldnames(d);
+for k = 1:numel(f)
+    if ~isfield(p, f{k}), p.(f{k}) = d.(f{k}); end
+end
+p.manualMvdrFormula = string(p.manualMvdrFormula);
+assert(any(p.manualMvdrFormula == ["45e726b","head"]), 'origapp:Config', ...
+    'manualMvdrFormula must be "45e726b" or "head".');
+if ~isfield(p.calibration, 'couplingMatrix'), p.calibration.couplingMatrix = []; end
 end

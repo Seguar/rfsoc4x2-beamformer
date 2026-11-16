@@ -6,7 +6,8 @@ boot overlay and `vsa_rfsoc` sample conventions; no FPGA build is required.
 
 **Current UI direction:** rework the original `VSA_rfsoc` interface and use native
 VSA for constellation/EVM. The [original-app refactor](matlab/original/README.md)
-retains all119 controls and defaults to the reviewed beamformer core. Synthetic
+retains all119 original controls, adds32 components on a fifth tab and defaults
+to the reviewed beamformer core. See the [newer-app feature map](docs/NEW_APP_PORT.md). Synthetic
 UI/failure tests pass and the editable `.mlapp` passes headless model/code checks.
 Its integrated native-VSA backend has a bounded hardware-tested predecessor;
 [the original-app launcher](matlab/original/README.md#native-vsa-launch) is undergoing

@@ -2,13 +2,22 @@
 
 Delivered together:
 
-- `app/VSA_rfsoc_refactor.mlapp`: original119-component model with the refactored controller callbacks.
+- `app/VSA_rfsoc_refactor.mlapp`: the original 119-component model plus 32
+  components of one appended tab, **New** (VSA_rfsoc_new port), with the
+  refactored controller callbacks.
 - `app/VSA_rfsoc_refactor_exported.m`: matching App Designer-generated export.
 
-Both were saved together using MATLAB R2026a internal serialization APIs. Fresh-process
-readback checks every component,65 callback links, stored editable/startup code,
-MathWorks parser output, and matching99 methods/212 properties. Closing by either
-`delete(app)` or window close cleans up the timer, controller and backend.
+Both were saved together with MATLAB R2026a internal serialization APIs by
+`tools/appdesigner/build_mlapp_ext.m`, from an explicit component spec
+(`uiExtensionSpec.m`). Component code comes from App Designer's
+ComponentCodeGenerator; the component-declaration and createComponents blocks
+are regenerated from the model by `adComponentCode.m`, which first reproduces
+the shipped 119-component export byte-exactly. Fresh-process readback
+(`verify_mlapp_ext.m`) checks: 151 components, the 119 original components'
+property fingerprints unchanged, every spec row (parent, properties, callback
+binding), export blocks equal to the reloaded model, 83 callback links, stored
+editable/startup code, MathWorks parser output, MLAPPExporter output and equal
+class metadata of .mlapp and export.
 
 App Designer generates `delete(app)`, so cleanup lives in `releaseResources`,
 registered as a figure-destruction listener. It also generates `Visible='on'` at the
@@ -19,8 +28,3 @@ that generated show line changed to off. The shipped app/export stay consistent.
 Opening/saving/exporting in the App Designer editor has not been checked. The
 artifact passed headless model/code readback and parser checks; this is not an editor
 round-trip claim. The original source repository and its app are untouched.
-
-Code-only rebuild tools live in `tools/appdesigner/`. They rely on undocumented
-R2026a APIs and may require adaptation for another MATLAB release. Preserve the
-component model, callback signatures and generated layout; visual component edits
-belong in App Designer. Never replace only the ZIP's `document.xml`.
