@@ -41,6 +41,10 @@ Optional name/value pairs:
 - `board ADDRESS` skips the search and uses this address.
 - `dialog off` never opens the address window; the application fails instead.
 - `seconds N` closes the window after N seconds.
+- `rows N` starts with N samples per frame (32768, 16384, 8192 or 4096), as the
+  Data amount control.
+- `record <folder>` writes every received window, a frame log and a per-frame
+  demodulation log there (diagnostics; keep them out of the repository).
 - `snapshot DIR` saves one snapshot (PNG and MAT) under `DIR/snapshots` before closing.
 - `theme dark|light` selects the start-up theme.
 - `interferer DB` (demo only) adds a simulated interferer at −50° model angle,

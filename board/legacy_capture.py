@@ -82,6 +82,10 @@ LOCK_MIN = 0.3
 HOST_TRUNC_GAP, HOST_GUARD, HOST_MINRUN = 1543, 16, 64
 EDGE_MARGIN = 48
 NUDGES = [0] + [d * m for m in range(1, 17) for d in (128, -128)]   # start shifts tried, <= 2048 rows
+# Reduced windows (display rate): fewer rows of the same capture, sent raw, with a
+# cheap selection (see fast_window). 4096 rows hold one complete OFDM frame.
+ROWS_ALLOWED = (4096, 8192, 16384, WIN)
+FRAME_LEAD = 256                                     # rows sent before the frame start
 
 
 def _corr_fft():
@@ -356,6 +360,84 @@ def select_window(raw, ref, burst, ref_fft_conj=None, n=WIN):
     return info['start'], info
 
 
+_FAST = {}                                         # per-reference cache and the last alignment
+
+
+def fast_window(raw, ref, burst, n, ref_fft_conj=None, state=_FAST):
+    """Reduced window: n < WIN rows of ONE capture that start FRAME_LEAD rows before
+    an OFDM frame, so 4096 rows hold one complete frame. Made for display rate.
+
+    The start is taken after WRAP_GUARD rows: with the shared player/capture
+    start the DAC loop wrap is at the capture start, so these rows are one
+    contiguous pass. That is assumed here, not searched (select_window searches
+    it and costs ~0.25 s); the host checks every stream against the reference
+    and refuses a window that does not match. The alignment of the previous
+    capture is tried first (+-8 rows), an FFT search only when it fails."""
+    t0 = time.perf_counter()
+    rows = raw.reshape(-1, 8)
+    n_loop = rows.shape[0]
+    r0 = WRAP_GUARD
+    if state.get('ref') is not ref:
+        refc = ref.astype(np.complex64)
+        act = ref_activity(ref)
+        edges = np.flatnonzero(np.diff(np.concatenate([[0], act.astype(np.int8)])) == 1)   # frame starts, incl. row 0
+        state.clear()
+        state.update(ref=ref, refc=np.concatenate([refc, refc[:WIN + 256]]),
+                     edges=edges[edges < burst].astype(float), kk=None)
+    refc, edges = state['refc'], state['edges']
+    seg = lambda k, a, m: (rows[a:a + m, 2*k].astype(np.float32) + 1j * rows[a:a + m, 2*k+1].astype(np.float32))
+    rms = [float(np.sqrt(np.mean(np.abs(seg(k, r0, BLOCK)[::4]) ** 2))) for k in range(4)]
+    ch = int(np.argmax(rms))
+    z = seg(ch, r0, BLOCK)
+    nz = np.sqrt(np.vdot(z, z).real) + 1e-30
+
+    def lock_at(k, x=z, a=r0, norm=nz):
+        r = refc[(a - k) % n_loop:(a - k) % n_loop + len(x)]
+        return float(abs(np.vdot(r, x)) / (np.sqrt(np.vdot(r, r).real) * norm + 1e-30))
+
+    kk, lock = None, 0.0
+    if state['kk'] is not None:
+        c = [(lock_at(state['kk'] + d), state['kk'] + d) for d in range(-8, 9)]
+        lock, kk = max(c)
+    if lock < 0.6:                                   # first capture, or the alignment moved
+        fft, ifft = _corr_fft()
+        if ref_fft_conj is None:
+            ref_fft_conj = np.conj(fft(ref.astype(np.complex64)))
+        x = np.zeros(n_loop, np.complex64)
+        x[r0:r0 + BLOCK] = z
+        k2 = int(np.argmax(np.abs(ifft(fft(x) * ref_fft_conj))))
+        l2 = lock_at(k2)
+        if l2 > lock:
+            lock, kk = l2, k2
+    info = {'det_stream': ch, 'rms_sub4': [round(v, 2) for v in rms], 'lock_block': round(lock, 4), 'rows': int(n)}
+    if lock < LOCK_MIN:
+        state['kk'] = None
+        info.update(note='unlocked: no wanted signal in the reduced window', start=r0, candidate='none',
+                    select_s=time.perf_counter() - t0)
+        return r0, info
+    state['kk'] = kk % n_loop
+    # next frame start at or after r0 + FRAME_LEAD (burst phase; bursts are alike)
+    # loop index first: the loop (131072 rows) is not a whole number of bursts
+    ph = ((r0 - kk) % n_loop) % burst
+    start = r0 + int(round(min((e - FRAME_LEAD - ph) % burst for e in edges)))
+    # bursts are interchangeable: use the one whose loop range holds the whole window
+    base = (start - kk) % n_loop
+    shift = 0
+    while base + n > n_loop - 64 and shift < 6:
+        base = (base - burst) % n_loop; shift += 1
+    kw = int(round(start - base)) % n_loop
+    m = min(n, SUB)
+    locks = []
+    for k in range(4):
+        x = seg(k, start, m)
+        nx = np.sqrt(np.vdot(x, x).real) + 1e-30
+        locks.append(round(max(lock_at(kw + d, x, start, nx) for d in range(-3, 4)), 4))
+    info.update(start=int(start), candidate='fast', kk=kw, stream_locks=locks,
+                note='reduced window after the capture start; wrap assumed at the shared start, not searched',
+                select_s=time.perf_counter() - t0)
+    return int(start), info
+
+
 def frame_extension(start, select_s, full_sha_hex, window_bytes, info):
     js = json.dumps(info, separators=(',', ':')).encode()
     if len(js) > EXT3_JSON_MAX:
@@ -457,10 +539,12 @@ def require_lock(overlay, manifest, stage):
 
 
 def write_dac(overlay, words, selected):
-    """Write full RAM explicitly (len == RAM: the wrapper neither tiles nor truncates)."""
+    """Write full RAM explicitly (len == RAM: the wrapper neither tiles nor truncates).
+    selected: '0' (DAC_B), '1' (DAC_A) or a (DAC_B, DAC_A) mask; the rest is zeroed."""
     zero = np.zeros(RAM, dtype='<i2')
-    a = words if selected == '0' else zero
-    b = words if selected == '1' else zero
+    mask = {'0': (True, False), '1': (False, True)}.get(selected, selected)
+    a = words if mask[0] else zero
+    b = words if mask[1] else zero
     assert len(overlay.dac0_player) == RAM and len(overlay.dac1_player) == RAM
     overlay.dac_data_mem_write(a, overlay.dac0_player)
     overlay.dac_data_mem_write(b, overlay.dac1_player)
@@ -661,7 +745,8 @@ def main():
             from control_service import ControlService
             controls = BoardCommands(overlay, a.dac, WIN*8,
                                      lambda: require_lock(overlay, manifest, 'control'),
-                                     lambda enabled: write_dac(overlay, words if enabled else np.zeros(RAM, dtype='<i2'), a.dac))
+                                     lambda mask: write_dac(overlay, words, mask),
+                                     allowed_words=[r*8 for r in ROWS_ALLOWED], both_dacs=True)
             hardware_lock = controls.lock
             control_service = ControlService(a.stream_bind, a.control_port, controls.apply, lock=hardware_lock)
             control_service.start()
@@ -690,6 +775,7 @@ def main():
                                  'format': WIRE_FORMAT3, 'adc_ram_words': RAM,
                                  'capture': 'full-ram-contiguous', 'window': 'same-capture-contiguous',
                                  'window_rows': WIN, 'capture_rows': RAM // 8,
+                                 'window_rows_allowed': list(ROWS_ALLOWED) if a.control_port else [WIN],
                                  'wire_channels': [0, 1, 2, 3], 'available_channels': [1, 1, 1, 1],
                                  'channel_connectors': ['ADC_D', 'unverified', 'unverified', 'unverified'],
                                  'lane_convention': 'board lanes I,Q per stream; host builds I - 1j*Q (tcpDataRec)',
@@ -769,21 +855,27 @@ def main():
                             raw, refreshed, writable, previous_sha = full_capture(overlay, previous_sha)
                             mono = time.monotonic_ns()
                             control_revision = controls.revision if controls else 0
+                            rows_now = controls.data_words // 8 if controls else WIN
                             break
                     time.sleep(.05)
                 if not refreshed:
                     raise RuntimeError('ADC RAM not refreshed (sentinel kept or identical capture)')
                 label = kind.encode().ljust(8, b' ')
                 ext = b''
+                reduced = v3 and rows_now != WIN
                 if v3:
-                    start, sel = select_window(raw, ref125, burst125, ref_fft_conj)
-                    wire = np.ascontiguousarray(raw.reshape(-1, 8)[start:start + WIN, :])   # all 4 streams
+                    if reduced:
+                        start, sel = fast_window(raw, ref125, burst125, rows_now, ref_fft_conj)
+                    else:
+                        start, sel = select_window(raw, ref125, burst125, ref_fft_conj)
+                    wire = np.ascontiguousarray(raw.reshape(-1, 8)[start:start + rows_now, :])   # all 4 streams
                     body = wire.tobytes()
-                    if len(body) != WIRE_BYTES3 or wire.shape != (WIN, 8):
+                    if len(body) != rows_now * 16 or wire.shape != (rows_now, 8):
                         raise RuntimeError('window wire size differs')
                     sel['control_revision'] = control_revision
                     ext = frame_extension(start, sel['select_s'], previous_sha, body, sel)
-                    magic = b'IQZ3' if a.wire_codec == 'deflate' else b'IQL3'
+                    # a reduced window is small: sent raw (IQL3), no deflate time
+                    magic = b'IQZ3' if a.wire_codec == 'deflate' and not reduced else b'IQL3'
                     mask = MASK3
                 else:
                     wire = np.ascontiguousarray(raw.reshape(-1, 8)[:, 0:2])   # stream0 = ADC_D only
@@ -792,7 +884,7 @@ def main():
                         raise RuntimeError('wire size differs')
                     magic = b'IQZ2' if a.wire_codec == 'deflate' else b'IQL2'
                     mask = MASK
-                payload = encode_wire(body) if a.wire_codec == 'deflate' else body
+                payload = encode_wire(body) if a.wire_codec == 'deflate' and not reduced else body
                 client.settimeout(30)
                 client.sendall(struct.pack(FRAME_HDR, magic, sequence, mono, req_ns, time.time_ns(),
                                            label, mask, len(payload)) + ext + payload)
@@ -804,7 +896,7 @@ def main():
                          'ch0_rms': float(np.sqrt(np.mean(ch0**2))),
                          'ch0_peak': int(np.max(np.abs(ch0)))}
                 if v3:
-                    entry.update(window_start=int(sel['start']), select_s=round(sel['select_s'], 4),
+                    entry.update(rows=rows_now, window_start=int(sel['start']), select_s=round(sel['select_s'], 4),
                                  candidate=sel.get('candidate'), lock_block=sel.get('lock_block'), wrap_row=sel.get('wrap_row'), wrap_from=sel.get('wrap_from'),
                                  stream_locks=sel.get('stream_locks'), sub_lags=sel.get('sub_lags'),
                                  stream_rms=sel.get('rms_sub4'))

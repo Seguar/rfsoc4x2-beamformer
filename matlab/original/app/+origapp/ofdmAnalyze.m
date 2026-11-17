@@ -62,7 +62,7 @@ for i = 1:size(cand, 1)
     if numel(allB) >= opt.maxBursts
         c.reason = "not analysed (maxBursts)";
     elseif n0 + burstLen - 1 > numel(x)
-        c.reason = sprintf('incomplete burst: needs %d rows, %d left in buffer', burstLen, numel(x) - n0 + 1);
+        c.reason = string(sprintf('incomplete burst: needs %d rows, %d left in buffer', burstLen, numel(x) - n0 + 1));
     else
         [b, why] = demodBurst(x(n0:n0+burstLen-1), P);
         b.start = n0; b.sync = cand(i, 2);
@@ -84,7 +84,7 @@ if isempty(cand)
     R.reason = sprintf('no preamble correlation >= %.2f (peak %.3f)', opt.syncThreshold, R.syncPeak);
 elseif isempty(B)
     R.state = "REFUSED";
-    R.reason = "all " + numel(C) + " synced bursts refused: " + strjoin(unique([C.reason]), "; ");
+    R.reason = "all " + numel(C) + " synced bursts refused: " + strjoin(unique(string({C.reason})), "; ");
 else
     q = aggregate(emptyResult(P,opt), B, P);
     R.qualifiedPayloadEvmPercent = q.evmPercent;

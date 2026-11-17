@@ -104,6 +104,8 @@ classdef LegacyVsaBackend < handle
         ExtBuf = []
         ExtBytes = []
         JsonBuf = []
+        RowsAllowed = 32768     % v3 window sizes the stream declared (window_rows_allowed)
+        Compressed = false      % codec of the frame being received (its magic)
     end
     properties (Constant)
         LOOP_N = 131072         % legacy loop (= full capture) length at 125 MHz
@@ -156,6 +158,8 @@ classdef LegacyVsaBackend < handle
         function c = capabilities(obj)
             names=strings(1,0);
             if obj.Config.controlPort>0, names=["fc","phase","dphase","dacPow","da","dataStream"];end
+            % Reduced windows: only when the connected stream declared them.
+            if obj.Config.controlPort>0 && numel(obj.RowsAllowed)>1, names(end+1)="dataChan";end
             c=struct('commands',names,'txArrayElements',0,'uploadDac',false);
         end
 
@@ -230,6 +234,13 @@ classdef LegacyVsaBackend < handle
                     'a2live:Protocol','Board control endpoint differs from configuration.');
             end
             obj.SourceTag = origapp.LegacyVsaBackend.sourceTag(string(md.source));
+            obj.RowsAllowed = obj.N;
+            if obj.WireMode == "window4" && isfield(md,'window_rows_allowed')
+                ra = double(md.window_rows_allowed(:).');
+                assert(~isempty(ra) && all(ra == fix(ra)) && all(ra >= 4096 & ra <= obj.N) && any(ra == obj.N), ...
+                    'a2live:Metadata', 'Invalid window_rows_allowed');
+                obj.RowsAllowed = ra;
+            end
             obj.Metadata = md;
             obj.Anchor.boardMonoNs = double(md.board_monotonic_ns);
             obj.Anchor.hostPosix = preConnect;
@@ -592,14 +603,50 @@ classdef LegacyVsaBackend < handle
                 'startPhase', I.startPhase, 'endPhase', I.endPhase, ...
                 'legacyPsiJumps', B.jumps, 'wraps', B.wraps, 'loopIdx1', B.loopIdx(1), 'psi', B.psi);
         end
+        function A = reducedWindowCheck(obj, X, start, info)
+            % Host check of a reduced v3 window (fewer rows, made for display
+            % rate): every stream's first and last 4096 rows must correlate
+            % with the transmitted loop at the board-reported alignment
+            % (+-8 rows). This shows the wanted signal on each stream and
+            % that both ends belong to one pass; unlike windowIntegrity it
+            % does not search the rows between them for a wrap or a loss.
+            t0 = tic;
+            if obj.Config.orientation == "IplusjQ", X = conj(X); end
+            n = size(X,1); m = min(n, 4096); locks = zeros(1, size(X,2));
+            kk = origapp.LegacyVsaBackend.metaField(info, 'kk');
+            reason = "reduced window: board alignment missing";
+            if isnumeric(kk) && isscalar(kk) && isfinite(kk) && kk == fix(kk)
+                base = mod(start - kk, obj.LOOP_N);
+                parts = unique([0, n - m]); best = zeros(numel(parts), size(X,2));
+                for q = 1:numel(parts)
+                    x = X(parts(q) + (1:m), :); nx = sqrt(sum(abs(x).^2, 1)) + realmin;
+                    for lag = -8:8
+                        r = obj.Ref(mod(base + parts(q) + lag + (0:m-1), obj.LOOP_N) + 1);
+                        c = abs(r' * x) ./ (sqrt(sum(abs(r).^2)) * nx + realmin);
+                        best(q,:) = max(best(q,:), c);
+                    end
+                end
+                locks = min(best, [], 1);
+                reason = "reduced window: reference lock at both ends, no wrap search";
+            end
+            [~, kb] = max(locks);
+            A = struct('streamLocks', locks, 'boundaryFree', all(locks >= obj.Config.lockThreshold), ...
+                'integrityReason', reason, 'integrityStream', kb - 1, 'lagSpread', NaN, 'minCorr', min(locks), ...
+                'anchorsTried', 0, 'integrityS', toc(t0), 'startPhase', NaN, 'endPhase', NaN, ...
+                'legacyPsiJumps', [], 'wraps', [], 'loopIdx1', NaN, 'psi', []);
+        end
     end
     methods (Static)
-        function ok = validWindowSummary(info)
+        function ok = validWindowSummary(info, reduced)
             % Fail closed on a selector fallback, missing or malformed JSON.
+            % A reduced window must come from the reduced selector, a full one
+            % from the wrap-searching selector.
+            if nargin < 2, reduced = false; end
             ok = isstruct(info) && isscalar(info) && isfield(info,'candidate');
             if ~ok, return; end
             c = string(info.candidate);
-            ok = isscalar(c) && ~ismissing(c) && any(c == ["before-wrap","after-wrap","nowrap","clear"]);
+            names = ["before-wrap","after-wrap","nowrap","clear"]; if reduced, names = "fast"; end
+            ok = isscalar(c) && ~ismissing(c) && any(c == names);
         end
         function h = sha256(path)
             md = System.Security.Cryptography.SHA256.Create();
@@ -709,8 +756,13 @@ classdef LegacyVsaBackend < handle
                 obj.updateStale(true);
                 return
             end
-            z = string(obj.Metadata.compression) ~= "none";
-            assert(kind == string(ifelse(z, "IQZ", "IQL")) + string(2 + v3), 'a2live:Protocol', 'Bad frame magic %s', kind);
+            % The codec is per frame (its magic): a reduced v3 window is sent raw
+            % also on a stream that compresses its full windows.
+            z = startsWith(string(kind), "IQZ");
+            assert(any(string(kind) == ["IQZ","IQL"] + string(2 + v3)) && ...
+                (~z || string(obj.Metadata.compression) ~= "none") && ...
+                (z || v3 || string(obj.Metadata.compression) == "none"), 'a2live:Protocol', 'Bad frame magic %s', kind);
+            obj.Compressed = z;
             assert(seq == obj.ExpectedSeq, 'a2live:Sequence', 'Missing/out-of-order frame: got seq %d, expected %d', seq, obj.ExpectedSeq);
             assert(obj.Metadata.continuous || seq < obj.Metadata.frames_planned, 'a2live:Bound', ...
                 'Frame %d exceeds the claimed bound of %d frames', seq, obj.Metadata.frames_planned);
@@ -719,7 +771,8 @@ classdef LegacyVsaBackend < handle
                 assert(nbytes > 36 && nbytes <= obj.FRAME_BYTES + 36 + 8192, 'a2live:Protocol', ...
                     'Compressed frame length %d out of range', nbytes);
             else
-                assert(nbytes == obj.FRAME_BYTES, 'a2live:Protocol', 'Frame wire length %d differs from %d', nbytes, obj.FRAME_BYTES);
+                assert(nbytes == obj.FRAME_BYTES || (v3 && any(nbytes == 16*obj.RowsAllowed)), 'a2live:Protocol', ...
+                    'Frame wire length %d differs from %d', nbytes, obj.FRAME_BYTES);
             end
             obj.BodyNeed = nbytes;
             obj.HdrBytes = h; obj.InBody = true; obj.Got = 0;
@@ -731,7 +784,8 @@ classdef LegacyVsaBackend < handle
             n = double(typecast(e(73:74), 'uint16'));
             assert(n >= 2 && n <= obj.EXT_JSON_MAX, 'a2live:Protocol', 'Frame extension JSON length %d out of range', n);
             start = double(typecast(e(1:4), 'uint32'));
-            assert(start + obj.N <= obj.LOOP_N - 8192, 'a2live:Protocol', ...
+            rows = obj.N; if ~obj.Compressed, rows = obj.BodyNeed/16; end
+            assert(start + rows <= obj.LOOP_N - 8192, 'a2live:Protocol', ...
                 'Window start row %d outside the capture (last block excluded)', start);
             obj.ExtBytes = e; obj.Got = 0; obj.Stage = 2;
         end
@@ -742,7 +796,7 @@ classdef LegacyVsaBackend < handle
 
         function frame = finishFrame(obj)
             h = obj.HdrBytes; payload = uint8(obj.Body); payload = payload(1:obj.BodyNeed);
-            if string(obj.Metadata.compression) ~= "none"
+            if obj.Compressed
                 body = origapp.LegacyVsaBackend.decodeWire(payload, obj.FRAME_BYTES);   % verified lossless
             else
                 body = payload;
@@ -872,7 +926,12 @@ classdef LegacyVsaBackend < handle
             catch
             end
             t = tic;
-            A = obj.hostWindowCheck(samples);
+            reduced = size(samples,1) < obj.N;
+            if reduced
+                A = obj.reducedWindowCheck(samples, start, info);
+            else
+                A = obj.hostWindowCheck(samples);
+            end
             frame.windowStart = start;
             frame.captureSha256 = fullSha;
             frame.windowSha256 = lower(string(reshape(dec2hex(winSha)', 1, [])));
@@ -881,7 +940,8 @@ classdef LegacyVsaBackend < handle
             frame.boardStreamLocks = obj.metaField(info, 'stream_locks');
             frame.hostStreamLocks = A.streamLocks;
             frame.signalChannels = A.streamLocks >= obj.Config.lockThreshold;
-            summaryOK = origapp.LegacyVsaBackend.validWindowSummary(info);
+            summaryOK = origapp.LegacyVsaBackend.validWindowSummary(info, reduced);
+            frame.reducedWindow = reduced;
             frame.boundaryFree = logical(A.boundaryFree && summaryOK && ...
                 max(A.streamLocks) >= obj.Config.lockThreshold);
             frame.boardSummaryOk = summaryOK;

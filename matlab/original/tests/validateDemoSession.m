@@ -16,6 +16,7 @@ c.ofdm=struct('setupSha256',origapp.LegacyVsaBackend.sha256(c.vsaSetupFile), ...
 figures0=numel(findall(groot,'Type','figure'));timers0=numel(timerfindall);
 s=origapp.DemoSession(c);s.start();
 enqueue(0,0,true);s.step();a=s.snapshot();
+assert(a.valid,'First frame refused: %s',string(a.reason));
 assert(a.valid && a.analysis.valid && ~isempty(a.doaSpectrum) && ~isempty(a.patternDb));
 assert(numel(a.samples)==32768 && numel(a.spectrum.freqHz)>0 && isempty(sends));
 assert(numel(findall(groot,'Type','figure'))==figures0,'Headless session constructed a GUI.');
@@ -41,7 +42,8 @@ closed=0;c.analyzer="integrated";c.allowBoardCommands=true;
 app=origapp.BeamformerApp(c);assert(numel(findall(groot,'Type','figure'))==figures0+1);
 assert(numel(timerfindall)==timers0+1 && isempty(sends));
 app.Controller.open();enqueue(5,0,true);app.tick();
-a=app.Session.snapshot();assert(app.View.LastSequence==5 && a.valid);
+a=app.Session.snapshot();assert(a.valid,'Frontend frame refused: %s',string(a.reason));
+assert(app.View.LastSequence==5);
 % The snapshot carries display-only stream diagnostics and acquisition counters.
 assert(isequal(a.channels.available,true(1,4)) && all(isfinite(a.channels.levelDbfs)) && ...
     abs(a.channels.relPhaseDeg(1))<1e-9 && all(a.channels.coherence>.5) && a.health.accepted>=1);
@@ -57,7 +59,28 @@ app.View.Controls.PhaseKind.Value='DAC';app.View.Controls.PhaseKind.ValueChanged
 app.View.Controls.phase1.Value=45;app.View.Controls.ApplyPhase.ButtonPushedFcn(app.View.Controls.ApplyPhase,struct());
 assert(isempty(app.View.Controls.Error.Text) && strcmp(sends{end},'dphase 45/0/0/0'));
 app.View.Controls.Dac.Value=false;app.View.Controls.Dac.ValueChangedFcn(app.View.Controls.Dac,struct());
-assert(isempty(app.View.Controls.Error.Text) && strcmp(sends{end},'dacPow 0/0/0/0'));
+% Original ADC/DAC controls: power per DAC, SYNC mode, Nyquist zones, mirror, DAC A frequency.
+V=app.View.Controls;
+assert(isempty(V.Error.Text) && strcmp(sends{end},'dacPow 0/0/1/0'),'DAC B off must keep DAC A: %s',sends{end});
+V.DacA.Value=false;V.DacA.ValueChangedFcn(V.DacA,struct());
+assert(isempty(V.Error.Text) && strcmp(sends{end},'dacPow 0/0/0/0'));
+V.Sync.Value=1;V.Sync.ValueChangedFcn(V.Sync,struct());
+assert(isempty(V.Error.Text) && strcmp(sends{end},'da 1') && app.Session.Config.da==1);
+V.adcEven.Value=true;V.dac1MHz.Value=2900;V.ApplyRF.ButtonPushedFcn(V.ApplyRF,struct());
+assert(isempty(V.Error.Text) && strcmp(sends{end},'fc -3000/2/5100/1/2900/1'),'RF command: %s',sends{end});
+assert(app.Session.Config.nyquistZone==2 && app.Session.Config.fc_d1==2900e6);
+% Data amount: this backend declares no dataChan command, so the frame is cropped
+% here to one complete OFDM frame; nothing is sent to the board.
+n0=numel(sends);V.rows.Value=4096;V.rows.ValueChangedFcn(V.rows,struct());
+assert(isempty(V.Error.Text) && app.Session.Rows==4096 && ~app.Session.BoardRows && numel(sends)==n0);
+enqueue(8,0,true);app.tick();a=app.Session.snapshot();
+assert(a.valid && numel(a.samples)==4096 && a.analysis.valid && a.analysis.metricBursts==1, ...
+    'Reduced frame must hold one complete OFDM frame: %s',jsonencode(struct('n',numel(a.samples),'state',string(a.analysis.state),'reason',string(a.analysis.reason),'bursts',a.analysis.metricBursts)));
+refused=false;try,app.Session.configure(struct('analyzer','both'));catch e,refused=string(e.identifier)=='origapp:Config';end
+assert(refused,'Native VSA comparison must need the full frame.');
+% Pinned controls stay outside the pages; DSP is the first page.
+assert(strcmp(V.PageButton(1).Text,'DSP') && isequal(V.ch.Parent,V.QuickGrid) && isequal(V.bf.Parent,V.QuickGrid) && ...
+    isequal(V.doa.Parent,V.QuickGrid) && isequal(V.ang_num.Parent,V.QuickGrid) && isequal(V.rows.Parent,V.QuickGrid));
 delete(app);
 assert(closed==1 && numel(findall(groot,'Type','figure'))==figures0 && numel(timerfindall)==timers0);
 report=struct('label','SYNTHETIC SESSION/VIEW — no hardware', 'headlessCreatesNoFigures',true, ...

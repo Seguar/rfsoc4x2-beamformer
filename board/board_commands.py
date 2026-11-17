@@ -7,12 +7,14 @@ else:
 
 
 class BoardCommands:
-    def __init__(self, overlay, dac, data_words, check_lock, set_output=None):
+    def __init__(self, overlay, dac, data_words, check_lock, set_output=None, allowed_words=None, both_dacs=False):
         self.overlay = overlay
         self.dac = int(dac)
         self.data_words = data_words
+        self.allowed_words = tuple(allowed_words or (data_words,))
         self.check_lock = check_lock
         self.set_output = set_output
+        self.both_dacs = bool(both_dacs)
         self.lock = threading.RLock()
         self.streaming = True
         self.revision = 0
@@ -34,23 +36,32 @@ class BoardCommands:
     def apply(self, line):
         """Service holds lock. Validate entire batch before any hardware operation.
 
-        Fixed-size streams cannot resize mid-frame; an identical dataChan is a
-        no-op. The unused DAC stays zero and cannot be selected by dacPow.
+        dataChan (int16 lane words per frame) may only take a size the stream
+        declared (allowed_words); the capture loop reads it for the next frame
+        and the revision marks the change. An identical dataChan is a no-op.
+        The unused DAC stays zero and cannot be selected by dacPow, unless the
+        session was created with both_dacs (set_output then gets a mask).
         Wrapper fc/phase/dphase retain the original units, indexing and MTS calls.
         """
         cmds = parse_commands(line)
         for name, values in cmds:
-            if name == 'dataChan' and values != [self.data_words]:
-                raise ValueError('dataChan changes require restarting with a new frame format')
+            if name == 'dataChan' and values[0] not in self.allowed_words:
+                raise ValueError('dataChan must be one of %s lane words for this stream'
+                                 % '/'.join(map(str, self.allowed_words)))
             if name == 'dacPow':
-                allowed = 0 if self.dac == 0 else 2
-                if any(v for n, v in enumerate(values) if n != allowed):
-                    raise ValueError('Only the session-selected DAC can be enabled')
+                allowed = (0, 2) if self.both_dacs else ((0,) if self.dac == 0 else (2,))
+                if any(v for n, v in enumerate(values) if n not in allowed):
+                    raise ValueError('Only DAC index 0 (DAC_B) and 2 (DAC_A) exist' if self.both_dacs
+                                     else 'Only the session-selected DAC can be enabled')
         self.check()
-        changed = any(name not in ('status', 'dataChan') for name, _ in cmds)
+        changed = any(name != 'status' and (name, values) != ('dataChan', [self.data_words])
+                      for name, values in cmds)
         try:
             for name, values in cmds:
-                if name in ('status', 'dataChan'):
+                if name == 'status':
+                    continue
+                if name == 'dataChan':
+                    self.data_words = values[0]
                     continue
                 if name == 'dataStream':
                     self.streaming = bool(values[0])
@@ -61,7 +72,9 @@ class BoardCommands:
                     self.overlay.handle_commands([text])
                     if name == 'dacPow':
                         if self.set_output is not None:
-                            self.set_output(bool(values[0 if self.dac == 0 else 2]))
+                            # both_dacs: (DAC_B, DAC_A) mask; else the selected DAC's state
+                            self.set_output((bool(values[0]), bool(values[2])) if self.both_dacs
+                                            else bool(values[0 if self.dac == 0 else 2]))
                         self.overlay.dacs_control()
             self.check_lock()
             if changed:

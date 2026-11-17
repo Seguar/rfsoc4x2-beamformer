@@ -56,11 +56,16 @@ try
         app.RecalibrateADCsButton.Tooltip='Legacy automatic ADC calibration is unavailable in this controlled session.';
     end
     guard=onCleanup(@()closeAppHandle(app)); %#ok<NASGU> value-captured handle, no nested-workspace teardown
+    rows=NaN;if isfield(opt,'rows'),rows=opt.rows;end
+    if isfinite(rows) && string(cfg.frontend)=="clean",app.setRows(rows);end
     app.startAcquisition();
     assert(app.Controller.IsOpen,'origapp:Startup','Original app backend did not open.');
-    started=tic;
+    started=tic;firstFrame=NaN;firstCount=0;
     while isvalid(app) && ~backend.Ended && toc(started)<limit && ~isfile(s.session.stopFile)
         pause(.1);
+        if isvalid(app) && isnan(firstFrame) && app.Controller.FramesAccepted>0
+            firstFrame=toc(started);firstCount=app.Controller.FramesAccepted;
+        end
         if isvalid(app) && ~app.Controller.IsOpen
             assert(app.Controller.ConsecutiveErrors<cfg.maxConsecutiveErrors, ...
                 'origapp:Stopped','Acquisition stopped after repeated errors: %s',app.Controller.LastError);
@@ -76,6 +81,9 @@ try
         c=app.Controller; report.uiFrames=c.FramesAccepted; report.uiErrors=c.TotalErrors;
         report.uiBoundaryFrames=c.BoundaryFrames; report.uiExpiredFrames=c.ExpiredFrames;
         report.uiNoSignalFrames=c.NoSignalFrames; report.uiLastError=c.LastError;
+        % Accepted frames per second after the first one (excludes start-up).
+        report.displayRateHz=(c.FramesAccepted-firstCount)/max(toc(started)-firstFrame,eps);
+        if string(cfg.frontend)=="clean",report.rows=app.Session.Rows;report.boardRows=app.Session.BoardRows;end
     end
     closeAppHandle(app); backend.close();
     fid=fopen(s.session.reportFile,'w'); assert(fid>=0); fileGuard=onCleanup(@()fclose(fid));

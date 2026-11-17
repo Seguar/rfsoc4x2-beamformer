@@ -14,7 +14,7 @@ import time
 import unittest
 import numpy as np
 from board.legacy_capture import (select_window, window_candidates, frame_extension, EXT3, WIN, BLOCK,
-                                  WIRE_BYTES3, encode_wire)
+                                  WIRE_BYTES3, encode_wire, fast_window, ref_activity, FRAME_LEAD, _FAST)
 from tools.legacy_reference import build
 
 SOURCE = Path(os.environ.get('LEGACY_SOURCE', 'C:/work/git/vsa_rfsoc/Signals/dac_ofdm_f_500.mat'))
@@ -76,6 +76,26 @@ class WindowSelectTests(unittest.TestCase):
             if BLOCK < true_w < N - BLOCK:
                 self.assertLessEqual(min(abs(info['wrap_row'] - true_w), N - abs(info['wrap_row'] - true_w)), BLOCK, info)
         self.assertLess(max(times), 2.0)
+
+    def test_reduced_window_starts_one_lead_before_a_complete_frame(self):
+        """Reduced (display-rate) windows: for any capture alignment the window is one
+        contiguous pass and its first complete OFDM frame starts FRAME_LEAD rows in."""
+        rng = np.random.default_rng(7)
+        act = ref_activity(self.ref)
+        for kk in (0, 3, 5000, 40000, 70001, 103000, 131000):
+            raw, idx = capture(self.ref, kk, self.gains, rng)
+            _FAST.clear()
+            for rows in (4096, 8192, 16384):
+                with self.subTest(kk=kk, rows=rows):
+                    s, info = fast_window(raw, self.ref, self.burst, rows)
+                    self.assertEqual(info['candidate'], 'fast')
+                    w = idx[s:s + rows]
+                    self.assertTrue(np.all(np.diff(w) == 1))
+                    a = act[w].astype(int)
+                    first = int(np.flatnonzero(np.diff(a) == 1)[0]) + 1
+                    self.assertLessEqual(abs(first - FRAME_LEAD), 2, 'frame starts %d rows in' % first)
+                    self.assertGreaterEqual(rows - first, 3000, 'first frame incomplete')
+                    self.assertGreater(min(info['stream_locks']), 0.9)
 
     def test_measured_100ppm_slips(self):
         # ~13 one-sample advances per capture decorrelate a full-capture correlation

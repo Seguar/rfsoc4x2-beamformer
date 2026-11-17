@@ -17,12 +17,16 @@ classdef BeamformerApp < handle
                 obj.Session=origapp.DemoSession(cfg);obj.Controller=obj.Session.Controller;
                 cb=struct('start',@()obj.startAcquisition(),'pause',@(on)obj.pause(on), ...
                     'rf',@(rf)obj.rf(rf),'phase',@(r)obj.phase(r), ...
-                    'dac',@(on)obj.dac(on),'configure',@(delta)obj.configure(delta), ...
+                    'dac',@(on)obj.dac(on),'sync',@(m)obj.sync(m),'configure',@(delta)obj.configure(delta), ...
                     'calibration',@()obj.calibration(),'close',@()obj.close());
-                if ~cfg.allowBoardCommands,cb=rmfield(cb,{'pause','rf','phase','dac'});end
+                if ~cfg.allowBoardCommands,cb=rmfield(cb,{'pause','rf','phase','dac','sync'});end
                 vc=obj.Session.Config;vc.ofdmProfile=obj.Session.Analyzer.Profile.summary;
                 vc.availableChannels=obj.Controller.availableChannels();
+                vc.rows=obj.Session.Rows;vc.rowsAllowed=obj.Session.rowsAllowed();
                 obj.View=origapp.BeamformerView(vc,cb);
+                % Finish building the window now: its first draw takes seconds and
+                % would otherwise age the first frame past the stale limit.
+                drawnow
                 obj.AcqTimer=timer('ExecutionMode','fixedSpacing','BusyMode','drop', ...
                     'Period',cfg.periodSeconds,'Name','RFSoC focused frontend', ...
                     'TimerFcn',@(~,~)obj.tick(),'ErrorFcn',@(~,e)obj.timerError(e));
@@ -41,6 +45,10 @@ classdef BeamformerApp < handle
             obj.Session.step(@(s)obj.render(s));
             obj.render(obj.Session.snapshot());
             if ~obj.Controller.IsOpen && strcmp(obj.AcqTimer.Running,'on'),stop(obj.AcqTimer);end
+        end
+        function setRows(obj,n)
+            % Data amount (samples per frame) from a launcher option.
+            obj.configure(struct('rows',n));
         end
         function watchdog(obj)
             if obj.Closed || isempty(obj.View),return,end
@@ -88,6 +96,9 @@ classdef BeamformerApp < handle
         function dac(obj,on)
             obj.Session.setDac(on);obj.render(obj.Session.snapshot());
         end
+        function sync(obj,mode)
+            obj.Session.setSync(mode);obj.render(obj.Session.snapshot());
+        end
         function rf(obj,value)
             obj.Session.applyRf(value);obj.refreshControls();obj.render(obj.Session.snapshot());
         end
@@ -99,7 +110,8 @@ classdef BeamformerApp < handle
         end
         function refreshControls(obj)
             c=obj.Session.Config;c.ofdmProfile=obj.Session.Analyzer.Profile.summary;
-            c.availableChannels=obj.Controller.availableChannels();obj.View.updateConfig(c);
+            c.availableChannels=obj.Controller.availableChannels();
+            c.rows=obj.Session.Rows;c.rowsAllowed=obj.Session.rowsAllowed();obj.View.updateConfig(c);
         end
         function timerError(obj,event)
             reason="acquisition timer failed";

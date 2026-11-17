@@ -20,7 +20,7 @@ function report=RFSoCBeamformer(varargin)
 % and written to a log.
 report=struct();
 try
-    opt=struct('seconds',Inf,'snapshot','','theme','','interferer',-Inf,'board','','dialog','on');
+    opt=struct('seconds',Inf,'snapshot','','theme','','interferer',-Inf,'board','','dialog','on','rows',NaN,'record','');
     optionName=@(x)lower(regexprep(char(string(x)),'^-+',''));
     mode='auto';rest=varargin;
     if ~isempty(rest) && ~isfield(opt,optionName(rest{1})),mode=char(string(rest{1}));rest=rest(2:end);end
@@ -29,7 +29,7 @@ try
         name=optionName(rest{k});
         assert(isfield(opt,name),'origapp:Standalone','Unknown option "%s".',name);
         value=rest{k+1};
-        if any(strcmp(name,{'seconds','interferer'})) && ~isnumeric(value),value=str2double(value);end
+        if any(strcmp(name,{'seconds','interferer','rows'})) && ~isnumeric(value),value=str2double(value);end
         opt.(name)=value;
     end
     assert(isnumeric(opt.seconds) && isscalar(opt.seconds) && opt.seconds>0,'origapp:Standalone','seconds must be positive.');
@@ -160,6 +160,14 @@ backend=struct('host',host,'port',session.ready.stream_port,'referenceMat',ref,'
     'allowContinuous',true,'staleSeconds',2,'expectSource','rfsoc4x2-hardware','logFile','','rawDir','', ...
     'frameLogFile','','controlPort',session.ready.control_port,'controlLogFile',fullfile(out,'commands.jsonl'), ...
     'wireMode','window4','prefetchWithoutVsa',true);
+if ~isempty(opt.record)
+    % Diagnostics: every received window (raw int16), one JSON line per frame
+    % from the receiver and one per demodulated buffer. Measurements: keep them
+    % out of the repository.
+    rec=char(opt.record);if ~isfolder(rec),mkdir(rec);end
+    backend.rawDir=rec;backend.frameLogFile=fullfile(rec,'frames.jsonl');
+    app.ofdm.logFile=fullfile(rec,'ofdm.jsonl');
+end
 settings=struct('app',app,'backend',backend,'session',struct('maxSeconds',session.seconds, ...
     'stopFile',fullfile(out,'STOP'),'reportFile',fullfile(out,'result.json')));
 settingsPath=fullfile(out,'frontend.json');
@@ -200,6 +208,7 @@ sim=origapp.simulatedArrayBackend(ref,struct('fcHz',cfg.fc,'samples',cfg.dataCha
 cfg.backend=sim.backend;
 app=origapp.BeamformerApp(cfg);guard=onCleanup(@()delete(app)); %#ok<NASGU>
 app.View.Figure.Name='RFSoC 4x2 Beamformer — SIMULATION, no hardware';
+if isfinite(opt.rows),app.setRows(opt.rows);end
 app.startAcquisition();started=tic;
 while isvalid(app) && app.View.isOpen() && toc(started)<opt.seconds
     pause(.1);

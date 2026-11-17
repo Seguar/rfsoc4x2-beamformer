@@ -105,8 +105,9 @@ classdef OfdmAnalyzer < handle
 
         function lock = referenceLock(obj, x)
             % Same quantity as LegacyVsaBackend.analyzeBlocks medianLock.
-            N = numel(obj.RefFftConj); L = 8192; nb = floor(numel(x)/L);
-            if nb < 1, lock = 0; return, end
+            % A reduced frame shorter than 8192 rows is one block of its own length.
+            N = numel(obj.RefFftConj); L = min(8192, numel(x)); nb = floor(numel(x)/max(L,1));
+            if L < 1024, lock = 0; return, end
             ref = obj.Ref;
             v = zeros(1, nb);
             for j = 1:nb

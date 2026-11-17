@@ -146,6 +146,25 @@ class BoardCommandTests(unittest.TestCase):
         self.adapter.apply('dacPow 1/0/0/0')
         self.assertEqual(enabled, [False, True])
 
+    def test_declared_frame_sizes_change_the_data_amount(self):
+        adapter = BoardCommands(self.overlay, 0, 262144, lambda: None, allowed_words=[32768, 65536, 262144])
+        self.assertEqual(adapter.apply('dataChan 262144')['revision'], 0)       # identical: no-op
+        result = adapter.apply('dataChan 32768')
+        self.assertEqual((result['data_words'], result['revision']), (32768, 1))
+        with self.assertRaises(ValueError):
+            adapter.apply('dataChan 131072')
+        self.assertEqual(adapter.data_words, 32768)
+        self.assertEqual(self.overlay.calls, [])                               # never a driver call
+
+    def test_both_dacs_session_passes_a_mask(self):
+        masks = []
+        adapter = BoardCommands(self.overlay, 0, 262144, lambda: None, masks.append, both_dacs=True)
+        self.assertEqual(adapter.apply('dacPow 1/0/1/0')['dac_power'], [1, 0, 1, 0])
+        adapter.apply('dacPow 0/0/1/0')
+        self.assertEqual(masks, [(True, True), (False, True)])
+        with self.assertRaises(ValueError):
+            adapter.apply('dacPow 1/1/0/0')
+
     def test_disable_error_does_not_mask_original_fault(self):
         self.overlay.handle_commands = lambda _: (_ for _ in ()).throw(RuntimeError('original failure'))
         self.overlay.dacs_off = lambda: (_ for _ in ()).throw(RuntimeError('disable failure'))

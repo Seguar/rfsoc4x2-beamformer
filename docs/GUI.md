@@ -66,14 +66,32 @@ reason inside each one; the EVM history stays and is labelled history only.
 
 ## Sidebar
 
+Always visible above the pages, as in the original GUI: Start/Pause, then
+**Output** (combined beam or one receive stream), **Signal priority** (strongest
+or weaker source), **Beamformer**, **DOA estimator** and **Data amount**.
+
+**Data amount** sets the samples per frame: 32768 (full, checked), 16384, 8192
+or 4096 (one complete OFDM frame, fastest). With the board service a reduced
+amount is sent by the board (`dataChan`), uncompressed and with a cheap window
+choice: the window starts 256 samples before an OFDM frame, after the first
+12288 rows of the capture, where the shared player/capture start puts the loop
+wrap. The host then checks every stream against the transmitted loop at both
+ends of the window; it does not search the rows between them for a wrap or a
+lost sample as it does for the full window. Without the board command
+(simulation, an older service) the full frame is cropped on the host to the same
+layout. The native VSA comparison needs the full frame.
+
 Four pages, switched by the segmented control:
 
-- **RF:** ADC/DAC center frequency, selected-DAC waveform enable, real ADC/DAC
-  mixer phases and calibration-file loading. An Apply button is highlighted while
-  its fields differ from the last values the board accepted.
-- **DSP:** output channel, beamformer, DOA estimator, source count/priority, scan
-  width/step, averaging, filter bandwidth, IQ and phase/power correction, and an
-  optional native-VSA comparison.
+- **DSP** (first page): source count, scan width/step, averaging, filter
+  bandwidth, IQ and phase/power correction, and an optional native-VSA comparison.
+- **RF:** the original System-tab converter controls: ADC center, even Nyquist
+  zone and mirror; DAC B and DAC A centers with their even Nyquist zones (one
+  Apply sends the `fc` command); power of DAC B and DAC A (`dacPow`; both play the
+  same waveform and add in the combiner); **SYNC** (`da`: DAC = ADC, DAC = DAC,
+  free running); ADC or DAC mixer phases; calibration-file loading. An Apply
+  button is highlighted while its fields differ from the last values the board
+  accepted.
 - **Algorithms:** diagonal/robust loading, uncertainty, iteration count, mismatch
   width/step and IQ filter length/step. Reviewed-engine parameter controls map to
   the actual processing fields; changing loading is covered by a weight-change test.
@@ -82,14 +100,15 @@ Four pages, switched by the segmented control:
   rejection type, native-VSA comparison, OFDM profile and a time-stamped event log
   of state changes, applied or refused controls and quality-flagged frames.
 
-Start/Pause stay above the pages. A refused control restores the previous value
-and shows the reason in the sidebar, the status line and the event log.
+A refused control restores the previous value and shows the reason in the
+sidebar, the status line and the event log.
 
 Correction modes requiring data refuse activation until their filter or matching
 calibration exists. RF/phase changes clear model calibration and plot averaging.
-Automatic ADC calibration, ZCU216 controls, device/Arduino/generator launchers,
-raw commands, debug switches, capture-memory size, converter clocks, cutter,
-waveform upload and duplicate plot windows are omitted from this layout.
+Automatic ADC calibration (`cal`), the separate `sync` command, ZCU216 controls,
+device/Arduino/generator launchers, raw commands, debug switches, converter
+clocks, cutter, waveform upload and duplicate plot windows are omitted from this
+layout.
 
 At normal desktop sizes the plots use three columns of stacked pairs: receive
 pattern under the DOA spectrum, time domain under the baseband spectrum and

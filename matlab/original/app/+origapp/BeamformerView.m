@@ -47,6 +47,9 @@ classdef BeamformerView < handle
         EvmUnit = 'percent'
         ThemeName = 'dark'
     end
+    properties (Constant,Access=private)
+        RfFields = ["adcMHz","dacMHz","dac1MHz","adcEven","adcMirror","d0Even","d1Even"]
+    end
     properties (Access=private)
         Config
         Callbacks
@@ -263,6 +266,9 @@ classdef BeamformerView < handle
             obj.Controls.phComp.Enable=matlab.lang.OnOffSwitchState(ready);
             obj.Controls.phComp.Value=logical(cfg.phComp);obj.Accepted.phComp=logical(cfg.phComp);
             obj.Controls.doa.Value=char(cfg.doa);obj.Accepted.doa=char(cfg.doa);
+            if isfield(cfg,'rows') && any(cellfun(@(v)isequal(v,cfg.rows),obj.Controls.rows.ItemsData))
+                obj.Controls.rows.Value=cfg.rows;obj.Accepted.rows=cfg.rows;
+            end
             obj.band();
         end
         function fitPlots(obj)
@@ -613,7 +619,7 @@ classdef BeamformerView < handle
         end
         function buildControls(obj,parent)
             th=obj.Theme;
-            g=uigridlayout(parent,[4 1],'RowHeight',{34,0,30,'1x'},'Padding',[10 10 10 8],'RowSpacing',8, ...
+            g=uigridlayout(parent,[5 1],'RowHeight',{34,0,146,30,'1x'},'Padding',[10 10 10 8],'RowSpacing',8, ...
                 'BackgroundColor',th.panel);obj.Controls.SideGrid=g;
             buttons=uigridlayout(g,[1 2],'ColumnWidth',{'1x','1x'},'Padding',[0 0 0 0], ...
                 'BackgroundColor',th.panel);
@@ -627,9 +633,13 @@ classdef BeamformerView < handle
             if ~obj.has('pause'),obj.Controls.Pause.Enable='off';end
             obj.Controls.Error=uilabel(g,'Text','','FontColor',th.warn,'BackgroundColor',th.warnBg,'WordWrap','on', ...
                 'FontSize',11,'Visible','off');
+            % Always visible, whatever page is open (as in the original GUI):
+            % what is shown, which source, and the two algorithm selectors.
+            q=uigridlayout(g,[5 2],'ColumnWidth',{104,'1x'},'RowHeight',{26,26,26,26,26},'Padding',[0 0 0 0], ...
+                'RowSpacing',4,'ColumnSpacing',6,'BackgroundColor',th.panel);q.Layout.Row=3;obj.Controls.QuickGrid=q;
             seg=uigridlayout(g,[2 4],'RowHeight',{'1x',2},'ColumnWidth',{'1x','1x','1.35x','1.15x'},'RowSpacing',0, ...
-                'ColumnSpacing',2,'Padding',[0 0 0 0],'BackgroundColor',th.panel);seg.Layout.Row=3;
-            names={'RF','DSP','Algorithms','Monitor'};
+                'ColumnSpacing',2,'Padding',[0 0 0 0],'BackgroundColor',th.panel);seg.Layout.Row=4;
+            names={'DSP','RF','Algorithms','Monitor'};
             for k=1:4
                 obj.Controls.PageButton(k)=uibutton(seg,'state','Text',names{k},'FontSize',11, ...
                     'BackgroundColor',th.panel,'FontColor',th.muted,'ValueChangedFcn',@(~,~)obj.selectPage(k));
@@ -639,42 +649,60 @@ classdef BeamformerView < handle
             end
             for k=1:4
                 obj.Controls.PagePanel(k)=uigridlayout(g,[1 1],'Padding',[0 0 0 0],'BackgroundColor',th.panel,'Visible','off');
-                obj.Controls.PagePanel(k).Layout.Row=4;obj.Controls.PagePanel(k).Layout.Column=1;
+                obj.Controls.PagePanel(k).Layout.Row=5;obj.Controls.PagePanel(k).Layout.Column=1;
             end
-            rf=obj.Controls.PagePanel(1);dsp=obj.Controls.PagePanel(2);
+            dsp=obj.Controls.PagePanel(1);rf=obj.Controls.PagePanel(2);
             advanced=obj.Controls.PagePanel(3);mon=obj.Controls.PagePanel(4);
             % --- RF ---------------------------------------------------------
-            r=obj.controlGrid(rf,{20,28,28,28,26,6,20,28,28,28,28,28,28,6,28,44});
-            obj.heading(r,1,'RF TUNING');
+            % Rows 17..20 hold the four phase fields (see phaseKind).
+            r=obj.controlGrid(rf,{20,28,22,22,20,28,22,28,22,28,22,22,28,6,20,28,28,28,28,28,28,6,28,44});
+            obj.heading(r,1,'ADC');
             obj.number(r,2,'ADC center','adcMHz',obj.field(obj.Config,'fc',3e9)/1e6,[0 6000],false,'%g MHz');
-            obj.number(r,3,'DAC center','dacMHz',obj.field(obj.Config,'fc_d0',3e9)/1e6,[0 6000],false,'%g MHz');
-            obj.Controls.adcMHz.ValueChangedFcn=@(~,~)obj.dirty();
-            obj.Controls.dacMHz.ValueChangedFcn=@(~,~)obj.dirty();
-            obj.Controls.adcMHz.RoundFractionalValues='on';obj.Controls.dacMHz.RoundFractionalValues='on';
-            obj.Controls.ApplyRF=obj.button(r,4,'Apply frequency',@(~,~)obj.rfAction());
-            obj.Controls.ApplyRF.Tooltip='Retune ADC and DAC mixers. Clears model calibration and averaging.';
-            obj.Controls.Dac=obj.checkbox(r,5,'Selected DAC enabled','dac',logical(any(obj.field(obj.Config,'dacPow',[1 0 0 0]))),false);
-            obj.Controls.Dac.ValueChangedFcn=@(h,~)obj.valueAction('dac',h,logical(h.Value));
-            obj.heading(r,7,'REQUESTED MIXER PHASES');
-            obj.Controls.PhaseKind=obj.dropdown(r,8,'Converters','phaseKind',{'ADC','DAC'},'DAC',false);
+            obj.checkbox(r,3,'Even Nyquist zone','adcEven',obj.field(obj.Config,'nyquistZone',1)==2,false);
+            obj.checkbox(r,4,'Mirror','adcMirror',obj.field(obj.Config,'adcMirror',1)<0,false);
+            obj.Controls.adcMirror.Tooltip='Negative ADC mixer frequency: mirrors the received spectrum.';
+            obj.heading(r,5,'DAC');
+            obj.number(r,6,'DAC B center','dacMHz',obj.field(obj.Config,'fc_d0',3e9)/1e6,[0 6000],false,'%g MHz');
+            obj.checkbox(r,7,'DAC B even Nyquist zone','d0Even',obj.field(obj.Config,'nyquistZone_d0',1)==2,false);
+            obj.number(r,8,'DAC A center','dac1MHz',obj.field(obj.Config,'fc_d1',3e9)/1e6,[0 6000],false,'%g MHz');
+            obj.checkbox(r,9,'DAC A even Nyquist zone','d1Even',obj.field(obj.Config,'nyquistZone_d1',1)==2,false);
+            for n=["adcMHz","dacMHz","dac1MHz","adcEven","adcMirror","d0Even","d1Even"]
+                obj.Controls.(n).ValueChangedFcn=@(~,~)obj.dirty();
+            end
+            for n=["adcMHz","dacMHz","dac1MHz"],obj.Controls.(n).RoundFractionalValues='on';end
+            obj.Controls.ApplyRF=obj.button(r,10,'Apply frequency',@(~,~)obj.rfAction());
+            obj.Controls.ApplyRF.Tooltip='Retune ADC and DAC mixers and Nyquist zones. Clears model calibration and averaging.';
+            pow=logical(obj.field(obj.Config,'dacPow',[1 0 0 0]));pow(end+1:4)=false;
+            obj.Controls.Dac=obj.checkbox(r,11,'DAC B power','dac',pow(1),false);
+            obj.Controls.DacA=obj.checkbox(r,12,'DAC A power','dacA',pow(3),false);
+            obj.Controls.Dac.ValueChangedFcn=@(h,~)obj.dacAction(h);
+            obj.Controls.DacA.ValueChangedFcn=@(h,~)obj.dacAction(h);
+            obj.Controls.DacA.Tooltip='Both DACs play the same waveform; they add in the combiner.';
+            obj.Controls.Sync=obj.dropdown(r,13,'SYNC','da',{'DAC = ADC','DAC = DAC','Free running'},'DAC = ADC',false);
+            obj.Controls.Sync.ItemsData={2,1,0};obj.Controls.Sync.Value=obj.field(obj.Config,'da',2);
+            obj.Accepted.da=obj.Controls.Sync.Value;
+            obj.Controls.Sync.ValueChangedFcn=@(h,~)obj.syncAction(h);
+            obj.Controls.Sync.Tooltip=['DAC = ADC: the DACs play during each capture, started with it. ' ...
+                'DAC = DAC: both DACs start together and play continuously. Free running: no common start.'];
+            obj.heading(r,15,'REQUESTED MIXER PHASES');
+            obj.Controls.PhaseKind=obj.dropdown(r,16,'Converters','phaseKind',{'ADC','DAC'},'DAC',false);
             obj.Controls.PhaseKind.ValueChangedFcn=@(~,~)obj.phaseKind();
             for k=1:4
-                obj.number(r,8+k,sprintf('Channel %d',k),sprintf('phase%d',k),obj.PhaseValues.DAC(k),[-180 180],false,'%g°');
+                obj.number(r,16+k,sprintf('Channel %d',k),sprintf('phase%d',k),obj.PhaseValues.DAC(k),[-180 180],false,'%g°');
                 obj.Controls.(sprintf('phase%d',k)).ValueChangedFcn=@(~,~)obj.dirty();
                 obj.Controls.(sprintf('phase%d',k)).RoundFractionalValues='on';
             end
-            obj.Controls.ApplyPhase=obj.button(r,13,'Apply phases',@(~,~)obj.phaseAction());
+            obj.Controls.ApplyPhase=obj.button(r,21,'Apply phases',@(~,~)obj.phaseAction());
             obj.Controls.ApplyPhase.Tooltip='Write the requested mixer phases. Clears model calibration and averaging.';
-            if obj.has('calibration'),obj.Controls.Calibration=obj.button(r,15,'Load calibration…',@(~,~)obj.action('calibration',[]));end
+            if obj.has('calibration'),obj.Controls.Calibration=obj.button(r,23,'Load calibration…',@(~,~)obj.action('calibration',[]));end
             info=uilabel(r,'Text','ADC_D = stream 0. Other connector mappings remain unverified.', ...
-                'WordWrap','on','FontColor',th.dim,'FontSize',10,'VerticalAlignment','top');info.Layout.Row=16;info.Layout.Column=[1 2];
+                'WordWrap','on','FontColor',th.dim,'FontSize',10,'VerticalAlignment','top');info.Layout.Row=24;info.Layout.Column=[1 2];
             if ~obj.has('rf'),obj.Controls.ApplyRF.Enable='off';end
-            if ~obj.has('dac'),obj.Controls.Dac.Enable='off';end
+            if ~obj.has('dac'),obj.Controls.Dac.Enable='off';obj.Controls.DacA.Enable='off';end
+            if ~obj.has('sync'),obj.Controls.Sync.Enable='off';end
             if ~obj.has('phase'),obj.Controls.ApplyPhase.Enable='off';end
             % --- DSP --------------------------------------------------------
-            d=obj.controlGrid(dsp,{20,28,28,28,28,28,28,28,28,28,22,24,24,24,24});
-            obj.heading(d,1,'RECEIVE PROCESSING');
-            obj.Controls.ch=obj.dropdown(d,2,'Output','ch',{'Combined','ADC_D · stream 0','RX stream 1','RX stream 2','RX stream 3'},'Combined',false);
+            obj.Controls.ch=obj.dropdown(q,1,'Output','ch',{'Combined','ADC_D · stream 0','RX stream 1','RX stream 2','RX stream 3'},'Combined',false);
             mask=true(1,4);if obj.field(obj.Config,'directOnly',false),mask=[true false false false];end
             mask=logical(obj.field(obj.Config,'availableChannels',mask));
             vals=find(mask);labels={'ADC_D · stream 0','RX stream 1','RX stream 2','RX stream 3'};labels=labels(mask);
@@ -684,33 +712,50 @@ classdef BeamformerView < handle
             obj.Controls.ch.Value=selected;
             obj.Controls.ch.ValueChangedFcn=@(h,~)obj.configure('ch',h.Value,h);
             obj.Accepted.ch=obj.Controls.ch.Value;
-            bfs={'Without','Steering','MVDR','DMR','PC','PC_corr','LCMV','RVL','RAB PC','DL MVDR','DL ITER MVDR','QCB'};
-            obj.dropdown(d,3,'Beamformer','bf',bfs,char(obj.field(obj.Config,'bf','Steering')),true);
-            doa={'MVDR','MUSIC','Beamscan','MUSICR','ESPRITE','ESPRITEBS','WSFR','MVDRman','MVDRman_corr'};
-            obj.dropdown(d,4,'DOA estimator','doa',doa,char(obj.field(obj.Config,'doa','MVDR')),true);
-            obj.number(d,5,'Source count','num',obj.field(obj.Config,'num',1),[1 3],true,'%g');
-            obj.Controls.ang_num=uidropdown(d,'Items',{'Strongest','Weaker'},'ItemsData',{1,2}, ...
+            obj.Controls.ang_num=uidropdown(q,'Items',{'Strongest','Weaker'},'ItemsData',{1,2}, ...
                 'Value',obj.field(obj.Config,'ang_num',1),'BackgroundColor',th.input,'FontColor',th.text,'FontSize',11);
-            obj.Controls.ang_num.Layout.Row=6;obj.Controls.ang_num.Layout.Column=2;
-            obj.label(d,6,'Signal priority');
+            obj.Controls.ang_num.Layout.Row=2;obj.Controls.ang_num.Layout.Column=2;
+            obj.label(q,2,'Signal priority');
             obj.Accepted.ang_num=obj.Controls.ang_num.Value;
             obj.Controls.ang_num.ValueChangedFcn=@(h,~)obj.configure('ang_num',h.Value,h);
-            obj.number(d,7,'Scan width','scan_bw',obj.field(obj.Config,'scan_bw',120),[1 180],true,'%g°');
-            obj.number(d,8,'Scan step','scan_res',obj.field(obj.Config,'scan_res',1),[.1 10],true,'%g°');
-            obj.number(d,9,'Average frames','avg_factor',obj.field(obj.Config,'avg_factor',10),[1 100],true,'%g');
-            obj.number(d,10,'Signal bandwidth','bwMHz',obj.field(obj.Config,'bw',100e6)/1e6,[1 125],false,'%g MHz');
+            bfs={'Without','Steering','MVDR','DMR','PC','PC_corr','LCMV','RVL','RAB PC','DL MVDR','DL ITER MVDR','QCB'};
+            obj.dropdown(q,3,'Beamformer','bf',bfs,char(obj.field(obj.Config,'bf','Steering')),true);
+            doa={'MVDR','MUSIC','Beamscan','MUSICR','ESPRITE','ESPRITEBS','WSFR','MVDRman','MVDRman_corr'};
+            obj.dropdown(q,4,'DOA estimator','doa',doa,char(obj.field(obj.Config,'doa','MVDR')),true);
+            rows=double(obj.field(obj.Config,'rowsAllowed',obj.field(obj.Config,'dataChan',32768)));
+            rows=sort(rows(:).');labels=cell(1,numel(rows));
+            for k=1:numel(rows)
+                labels{k}=sprintf('%d samples',rows(k));
+                if rows(k)==4096,labels{k}='4096 · one frame, fastest';end
+                if k==numel(rows) && numel(rows)>1,labels{k}=sprintf('%d · full, checked',rows(k));end
+            end
+            obj.Controls.rows=obj.dropdown(q,5,'Data amount','rows',labels,labels{end},false);
+            obj.Controls.rows.ItemsData=num2cell(rows);
+            obj.Controls.rows.Value=obj.field(obj.Config,'rows',rows(end));obj.Accepted.rows=obj.Controls.rows.Value;
+            obj.Controls.rows.ValueChangedFcn=@(h,~)obj.configure('rows',h.Value,h);
+            obj.Controls.rows.Tooltip=['Samples per frame. Fewer samples raise the display rate: the smallest amount holds one ' ...
+                'OFDM frame. Reduced frames are checked against the reference at both ends only; the full frame ' ...
+                'gets the complete continuity check.'];
+            if numel(rows)<2,obj.Controls.rows.Enable='off';end
+            d=obj.controlGrid(dsp,{20,28,28,28,28,28,22,24,24,24,24});
+            obj.heading(d,1,'RECEIVE PROCESSING');
+            obj.number(d,2,'Source count','num',obj.field(obj.Config,'num',1),[1 3],true,'%g');
+            obj.number(d,3,'Scan width','scan_bw',obj.field(obj.Config,'scan_bw',120),[1 180],true,'%g°');
+            obj.number(d,4,'Scan step','scan_res',obj.field(obj.Config,'scan_res',1),[.1 10],true,'%g°');
+            obj.number(d,5,'Average frames','avg_factor',obj.field(obj.Config,'avg_factor',10),[1 100],true,'%g');
+            obj.number(d,6,'Signal bandwidth','bwMHz',obj.field(obj.Config,'bw',100e6)/1e6,[1 125],false,'%g MHz');
             obj.Accepted.bw=obj.Controls.bwMHz.Value;
             obj.Controls.bwMHz.ValueChangedFcn=@(h,~)obj.bandwidth(h);
-            obj.heading(d,11,'IQ / PHASE CORRECTION');
-            obj.checkbox(d,12,'Adaptive IQ correction','adIQcomp',logical(obj.field(obj.Config,'adIQcomp',false)),true);
-            obj.checkbox(d,13,'Static IQ correction','IQcomp',logical(obj.field(obj.Config,'IQcomp',false)),true);
+            obj.heading(d,7,'IQ / PHASE CORRECTION');
+            obj.checkbox(d,8,'Adaptive IQ correction','adIQcomp',logical(obj.field(obj.Config,'adIQcomp',false)),true);
+            obj.checkbox(d,9,'Static IQ correction','IQcomp',logical(obj.field(obj.Config,'IQcomp',false)),true);
             obj.Controls.IQcomp.Tooltip='Uses the frozen IQ filter learned by adaptive correction.';
-            obj.checkbox(d,14,'Phase / power correction','phComp',logical(obj.field(obj.Config,'phComp',false)),true);
+            obj.checkbox(d,10,'Phase / power correction','phComp',logical(obj.field(obj.Config,'phComp',false)),true);
             cal=obj.field(obj.Config,'calibration',struct());
             if isempty(obj.field(cal,'steeringCorrection',[])) || isempty(obj.field(cal,'powCalibration',[]))
                 obj.Controls.phComp.Enable='off';obj.Controls.phComp.Tooltip='Load matching steering and power calibration tables first.';
             end
-            obj.Controls.CompareVsa=obj.checkbox(d,15,'Compare with native VSA','CompareVsa',string(obj.field(obj.Config,'analyzer','integrated'))~="integrated",false);
+            obj.Controls.CompareVsa=obj.checkbox(d,11,'Compare with native VSA','CompareVsa',string(obj.field(obj.Config,'analyzer','integrated'))~="integrated",false);
             obj.Accepted.analyzer=obj.Controls.CompareVsa.Value;
             obj.Controls.CompareVsa.ValueChangedFcn=@(h,~)obj.compareVsa(h);
             % --- Algorithms -------------------------------------------------
@@ -874,35 +919,57 @@ classdef BeamformerView < handle
         function rfAction(obj)
             try
                 assert(obj.has('rf'),'origapp:View','Frequency controls are unavailable.');
-                obj.Callbacks.rf(struct('adcMHz',obj.Controls.adcMHz.Value,'dacMHz',obj.Controls.dacMHz.Value));
-                obj.Accepted.adcMHz=obj.Controls.adcMHz.Value;obj.Accepted.dacMHz=obj.Controls.dacMHz.Value;
+                c=obj.Controls;names=obj.RfFields;rf=struct();
+                for n=names,rf.(n)=double(c.(n).Value);end
+                obj.Callbacks.rf(rf);
+                for n=names,obj.Accepted.(n)=c.(n).Value;end
                 obj.noError();
-                obj.logEvent(sprintf('RF applied · ADC %g MHz · DAC %g MHz',obj.Accepted.adcMHz,obj.Accepted.dacMHz));
+                obj.logEvent(sprintf('RF applied · ADC %g MHz · DAC B %g MHz · DAC A %g MHz',rf.adcMHz,rf.dacMHz,rf.dac1MHz));
             catch err
-                obj.Controls.adcMHz.Value=obj.Accepted.adcMHz;obj.Controls.dacMHz.Value=obj.Accepted.dacMHz;
+                for n=obj.RfFields,obj.Controls.(n).Value=obj.Accepted.(n);end
                 obj.showError(err.message);
             end
             obj.dirty();
+        end
+        function dacAction(obj,h)
+            % Power of DAC B / DAC A (original "Power" boxes): one dacPow command.
+            mask=[logical(obj.Controls.Dac.Value) logical(obj.Controls.DacA.Value)];
+            try
+                assert(obj.has('dac'),'origapp:View','This control is unavailable.');
+                obj.Callbacks.dac(mask);obj.noError();
+                obj.logEvent(sprintf('DAC power · B %d · A %d',mask(1),mask(2)));
+            catch err
+                h.Value=~logical(h.Value);obj.showError(err.message);
+            end
+        end
+        function syncAction(obj,h)
+            try
+                assert(obj.has('sync'),'origapp:View','This control is unavailable.');
+                obj.Callbacks.sync(h.Value);obj.Accepted.da=h.Value;obj.noError();
+                obj.logEvent(sprintf('SYNC mode %d',h.Value));
+            catch err
+                h.Value=obj.Accepted.da;obj.showError(err.message);
+            end
         end
         function phaseKind(obj)
             kind=obj.Controls.PhaseKind.Value;v=obj.PhaseValues.(kind);
             g=obj.Controls.phase1.Parent;rh=g.RowHeight;
             for k=1:4
                 h=obj.Controls.(sprintf('phase%d',k));lab=obj.Controls.(sprintf('phase%dLabel',k));
-                h.Value=v(k);h.Layout.Row=8+k;lab.Layout.Row=8+k;
+                h.Value=v(k);h.Layout.Row=16+k;lab.Layout.Row=16+k;
                 h.Visible='on';lab.Visible='on';
                 if k==1,lab.Text='RX0 · ADC_D';else,lab.Text=sprintf('RX%d · unverified',k-1);end
-                rh{8+k}=28;
+                rh{16+k}=28;
             end
             if strcmp(kind,'DAC')
                 obj.Controls.phase1Label.Text='DAC_B (index 0)';
                 obj.Controls.phase3Label.Text='DAC_A (index 2)';
-                obj.Controls.phase3.Layout.Row=10;obj.Controls.phase3Label.Layout.Row=10;
+                obj.Controls.phase3.Layout.Row=18;obj.Controls.phase3Label.Layout.Row=18;
                 for k=[2 4]
                     obj.Controls.(sprintf('phase%d',k)).Visible='off';
                     obj.Controls.(sprintf('phase%dLabel',k)).Visible='off';
                 end
-                rh{11}=0;rh{12}=0;
+                rh{19}=0;rh{20}=0;
             end
             g.RowHeight=rh;
             if isfield(obj.Controls,'ApplyPhase'),obj.dirty();end
@@ -924,7 +991,7 @@ classdef BeamformerView < handle
             % values the board accepted (display hint only).
             th=obj.Theme;
             if ~isfield(obj.Controls,'ApplyRF') || ~isfield(obj.Controls,'ApplyPhase'),return,end
-            rf=obj.Controls.adcMHz.Value~=obj.Accepted.adcMHz || obj.Controls.dacMHz.Value~=obj.Accepted.dacMHz;
+            rf=false;for n=obj.RfFields,rf=rf || obj.Controls.(n).Value~=obj.Accepted.(n);end
             kind=obj.Controls.PhaseKind.Value;v=obj.PhaseValues.(kind);
             indices=1:4;if strcmp(kind,'DAC'),indices=[1 3];end
             ph=false;for k=indices,ph=ph || obj.Controls.(sprintf('phase%d',k)).Value~=v(k);end
