@@ -22,6 +22,8 @@ sys.path.insert(0, str(ROOT))
 from tools.legacy_reference import build, SOURCE_SHA
 from tools.run_demo import executable, EXPECTED
 
+# ADC / DAC Nyquist zone per start frequency (board/legacy_capture.py RF_PROFILES).
+RF_ZONES = {3000: (2, 1), 5200: (1, 2)}
 SETUP_SHAS = {'62d4c02859b90d4fa8b9efe56425b63143dfc7e6bbd9de64491da47d8b14c8d8',
               '81acc6b652bc2303701888f8ea3af598c0c3be5fa3e05acb48473930a7c6602e'}
 
@@ -74,6 +76,8 @@ def main():
     p.add_argument('--save-captures', action='store_true',
                    help='validate mode: the helper keeps every full-RAM capture in its private stage folder')
     p.add_argument('--layout', choices=['clean','legacy'], default='clean', help='focused six-plot GUI or legacy full controls')
+    p.add_argument('--rf-mhz', type=int, default=5200, choices=(3000, 5200),
+                   help='start frequency; measured profiles only (board/legacy_capture.py RF_PROFILES)')
     p.add_argument('--standalone', help='compiled RFSoCBeamformer.exe to run instead of MATLAB (clean layout only)')
     p.add_argument('--no-board-controls', action='store_true', help='disable the separate live command socket')
     p.add_argument('--analyzer', choices=['integrated', 'vsa', 'both'], default='integrated',
@@ -157,16 +161,16 @@ def main():
     window4 = a.receive == 'window4'
     app_cfg = dict(frontend=a.layout, originalRepoPath=str(original), visible=True, directOnly=True,
         allowBoardCommands=bool(control_port), sendInitialTuning=False, da=2, vsaSetupFile=str(setup), vsa=1,
-        ch=1, dataChan=131072, fc=3e9, fc_d0=3e9, fc_d1=3e9, adcMirror=1, nyquistZone=2,
-        nyquistZone_d0=1, nyquistZone_d1=1, dacPow=[1,0,0,0], fsRfsoc=125e6, staleSeconds=2, frameTimeoutSeconds=.25, outputDir=str(out),
+        ch=1, dataChan=131072, fc=a.rf_mhz*1e6, fc_d0=a.rf_mhz*1e6, fc_d1=a.rf_mhz*1e6, adcMirror=1,
+        nyquistZone=RF_ZONES[a.rf_mhz][0], nyquistZone_d0=RF_ZONES[a.rf_mhz][1], nyquistZone_d1=RF_ZONES[a.rf_mhz][1], dacPow=[1,0,0,0], fsRfsoc=125e6, staleSeconds=2, frameTimeoutSeconds=.25, outputDir=str(out),
         uiTimingFile=str(out/'ui_timing.jsonl'), uiProbePeriodSeconds=.02, analyzer=a.analyzer,
         ofdm=dict(setupSha256=sha(setup), referenceMat=str(reference_mat), orientation='IplusjQ',
                   syncThreshold=0.8, lockThreshold=0.3, staleSeconds=2, logFile=str(out/'ofdm_frames.jsonl')))
     if window4:
         # Common splitter feed: DOA/pattern are a cable diagnostic through the explicit
         # 4-element ULA model (d = lambda/2 at 3 GHz), uncalibrated; never an arrival angle.
-        app_cfg.update(directOnly=False, ch=5, dataChan=32768, fcAnt=3e9, cutterAllowed=False,
-                       arrayLabel='common-feed diagnostic / array model (ULA d=lambda/2 @3 GHz)')
+        app_cfg.update(directOnly=False, ch=5, dataChan=32768, fcAnt=a.rf_mhz*1e6, cutterAllowed=False,
+                       arrayLabel='common-feed diagnostic / array model (ULA d=lambda/2 @%g GHz)' % (a.rf_mhz/1000))
     if a.layout == 'clean':
         app_cfg.update(periodSeconds=.02, frameTimeoutSeconds=.05)
     if a.standalone:
@@ -191,7 +195,7 @@ def main():
     args = [cfg.get('board_python', '/usr/local/share/pynq-venv/bin/python3'), stage+'/'+helper.name,
             '--exclusive-control', '--owner-stdin', '--reference', stage+'/'+reference.name,
             '--out', stage+'/manifest.json', *bounds, '--stream-bind', host, '--stream-port', str(port),
-            '--request-timeout', '120', '--control-port', str(control_port), '--dac', '0', '--rf-mhz', '3000', '--sampling-freq-unit', 'GHz',
+            '--request-timeout', '120', '--control-port', str(control_port), '--dac', '0', '--rf-mhz', str(a.rf_mhz), '--sampling-freq-unit', 'GHz',
             '--wire-mode', 'window4' if window4 else 'adc-d-fullram', *(['--save-all-captures'] if a.save_captures else [])]
     command = "sudo -S -p '' env BOARD=RFSoC4x2 XILINX_XRT=/usr "+shlex.join(args)
     server = subprocess.Popen([*ssh, command], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

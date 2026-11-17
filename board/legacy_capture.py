@@ -54,6 +54,19 @@ else:
     from mts_sync import enable as enable_mts, trigger as synced_trigger
 
 PROFILE = 'legacy-ofdm64-truncated-v1'
+# Measured RF profiles (MHz -> ADC / DAC Nyquist zone; ADC 5 GS/s, DAC 10 GS/s with
+# the wrapper's IMR datapath). 3000: the original validated profile. 5200: ADC odd
+# zone (5.0-7.5 GHz) with a positive mixer frequency ((-5200, even) is equivalent).
+# At 5200 the DAC's image at 10 GS/s - 5200 = 4800 MHz folds at the 5 GS/s ADC onto
+# the wanted band with the same orientation and nearly equal amplitude, so the two add
+# coherently. NRZ (zone 1) and mix mode (zone 2) give the image opposite signs, and
+# which of them adds constructively changes from session to session (converter clock
+# start-up; not the MTS latency): 3 of 4 streams were 10-18 dB weaker in the wrong one.
+# select_dac_zone measures both once per session (bench 2026-11-17, 13 sessions).
+RF_PROFILES = {3000: dict(adc_zone=2, dac_zone=1), 5200: dict(adc_zone=1, dac_zone=2)}
+SELECT_DAC_ZONE = {5200}
+DEFAULT_RF_MHZ = 5200
+ZONE_MARGIN_DB = 3.0
 SRC_SHA = '3f17e6cccef941d1bac4fefff4439472d8a6e6923b0ef7633e6184448be9eef3'
 RAM = 1048576
 SENTINEL = np.array([32767, -32768, 32767, -32768, 32767, -32768, 32767, -32768], dtype='<i2')
@@ -530,6 +543,55 @@ def shutdown(overlay, manifest):
     manifest['dac_off_verification_note'] = 'RAM zero readback + enable off commanded; independent RF observation required'
 
 
+def stream_power_dbfs(raw):
+    """Mean power of each of the 4 complex streams in a full capture, dBFS."""
+    w = raw.reshape(-1, 8).astype(float)
+    p = (w[:, 0::2] ** 2 + w[:, 1::2] ** 2).mean(0) / 32767.0 ** 2
+    return [round(float(10 * np.log10(v + 1e-30)), 2) for v in p]
+
+
+def select_dac_zone(overlay, words, dac, rf_mhz, manifest, captures=2):
+    """Pick the DAC Nyquist zone whose image adds constructively in this session.
+
+    Plays the waveform, captures with the profile zone and with the other zone (only
+    the DAC NyquistZone register changes: no NCO, mixer or tile resynchronisation),
+    keeps the zone with clearly more received power (ZONE_MARGIN_DB, else the profile
+    zone), then turns the DAC output off and zeroes its RAM again."""
+    first = RF_PROFILES[rf_mhz]['dac_zone']
+    blocks = (0, 2)
+    result = dict(rf_mhz=rf_mhz, power_dbfs={}, margin_db=ZONE_MARGIN_DB)
+    try:
+        write_dac(overlay, words, dac)
+        overlay.dacs_control()
+        time.sleep(.01)
+        sha = None
+        for zone in (first, 3 - first):
+            for n in blocks:
+                overlay.dac[n].NyquistZone = zone
+            time.sleep(.02)
+            powers = []
+            for _ in range(captures):
+                raw, refreshed, _, sha = full_capture(overlay, sha)
+                if not refreshed:
+                    raise RuntimeError('DAC zone selection capture was not fresh')
+                powers.append(stream_power_dbfs(raw))
+            result['power_dbfs'][zone] = np.mean(powers, 0).round(2).tolist()
+        mean = {z: float(10 * np.log10(np.mean(10 ** (np.array(v) / 10)))) for z, v in result['power_dbfs'].items()}
+        chosen = 3 - first if mean[3 - first] > mean[first] + ZONE_MARGIN_DB else first
+        for n in blocks:
+            overlay.dac[n].NyquistZone = chosen
+        overlay.d_nyquist_zone = [chosen] * 4      # kept by later wrapper reconfiguration
+        result.update(chosen=chosen, mean_dbfs={str(k): round(v, 2) for k, v in mean.items()},
+                      readback=[int(overlay.dac[n].NyquistZone) for n in blocks])
+        if result['readback'] != [chosen] * 2:
+            raise RuntimeError('DAC Nyquist zone readback %s' % result['readback'])
+    finally:
+        overlay.dacs_off()
+        write_dac(overlay, np.zeros(RAM, dtype='<i2'), dac)
+    manifest['dac_zone_selection'] = result
+    return result['chosen']
+
+
 def require_lock(overlay, manifest, stage):
     value = int(overlay.clocktreeMTS.MTSclkwiz.read(4))
     if len(manifest.setdefault('clock_lock_readbacks', {})) < 2000:
@@ -641,7 +703,7 @@ def main():
     p.add_argument('--stream-bind', required=True)
     p.add_argument('--stream-port', type=int, default=4011)
     p.add_argument('--control-port', type=int, default=0, help='separate acknowledged command socket; window4 only')
-    p.add_argument('--rf-mhz', type=int, default=3000)
+    p.add_argument('--rf-mhz', type=int, default=DEFAULT_RF_MHZ, choices=sorted(RF_PROFILES))
     p.add_argument('--dac', choices=['0', '1'], default='0')
     p.add_argument('--sampling-freq-unit', choices=['GHz'], required=True)
     p.add_argument('--request-timeout', type=float, default=30)
@@ -658,8 +720,6 @@ def main():
     a = p.parse_args()
     if a.control_port and (a.wire_mode != 'window4' or not 1024 <= a.control_port <= 65535 or a.control_port == a.stream_port):
         p.error('control port must be a distinct unprivileged port in window4 mode')
-    if a.rf_mhz != 3000:
-        p.error('legacy profile validated only at 3000 MHz')
     if a.continuous:
         if a.schedule or a.max_seconds is None or a.max_frames is None:
             p.error('--continuous needs --max-seconds and --max-frames, and no --schedule')
@@ -741,10 +801,12 @@ def main():
         if (not np.allclose(adc_fs, 125e6) or not np.allclose(dac_fs/2, 500e6)
                 or manifest['dac_datapath_mode'] != [3, 3]):
             raise RuntimeError('Runtime rates differ from legacy reference')
+        rf = RF_PROFILES[a.rf_mhz]
         overlay.centre_freq = a.rf_mhz
-        overlay.nyquist_zone = 2
+        overlay.nyquist_zone = rf['adc_zone']
         overlay.d_centre_freq = [a.rf_mhz]*4
-        overlay.d_nyquist_zone = [1]*4
+        overlay.d_nyquist_zone = [rf['dac_zone']]*4
+        manifest.update(adc_nyquist_zone=rf['adc_zone'], dac_nyquist_zone=rf['dac_zone'])
         overlay.d_phases = [0, 0, 0, 0]
         manifest['sync'] = enable_mts(overlay)
         require_lock(overlay, manifest, 'after_sync')
@@ -753,6 +815,12 @@ def main():
         manifest['adc_ram_words'] = RAM
         overlay.da = 2
         overlay.dacPower = [int(a.dac == '0'), 0, int(a.dac == '1'), 0]
+        if a.rf_mhz in SELECT_DAC_ZONE:
+            manifest['dac_nyquist_zone'] = select_dac_zone(overlay, words, a.dac, a.rf_mhz, manifest)
+            require_lock(overlay, manifest, 'after_dac_zone_selection')
+        rf_state = dict(rf_mhz=a.rf_mhz, adc_nyquist_zone=manifest['adc_nyquist_zone'],
+                        dac_nyquist_zone=manifest['dac_nyquist_zone'])
+        print('RF profile ' + json.dumps(rf_state), flush=True)
         if a.control_port:
             from board_commands import BoardCommands
             from control_service import ControlService
@@ -801,7 +869,7 @@ def main():
                                  'extension_json_max': EXT3_JSON_MAX,
                                  'compression': CODEC if a.wire_codec == 'deflate' else 'none',
                                  'pad_bytes': PAD_BYTES,
-                                 'samples_per_channel': WIN, 'fs_hz': 125e6, 'rf_mhz': a.rf_mhz,
+                                 'samples_per_channel': WIN, 'fs_hz': 125e6, **rf_state,
                                  'profile': PROFILE, 'dac_connector': manifest['dac_connector'],
                                  'selection': 'board-reported self-similarity wrap estimate; guarded window with reference sub-block lag checks',
                                  'frames_planned': total, 'continuous': bool(a.continuous),
@@ -819,7 +887,7 @@ def main():
                              'frame_bytes': WIRE_BYTES, 'frame_header': FRAME_HDR,
                              'compression': CODEC if a.wire_codec == 'deflate' else 'none',
                              'pad_bytes': PAD_BYTES,
-                             'samples_per_channel': RAM//8, 'fs_hz': 125e6, 'rf_mhz': a.rf_mhz,
+                             'samples_per_channel': RAM//8, 'fs_hz': 125e6, **rf_state,
                              'profile': PROFILE, 'dac_connector': manifest['dac_connector'],
                              'frames_planned': total, 'continuous': bool(a.continuous),
                              'max_seconds': a.max_seconds,

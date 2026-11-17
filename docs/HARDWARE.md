@@ -21,8 +21,10 @@ or credentials. Raw captures and run logs belong in ignored `local/`.
    N5182B VISA over Ethernet; do not inherit its frequency, power or waveform.
 4. Confirm cabling, safe ADC input level and board front-end band. Both passive
    devices specify 2–4.2 GHz; the old wrapper default 5.7 GHz is outside that
-   specified band. Candidate 3 GHz is ADC Nyquist zone 2 at 5 GS/s and DAC zone 1
-   at 10 GS/s. Runtime registers and the observed spectrum must verify this.
+   specified band. 3 GHz is ADC Nyquist zone 2 at 5 GS/s and DAC zone 1 at
+   10 GS/s. The default is now 5.2 GHz (ADC odd zone, DAC zone measured per
+   session because of the DAC image at 4.8 GHz), measured on this cable set out of
+   the passives' band: see [RF_PROFILES.md](RF_PROFILES.md).
 5. Generate `out/reference.npz` on the host. Stage it and `tools/board_capture.py`
    under a NEW board experiment directory; compare SHA-256 after transfer.
 6. Stop the legacy service under exclusive control. Run the helper as the

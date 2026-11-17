@@ -38,9 +38,14 @@ client network (see Access).
    on the board changes.
 3. If `bootpy.service` is running, the service stops it for the session.
 4. The service starts the capture helper (`legacy_capture.py`, four-stream
-   `window4` profile, DAC_B at 3 GHz, peak code 1200, bounded to at most 4 hours
-   and 200000 frames). The helper loads the overlay and synchronises the
-   converters; on the tested board this took about 10 s.
+   `window4` profile, DAC_B, peak code 1200, bounded to at most 4 hours
+   and 200000 frames) at the start frequency: 5.2 GHz by default (service option
+   `--rf-mhz`, or `rf_mhz` 3000 or 5200 in the start request; see
+   [RF_PROFILES.md](RF_PROFILES.md)). The helper loads the overlay and synchronises
+   the converters; on the tested board this took about 10 s. At 5.2 GHz it then
+   measures which DAC Nyquist zone adds constructively in this session (well under
+   1 s) and reports the profile it set in the ready message (`rf_mhz`,
+   `adc_nyquist_zone`, `dac_nyquist_zone`).
    It then sets PL clock 0 to 136.36 MHz (service option `--capture-clock-mhz`,
    0 keeps the overlay's 124.99875 MHz; a client may request another value with
    `capture_clock_mhz` in its start request). See "Capture sample loss" below.

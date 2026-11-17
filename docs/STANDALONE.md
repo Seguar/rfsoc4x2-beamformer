@@ -27,8 +27,9 @@ Board search, in this order; the first address whose service answers is used:
 
 Starting the session takes about 10 s (FPGA image load and converter
 synchronisation); a progress window with Cancel is shown. The session then
-transmits the reference loop from DAC_B at 3 GHz at the usual low level (peak
-code 1200), as the launcher does. Closing the window stops the board session and
+transmits the reference loop from DAC_B at 5.2 GHz by default at the usual low
+level (peak code 1200); the RF page starts with the frequencies and Nyquist zones
+the board reports ([RF_PROFILES.md](RF_PROFILES.md)). Closing the window stops the board session and
 switches the DAC outputs off; the application reports an error if the board does
 not confirm it. A session ends by itself after 4 hours or 200000 frames.
 

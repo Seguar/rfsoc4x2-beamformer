@@ -30,12 +30,13 @@ The user identifies the patch silkscreen as 5.2 GHz; the antenna response and
 centre spacing remain to be measured. Jammer waveform (CW or modulated) is open.
 
 The present ZAPDQ-4 hybrid and ZA4PD-4 splitter are specified for 2–4.2 GHz.
-The initial conducted loopback uses a 3 GHz candidate; that does not validate the
-later 5.2 GHz antenna chain. Use a suitable 5.2 GHz combiner, or characterize the
-current hardware out of band before interpreting an antenna demonstration.
-Do not assume the RF converter Nyquist settings for 3 GHz apply at 5.2 GHz.
-The existing helper intentionally limits the current passive-chain experiment
-to 2–4.2 GHz. Extending RF range needs a reviewed hardware configuration change.
+At the user's request (2026-11-17) sessions now start at 5.2 GHz; the converter
+settings for it were measured on the conducted loopback with these passives out
+of band ([RF_PROFILES.md](RF_PROFILES.md)). That does not validate the antenna
+chain: at 5.2 GHz the DAC's 4.8 GHz image also radiates and folds onto the band,
+so a 5.2 GHz band-pass filter at the DAC output is advisable before interpreting
+an antenna demonstration. The helper accepts only the measured profiles (3000 and
+5200 MHz).
 
 ## Host dashboard
 

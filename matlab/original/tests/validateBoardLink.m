@@ -30,6 +30,8 @@ steps=0;
 link=origapp.BoardLink(address);
 ready=link.start(60,@count);
 assert(link.State=="ready" && ready.stream_port==4011 && ready.control_port==4012 && string(ready.host)==serviceHost);
+% default start profile 5.2 GHz with the zones the helper reports (the exe builds its RF state from them)
+assert(ready.rf_mhz==5200 && ready.adc_nyquist_zone==1 && any(ready.dac_nyquist_zone==[1 2]));
 other=origapp.BoardLink(address);message="";
 try,other.start(60);catch err,message=string(err.message);assert(strcmp(err.identifier,'origapp:BoardConnect'));end
 assert(contains(message,"already in use"),'Second owner was not refused: %s',message);

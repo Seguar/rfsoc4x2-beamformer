@@ -49,8 +49,10 @@ credentials, raw board archives, private measurements or calibration files.
   output DATA register reads return zero, so neither proves physical RF-off.
   Record `dac_off_commanded` separately from independent RF-off observation.
 - ZAPDQ-4 is a 90-degree hybrid; calibrate DAC paths individually before both.
-  The splitter/combiner band is 2.0–4.2 GHz. 3 GHz is the initial candidate;
-  verify actual RF response and board front-end support before claiming it.
+  The splitter/combiner band is 2.0–4.2 GHz. Sessions start at 5.2 GHz by
+  user decision (2026-11-17), measured out of that band; 3000 and 5200 MHz are the
+  only accepted profiles (docs/RF_PROFILES.md). At 5.2 GHz the DAC image at
+  4.8 GHz folds onto the band: keep the per-session DAC zone the board reports.
 - Verify ADC/DAC rates and interpolation/decimation at runtime. Generated
   reference assumes 125 Mcomplex/s ADC and 500 Mcomplex/s DAC input, 4:1 ratio:
   mode3 adds IMR2 beyond interpolation10. A 16384-complex period repeats twice

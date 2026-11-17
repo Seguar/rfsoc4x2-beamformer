@@ -12,6 +12,11 @@ if mode == 'fail':
     print('RuntimeError: overlay did not load', flush=True)
     sys.exit(3)
 time.sleep(float(os.environ.get('FAKE_HELPER_DELAY', '0.3')))
+rf = int(args[args.index('--rf-mhz') + 1])
+zones = {3000: (2, 1), 5200: (1, 2)}[rf]
+# like the real helper: report the zones it set (5200: DAC zone measured per session)
+print('RF profile ' + json.dumps(dict(rf_mhz=rf, adc_nyquist_zone=zones[0],
+                                      dac_nyquist_zone=int(os.environ.get('FAKE_DAC_ZONE', zones[1])))), flush=True)
 print('Waiting for legacy client on port %s; DACs disabled' % args[args.index('--stream-port') + 1], flush=True)
 while os.read(0, 4096):
     pass

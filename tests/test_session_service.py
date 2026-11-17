@@ -115,6 +115,8 @@ class SessionTests(unittest.TestCase):
         ready = self.until(f, 'ready', 'error')
         self.assertEqual((ready['state'], ready['host'], ready['stream_port'], ready['control_port']),
                          ('ready', '127.0.0.1', 4011, 4012))
+        # default start profile: 5.2 GHz, ADC odd / DAC second Nyquist zone, reported to the client
+        self.assertEqual((ready['rf_mhz'], ready['adc_nyquist_zone'], ready['dac_nyquist_zone']), (5200, 1, 2))
         # a second client is refused while the session runs
         c2, f2 = self.start()
         self.assertEqual(self.until(f2, 'error')['code'], 'board_busy')
@@ -127,6 +129,7 @@ class SessionTests(unittest.TestCase):
         for want in ['--owner-stdin', '--exclusive-control', '--continuous', '--wire-mode', 'window4', '--max-seconds', '600']:
             self.assertIn(want, argv)
         self.assertEqual(argv[argv.index('--stream-bind')+1], '127.0.0.1')
+        self.assertEqual(argv[argv.index('--rf-mhz')+1], '5200')
         self.assertEqual(self.calls, [])          # bootpy was not running: untouched
         c.close()
 
@@ -152,6 +155,41 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(self.calls, [('stop', 'bootpy.service'), ('start', '--no-block', 'bootpy.service')])
         c.close()
 
+    def test_requested_rf_profile(self):
+        c, f = self.start(max_seconds=60, rf_mhz=3000)
+        ready = self.until(f, 'ready', 'error')
+        self.assertEqual((ready['rf_mhz'], ready['adc_nyquist_zone'], ready['dac_nyquist_zone']), (3000, 2, 1))
+        c.sendall(b'{"op":"stop"}\n')
+        self.until(f, 'ended', 'error')
+        argv = self.manifest()['argv']
+        self.assertEqual(argv[argv.index('--rf-mhz')+1], '3000')
+        c.close()
+
+    def test_ready_reports_the_zone_the_helper_set(self):
+        os.environ['FAKE_DAC_ZONE'] = '1'          # 5.2 GHz session where zone 1 measured stronger
+        try:
+            c, f = self.start(max_seconds=60)
+            ready = self.until(f, 'ready', 'error')
+        finally:
+            os.environ.pop('FAKE_DAC_ZONE')
+        self.assertEqual((ready['rf_mhz'], ready['adc_nyquist_zone'], ready['dac_nyquist_zone']), (5200, 1, 1))
+        c.sendall(b'{"op":"stop"}\n')
+        self.until(f, 'ended', 'error')
+        c.close()
+
+    def test_rf_tables_agree(self):
+        import importlib.util
+        src = (ROOT/'board/legacy_capture.py').read_text()
+        # parse the helper table without importing the hardware helper
+        ns = {}
+        exec(src[src.index('RF_PROFILES = '):src.index('\n', src.index('DEFAULT_RF_MHZ = '))], ns)
+        self.assertEqual(ns['RF_PROFILES'], svc.RF_PROFILES)
+        self.assertEqual(ns['DEFAULT_RF_MHZ'], svc.DEFAULT_RF_MHZ)
+        launcher = (ROOT/'tools/run_original_vsa.py').read_text()
+        ns2 = {}
+        exec(launcher[launcher.index('RF_ZONES = '):launcher.index('\n', launcher.index('RF_ZONES = '))], ns2)
+        self.assertEqual(ns2['RF_ZONES'], {k: (v['adc_zone'], v['dac_zone']) for k, v in svc.RF_PROFILES.items()})
+
     def test_refusals(self):
         self.pre = good(busy=['18 1 S python3 -m ipykernel_launcher'])
         c, f = self.start()
@@ -160,7 +198,8 @@ class SessionTests(unittest.TestCase):
         self.assertIn('Jupyter', m['message'])
         c.close()
         self.pre = good()
-        for request in [{'max_seconds': 0}, {'max_seconds': 14401}, {'max_seconds': 'x'}]:
+        for request in [{'max_seconds': 0}, {'max_seconds': 14401}, {'max_seconds': 'x'},
+                        {'rf_mhz': 5700}, {'rf_mhz': '5200'}, {'rf_mhz': True}]:
             c, f = self.start(**request)
             self.assertEqual(self.until(f, 'error')['code'], 'bad_request')
             c.close()

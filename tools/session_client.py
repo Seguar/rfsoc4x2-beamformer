@@ -44,12 +44,14 @@ def _exact(sock, n):
 
 
 class Session:
-    def __init__(self, host, port=4013, max_seconds=600, timeout=180, progress=print, capture_clock_mhz=None):
+    def __init__(self, host, port=4013, max_seconds=600, timeout=180, progress=print, capture_clock_mhz=None, rf_mhz=None):
         self.host = host
         self.svc = socket.create_connection((host, port), timeout=10)
         req = {'op': 'start', 'max_seconds': max_seconds}
         if capture_clock_mhz is not None:
             req['capture_clock_mhz'] = capture_clock_mhz
+        if rf_mhz is not None:
+            req['rf_mhz'] = rf_mhz
         self.svc.sendall(json.dumps(req).encode() + b'\n')
         self.svc.settimeout(timeout)
         while True:
@@ -60,6 +62,7 @@ class Session:
                 raise RuntimeError('%s: %s' % (msg.get('code'), msg.get('message')))
             if progress:
                 progress('board: %s (%s s)' % (msg.get('step'), msg.get('elapsed')))
+        self.ready = msg
         board = msg.get('host') or host
         self.stream = socket.create_connection((board, msg['stream_port']), timeout=30)
         self.stream.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)

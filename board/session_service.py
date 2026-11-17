@@ -46,6 +46,10 @@ PORT = 4013
 PROBE = b'rfsoc4x2-beamformer?'
 MAX_SECONDS = 14400
 MAX_FRAMES = 200000
+# Same table as legacy_capture.RF_PROFILES (tests keep them equal; the service does not
+# import the helper): start frequency in MHz -> ADC / DAC Nyquist zone.
+RF_PROFILES = {3000: dict(adc_zone=2, dac_zone=1), 5200: dict(adc_zone=1, dac_zone=2)}
+DEFAULT_RF_MHZ = 5200
 KEEP_RUNS = 20
 READY_LINE = 'Waiting for legacy client'
 EXPECTED = {
@@ -296,6 +300,9 @@ class Service:
         if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or not 1 <= seconds <= MAX_SECONDS:
             raise Refused('bad_request', 'max_seconds must be between 1 and %d.' % MAX_SECONDS)
         a = self.a
+        rf_mhz = request.get('rf_mhz', a.rf_mhz)
+        if isinstance(rf_mhz, bool) or rf_mhz not in RF_PROFILES:
+            raise Refused('bad_request', 'rf_mhz must be one of %s.' % ', '.join(map(str, sorted(RF_PROFILES))))
         send(conn, dict(state='starting', step='checking the board', elapsed=0))
         boot_was_running = check_preflight(self.preflight_fn([a.stream_port, a.control_port]))
         keepalive(conn)
@@ -314,7 +321,7 @@ class Service:
                     '--reference', str(self.root / 'legacy_ref.npz'), '--out', str(run / 'manifest.json'),
                     '--continuous', '--max-seconds', str(int(seconds)), '--max-frames', str(MAX_FRAMES),
                     '--stream-bind', local, '--stream-port', str(a.stream_port), '--request-timeout', '120',
-                    '--control-port', str(a.control_port), '--dac', '0', '--rf-mhz', '3000',
+                    '--control-port', str(a.control_port), '--dac', '0', '--rf-mhz', str(rf_mhz),
                     '--sampling-freq-unit', 'GHz', '--wire-mode', 'window4']
             clock = request.get('capture_clock_mhz', getattr(a, 'capture_clock_mhz', 0))
             if clock:
@@ -324,12 +331,20 @@ class Service:
             helper = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                       cwd=str(run), env={**os.environ, 'BOARD': 'RFSoC4x2', 'XILINX_XRT': '/usr'})
             ready = threading.Event()
+            # the helper reports the zones it really set (5200: DAC zone measured per session)
+            rf_state = dict(rf_mhz=rf_mhz, adc_nyquist_zone=RF_PROFILES[rf_mhz]['adc_zone'],
+                            dac_nyquist_zone=RF_PROFILES[rf_mhz]['dac_zone'])
 
             def log_output():
                 with (run / 'board.log').open('wb') as log:
                     for raw in iter(helper.stdout.readline, b''):
                         log.write(raw)
                         log.flush()
+                        if raw.startswith(b'RF profile '):
+                            try:
+                                rf_state.update(json.loads(raw[len(b'RF profile '):]))
+                            except ValueError:
+                                pass
                         if READY_LINE.encode() in raw:
                             ready.set()
             reader = threading.Thread(target=log_output, daemon=True)
@@ -337,7 +352,8 @@ class Service:
             reason = self.wait_ready(conn, helper, ready, t0)
             if reason is None:
                 send(conn, dict(state='ready', host=local, stream_port=a.stream_port, control_port=a.control_port,
-                                max_seconds=int(seconds), start_seconds=round(time.monotonic() - t0, 1)))
+                                max_seconds=int(seconds), start_seconds=round(time.monotonic() - t0, 1),
+                                **rf_state))
                 reason = self.wait_end(conn, helper)
             summary['reason'] = reason
         finally:
@@ -452,6 +468,8 @@ def parser():
     # live); at 136.36 and 150 MHz no sample was lost in 1.97 M / 0.82 M rows.
     p.add_argument('--capture-clock-mhz', type=float, default=136.3623,
                    help='PL clock 0 for every session (0: overlay value); a client may request another')
+    p.add_argument('--rf-mhz', type=int, default=DEFAULT_RF_MHZ, choices=sorted(RF_PROFILES),
+                   help='start frequency of every session (measured profiles only); a client may request another')
     p.add_argument('--allow-cidr', action='append', default=[], help='extra client network, e.g. 198.51.100.0/24')
     p.add_argument('--board-name', default='', help=argparse.SUPPRESS)
     return p

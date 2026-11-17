@@ -15,6 +15,10 @@ defaults to `--layout clean --analyzer integrated`; native VSA is an optional
 separately labelled comparison. `--layout legacy` retains the earlier App Designer
 interface. The new GUI reuses the original refactor's guarded DSP/transport core.
 
+Sessions start at **5.2 GHz** by default (3 GHz on request); converter settings,
+the per-session DAC zone measurement and EVM numbers are in
+[docs/RF_PROFILES.md](docs/RF_PROFILES.md).
+
 A compiled [standalone application](docs/STANDALONE.md) is attached to the
 releases; it needs only the MATLAB Runtime. Started without arguments it finds
 the board on USB, then on Ethernet, and otherwise asks for its IP address; this
