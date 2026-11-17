@@ -646,6 +646,10 @@ def main():
     p.add_argument('--sampling-freq-unit', choices=['GHz'], required=True)
     p.add_argument('--request-timeout', type=float, default=30)
     p.add_argument('--wire-codec', choices=['raw', 'deflate'], default='deflate')
+    p.add_argument('--capture-clock-mhz', type=float, default=0.0,
+                   help='set PL clock 0 (ADC capture writer side of the stream clock converter) after loading '
+                        'the overlay; 0 keeps the overlay value. The RF stream runs on the RF fabric clock; a '
+                        'capture clock even slightly slower loses samples (~100 ppm measured at 124.99875 MHz).')
     p.add_argument('--wire-mode', choices=['adc-d-fullram', 'window4'], default='adc-d-fullram')
     p.add_argument('--exclusive-control', action='store_true', required=True)
     p.add_argument('--save-all-captures', action='store_true',
@@ -713,6 +717,15 @@ def main():
     try:
         owner_check()
         overlay = doaMtsOverlay('/boot/doa_mts.bit')
+        if a.capture_clock_mhz:
+            if not 125.0 <= a.capture_clock_mhz <= 150.0:
+                raise ValueError('capture clock must be 125..150 MHz')
+            from pynq import Clocks
+            Clocks.fclk0_mhz = a.capture_clock_mhz
+            time.sleep(0.1)
+        from pynq import Clocks
+        manifest['capture_clock_mhz'] = round(float(Clocks.fclk0_mhz), 6)
+        print('capture clock (PL clock 0) %.5f MHz' % Clocks.fclk0_mhz, flush=True)
         overlay.dacs_off()
         write_dac(overlay, np.zeros(RAM, dtype='<i2'), '0')
         require_lock(overlay, manifest, 'initialization')

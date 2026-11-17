@@ -861,7 +861,7 @@ classdef LegacyVsaBackend < handle
                 frame.controlRevision=rev;
                 if ~isempty(obj.Control) && rev<obj.Control.Revision
                     obj.logFrame(frame,"settings changed after this capture");
-                    error('origapp:NoSignal','Discarded a capture from before the acknowledged settings change.');
+                    error('origapp:SettingsChanged','Discarded a capture from before the acknowledged settings change.');
                 end
             end
             obj.LastFrameMeta = rmfield(frame,'samples');

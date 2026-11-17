@@ -311,7 +311,11 @@ classdef DemoSession < handle
                     'origapp:Expired','Frame expired during processing.');
                 obj.Controller.recordSuccess();
             catch err
-                obj.invalidate(string(err.message));
+                if string(err.identifier)=="origapp:SettingsChanged"
+                    obj.invalidate("settings applied; awaiting a fresh frame");
+                else
+                    obj.invalidate(string(err.message));
+                end
                 if obj.Controller.recordFailure(err),obj.close();obj.invalidate("stopped: "+string(err.message));end
             end
         end
@@ -327,6 +331,7 @@ classdef DemoSession < handle
             c=obj.Controller;
             s.health=struct('accepted',c.FramesAccepted,'boundary',c.BoundaryFrames, ...
                 'noSignal',c.NoSignalFrames,'expired',c.ExpiredFrames,'errors',c.TotalErrors, ...
+                'settings',c.SettingsDiscards, ...
                 'lastError',string(c.LastError));
         end
         function close(obj)

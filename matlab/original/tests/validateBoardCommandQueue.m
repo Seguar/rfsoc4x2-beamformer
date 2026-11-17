@@ -12,7 +12,7 @@ try, c.flushCommands();catch e,rejected=string(e.identifier)=="origapp:CommandRe
 assert(rejected && isempty(c.Pending),'Rejected commands must not retry every tick.');
 assert(numel(sent)==2 && numel(c.Sent)==1);
 rejected=false;
-try,c.acquire();catch e,rejected=string(e.identifier)=="origapp:NoSignal";end
+try,c.acquire();catch e,rejected=string(e.identifier)=="origapp:SettingsChanged";end
 assert(rejected && c.ControlRevision==2,'First changed-revision frame must reset plot averaging.');
 [f,~]=c.acquire(); assert(f.sequence==2 && f.controlRevision==2,'Fresh settings did not recover.');
 disp('BOARD_COMMAND_QUEUE_PASS');

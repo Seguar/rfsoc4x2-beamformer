@@ -316,6 +316,11 @@ class Service:
                     '--stream-bind', local, '--stream-port', str(a.stream_port), '--request-timeout', '120',
                     '--control-port', str(a.control_port), '--dac', '0', '--rf-mhz', '3000',
                     '--sampling-freq-unit', 'GHz', '--wire-mode', 'window4']
+            clock = request.get('capture_clock_mhz', getattr(a, 'capture_clock_mhz', 0))
+            if clock:
+                if not isinstance(clock, (int, float)) or isinstance(clock, bool) or not 125 <= clock <= 150:
+                    raise Refused('bad_request', 'capture_clock_mhz must be 125..150.')
+                args += ['--capture-clock-mhz', str(float(clock))]
             helper = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                       cwd=str(run), env={**os.environ, 'BOARD': 'RFSoC4x2', 'XILINX_XRT': '/usr'})
             ready = threading.Event()
@@ -441,6 +446,12 @@ def parser():
     p.add_argument('--python', default=sys.executable)
     p.add_argument('--helper', default='legacy_capture.py')
     p.add_argument('--start-timeout', type=float, default=180)
+    # 136.3623 MHz = PS IOPLL 1499.985 MHz / 11: the smallest available PL clock 0 above
+    # the 125 MHz RF stream. At the overlay's 124.99875 MHz the capture writer, fed through
+    # a clock converter from the RF fabric clock, lost one sample every ~10000 (104 ppm,
+    # live); at 136.36 and 150 MHz no sample was lost in 1.97 M / 0.82 M rows.
+    p.add_argument('--capture-clock-mhz', type=float, default=136.3623,
+                   help='PL clock 0 for every session (0: overlay value); a client may request another')
     p.add_argument('--allow-cidr', action='append', default=[], help='extra client network, e.g. 198.51.100.0/24')
     p.add_argument('--board-name', default='', help=argparse.SUPPRESS)
     return p

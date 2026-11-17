@@ -66,7 +66,7 @@ disp('BOARD_CONTROL_LIVE_COMPLETE');
             try
                 f=b.next(.25);
             catch err
-                assert(any(string(err.identifier)==["origapp:NoSignal","a2live:Timestamp"]), ...
+                assert(any(string(err.identifier)==["origapp:SettingsChanged","a2live:Timestamp"]), ...
                     'origapp:Live','Unexpected stream error: %s',err.message);
                 report.obsoleteRejected=report.obsoleteRejected+1;
             end

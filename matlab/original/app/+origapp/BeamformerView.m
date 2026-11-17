@@ -1475,8 +1475,8 @@ classdef BeamformerView < handle
             if isstruct(h) && isfield(h,'accepted')
                 rejected=h.boundary+h.noSignal+h.expired;
                 sub=sprintf('%d accepted · %d rejected',h.accepted,rejected);
-                counts=sprintf('accepted %d · other errors %d\nrejected: boundary %d · no signal %d · expired %d', ...
-                    h.accepted,max(0,h.errors-rejected),h.boundary,h.noSignal,h.expired);
+                counts=sprintf('accepted %d · other errors %d\nrejected: boundary %d · no signal %d · expired %d\ndiscarded after a settings change: %d', ...
+                    h.accepted,max(0,h.errors-rejected),h.boundary,h.noSignal,h.expired,obj.field(h,'settings',0));
             else
                 sub=sprintf('%d shown · %d cleared',obj.FramesShown,obj.FramesCleared);
                 counts=sprintf('%d fresh frames displayed · %d display clears',obj.FramesShown,obj.FramesCleared);

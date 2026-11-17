@@ -41,6 +41,9 @@ client network (see Access).
    `window4` profile, DAC_B at 3 GHz, peak code 1200, bounded to at most 4 hours
    and 200000 frames). The helper loads the overlay and synchronises the
    converters; on the tested board this took about 10 s.
+   It then sets PL clock 0 to 136.36 MHz (service option `--capture-clock-mhz`,
+   0 keeps the overlay's 124.99875 MHz; a client may request another value with
+   `capture_clock_mhz` in its start request). See "Capture sample loss" below.
 5. The application receives the stream port (4011) and control port (4012) and
    runs as it does with the launcher ([BOARD_CONTROL.md](BOARD_CONTROL.md)).
 6. When the window closes, the service stops the helper. The helper zeroes both
@@ -52,6 +55,33 @@ The session connection is the owner of the helper. If the application crashes,
 the cable is pulled (TCP keepalive, about 8 s) or the service is stopped, the
 helper shuts down the same way. As with the launcher, the DAC-off record is a
 command and readback record, not an independent RF measurement.
+
+## Capture sample loss
+
+In the overlay the ADC streams run on the RF fabric clock (125 MHz from the RF
+clocking) and reach the capture RAM writer through an AXI-Stream clock
+converter into PL clock 0, which the processor derives from its own crystal
+(124.99875 MHz). The RF ADC stream cannot be stalled, so a capture clock even
+slightly slower than the stream overflows the converter and drops samples. The DAC
+players run on the RF fabric clock and are not affected.
+
+Measured live with `tools/slip_scan.py` (one-sample timing steps against the
+transmitted loop, all four streams):
+
+| PL clock 0 | Rows checked | Lost samples | Rate |
+|---|---|---|---|
+| 124.99875 MHz (overlay) | 819200 | 85, identical on all four streams | 104 ppm, one every ~10000 rows |
+| 136.36227 MHz (IOPLL / 11, service default) | 1966080 | 0 | 0 |
+| 149.9985 MHz (IOPLL / 10) | 819200 | 0 | 0 |
+
+At 104 ppm about every third 3000-row OFDM burst contained a one-sample timing
+step: the EVM spikes and the refused bursts ("pilot timing step 1.0 samples").
+The capture writer waits for valid data, so a faster clock adds no samples (the
+stream locks stayed 0.98). 136.36 MHz is the smallest available value above the
+RF rate; it runs the PL clock 0 logic (capture writer, AXI interconnect, BRAM
+controllers, RF data converter register port) 9 % above the 125 MHz the overlay
+was built for. A rebuilt overlay with the capture writer on the RF fabric clock
+would remove the clock crossing; that is a separate FPGA task.
 
 ## Access
 

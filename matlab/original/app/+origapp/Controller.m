@@ -14,6 +14,7 @@ classdef Controller < handle
         BoundaryFrames = 0         % intact frames with invalid sample continuity
         ExpiredFrames = 0          % frames too old after processing
         NoSignalFrames = 0          % intact frames rejected for missing wanted signal (not errors)
+        SettingsDiscards = 0        % frames captured before an acknowledged settings change (deliberate)
         TotalErrors = 0
         FramesAccepted = 0
         LastFrameTime = NaN         % posix seconds of the last accepted frame
@@ -109,7 +110,7 @@ classdef Controller < handle
                 'next() must return a struct with .samples.');
             if isfield(raw,'controlRevision') && raw.controlRevision~=obj.ControlRevision
                 obj.ControlRevision=raw.controlRevision;
-                error('origapp:NoSignal','Board settings changed: clear plots and averaging before the next frame.');
+                error('origapp:SettingsChanged','Board settings changed: clear plots and averaging before the next frame.');
             end
             x = raw.samples;
             assert(isnumeric(x) && size(x,2)==4 && size(x,1)>=16 && all(isfinite(x),'all'), ...
@@ -261,6 +262,13 @@ classdef Controller < handle
         end
 
         function mustStop = recordFailure(obj, err)
+            if string(err.identifier) == "origapp:SettingsChanged"
+                % Deliberate: the frame predates a setting the user just applied.
+                % Not a rejection or an error; counted on its own.
+                obj.SettingsDiscards = obj.SettingsDiscards + 1;
+                mustStop = false;
+                return
+            end
             obj.TotalErrors = obj.TotalErrors + 1;
             obj.LastError = string(err.identifier) + ": " + string(err.message);
             % Append each failure before later successes/rejections replace LastError.
