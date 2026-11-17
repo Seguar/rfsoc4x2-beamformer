@@ -15,8 +15,11 @@ defaults to `--layout clean --analyzer integrated`; native VSA is an optional
 separately labelled comparison. `--layout legacy` retains the earlier App Designer
 interface. The new GUI reuses the original refactor's guarded DSP/transport core.
 
-A compiled [standalone application](docs/STANDALONE.md) with a built-in
-simulation mode is attached to the releases; it needs only the MATLAB Runtime.
+A compiled [standalone application](docs/STANDALONE.md) is attached to the
+releases; it needs only the MATLAB Runtime. Started without arguments it finds
+the board on USB, then on Ethernet, and otherwise asks for its IP address; this
+needs the [board session service](docs/BOARD_SERVICE.md), installed once. It
+also has a built-in simulation mode.
 
 ![Synthetic fixture screenshot of the focused interface, not hardware data](docs/img/gui-dark-synthetic.png)
 

@@ -1,37 +1,47 @@
 function report=RFSoCBeamformer(varargin)
 %RFSOCBEAMFORMER Standalone entry point of the focused beamformer window.
-%   RFSoCBeamformer                 simulated four-element array, no hardware
-%   RFSoCBeamformer demo            the same
-%   RFSoCBeamformer <settings.json> hardware session; the JSON is the one the
-%                                   launcher tools/run_original_vsa.py writes,
-%                                   and the launcher owns the board helper
-% Optional name/value pairs after the first argument (text when deployed):
-%   seconds N      close after N seconds (demo default: until the window closes)
+%   RFSoCBeamformer                 find the board and start a hardware session:
+%                                   USB first, then Ethernet; if no board
+%                                   answers, a window asks for its IP address
+%                                   (or starts the simulation)
+%   RFSoCBeamformer demo            simulated four-element array, no hardware
+%   RFSoCBeamformer <settings.json> hardware session owned by the launcher
+%                                   tools/run_original_vsa.py (it writes the JSON)
+% Optional name/value pairs (text when deployed):
+%   board ADDRESS  skip the search and use this board address
+%   dialog off     never open the address window; fail instead (automation)
+%   seconds N      close after N seconds (default: until the window closes)
 %   snapshot DIR   save one snapshot (PNG + MAT) into DIR before closing
 %   theme NAME     dark | light
 %   interferer DB  demo only: add a simulated interferer DB below the wanted source
-% Compiled with matlab/standalone/buildStandalone.m. A compiled window has no
-% console, so a start-up failure is shown in a dialog and written to a log.
+% The automatic mode needs the session service on the board (one-time
+% tools/install_board_service.py). Compiled with matlab/standalone/buildStandalone.m.
+% A compiled window has no console, so a start-up failure is shown in a dialog
+% and written to a log.
 report=struct();
 try
-    mode='demo';rest=varargin;
-    if ~isempty(rest),mode=char(string(rest{1}));rest=rest(2:end);end
-    opt=struct('seconds',Inf,'snapshot','','theme','','interferer',-Inf);
+    opt=struct('seconds',Inf,'snapshot','','theme','','interferer',-Inf,'board','','dialog','on');
+    optionName=@(x)lower(regexprep(char(string(x)),'^-+',''));
+    mode='auto';rest=varargin;
+    if ~isempty(rest) && ~isfield(opt,optionName(rest{1})),mode=char(string(rest{1}));rest=rest(2:end);end
     assert(mod(numel(rest),2)==0,'origapp:Standalone','Options are name/value pairs.');
     for k=1:2:numel(rest)
-        name=lower(regexprep(char(string(rest{k})),'^-+',''));
+        name=optionName(rest{k});
         assert(isfield(opt,name),'origapp:Standalone','Unknown option "%s".',name);
         value=rest{k+1};
         if any(strcmp(name,{'seconds','interferer'})) && ~isnumeric(value),value=str2double(value);end
         opt.(name)=value;
     end
     assert(isnumeric(opt.seconds) && isscalar(opt.seconds) && opt.seconds>0,'origapp:Standalone','seconds must be positive.');
+    assert(any(strcmpi(char(string(opt.dialog)),{'on','off'})),'origapp:Standalone','dialog is on or off.');
     if ~isdeployed
         root=fileparts(fileparts(mfilename('fullpath')));
         addpath(fullfile(root,'original'),fullfile(root,'original','app'),root);
     end
     if any(strcmpi(mode,{'demo','--demo','-demo'}))
         report=runDemo(opt);
+    elseif strcmpi(mode,'auto')
+        report=runAuto(opt);
     else
         assert(isfile(mode),'origapp:Standalone','Settings file not found: %s',mode);
         report=runOriginalVsa(mode,opt);
@@ -50,6 +60,123 @@ catch err
     end
 end
 if nargout==0,clear report,end
+end
+
+function report=runAuto(opt)
+% Board search: USB, then Ethernet, then the address window. Only a failed
+% connection returns to the window; a failure of a running session is an error.
+interactive=strcmpi(char(string(opt.dialog)),'on');
+host=string(opt.board);note="";
+if strlength(host)==0
+    found=origapp.BoardLink.find();host=found.host;
+    note="No board answered ("+strjoin(found.tried,", ")+").";
+    if strlength(found.hint)>0,note=note+newline+newline+found.hint;end
+else
+    origapp.BoardLink.parseAddress(host);
+end
+while true
+    if strlength(host)==0
+        assert(interactive,'origapp:BoardConnect','%s',char(note));
+        choice=origapp.boardDialog(note+newline+newline+"Enter the board address, or run the simulation without hardware.", ...
+            origapp.BoardLink.lastAddress());
+        switch choice.action
+            case "demo",report=runDemo(opt);return
+            case "cancel",report=struct('mode','cancelled');return
+        end
+        host=choice.host;
+    end
+    try
+        session=connectBoard(host,opt);
+    catch err
+        if ~interactive || ~any(strcmp(err.identifier,{'origapp:BoardConnect','origapp:BoardCancelled'})),rethrow(err);end
+        note="Board at "+host+": "+string(err.message);host="";
+        continue
+    end
+    report=runBoard(session,opt);
+    return
+end
+end
+
+function session=connectBoard(host,opt)
+% Start the board session behind a small progress window (the FPGA image
+% load and converter synchronisation take a while).
+link=origapp.BoardLink(host);
+fig=uifigure('Name','RFSoC Beamformer','Position',[0 0 440 150],'Resize','off');movegui(fig,'center');
+figGuard=onCleanup(@()delete(fig(isvalid(fig))));
+dialog=uiprogressdlg(fig,'Title','Connecting to the board','Message',"Board at "+link.Host, ...
+    'Indeterminate','on','Cancelable','on','CancelText','Cancel');
+drawnow;
+seconds=origapp.BoardLink.MAX_SECONDS;
+if isfinite(opt.seconds),seconds=min(seconds,ceil(opt.seconds)+120);end
+try
+    ready=link.start(seconds,@(m)progress(dialog,link.Host,m));
+catch err
+    delete(link);rethrow(err);
+end
+if ~strcmp(char(link.Host),char(origapp.BoardLink.USB))
+    address=link.Host;
+    if link.Port~=origapp.BoardLink.PORT,address=address+":"+link.Port;end
+    origapp.BoardLink.lastAddress(address);
+end
+session=struct('link',link,'ready',ready,'seconds',seconds);
+end
+
+function ok=progress(dialog,host,m)
+text="Board at "+host;
+if isfield(m,'step'),text=text+newline+string(m.step);end
+if isfield(m,'elapsed') && m.elapsed>0,text=text+sprintf(' (%d s)',round(m.elapsed));end
+dialog.Message=text;drawnow;
+ok=~dialog.CancelRequested;
+end
+
+function report=runBoard(session,opt)
+% Hardware session through the board service: the same reviewed four-stream
+% profile and session loop as the launcher path (runOriginalVsa), with the
+% session connection as the owner of the board helper.
+link=session.link;linkGuard=onCleanup(@()delete(link));
+[setx,ref]=origapp.demoResources();
+base=getenv('LOCALAPPDATA');if isempty(base),base=tempdir;end
+runs=fullfile(base,'RFSoCBeamformer','runs');
+out=fullfile(runs,char(datetime('now','Format','yyyyMMdd-HHmmss')));
+if ~isfolder(out),mkdir(out);end
+old=dir(runs);old=old([old.isdir] & ~startsWith({old.name},'.'));
+[~,order]=sort({old.name});old=old(order);
+for k=1:numel(old)-10
+    try,rmdir(fullfile(runs,old(k).name),'s');catch,end
+end
+sha=char(origapp.LegacyVsaBackend.sha256(setx));
+host=char(string(session.ready.host));
+app=struct('frontend','clean','visible',true,'directOnly',false,'allowBoardCommands',true,'sendInitialTuning',false, ...
+    'da',2,'vsaSetupFile',setx,'vsa',1,'ch',5,'dataChan',32768,'fc',3e9,'fc_d0',3e9,'fc_d1',3e9,'fcAnt',3e9, ...
+    'adcMirror',1,'nyquistZone',2,'nyquistZone_d0',1,'nyquistZone_d1',1,'dacPow',[1 0 0 0],'fsRfsoc',125e6, ...
+    'staleSeconds',2,'periodSeconds',.02,'frameTimeoutSeconds',.05,'outputDir',out,'analyzer','integrated', ...
+    'cutterAllowed',false,'elementModel','isotropic', ...
+    'arrayLabel','common-feed diagnostic / array model (ULA d=lambda/2 @3 GHz) · isotropic elements', ...
+    'ofdm',struct('setupSha256',sha,'referenceMat',ref,'orientation','IplusjQ','syncThreshold',.8, ...
+        'lockThreshold',.3,'staleSeconds',2));
+if ~isdeployed && isfolder(fullfile(fileparts(fileparts(setx)),'Functions')),app.originalRepoPath=fileparts(fileparts(setx));end
+backend=struct('host',host,'port',session.ready.stream_port,'referenceMat',ref,'orientation','IplusjQ', ...
+    'dllPath','unused-integrated','setupPath',setx,'setupSha256',sha,'vsaPort',60685,'visible',true, ...
+    'allowContinuous',true,'staleSeconds',2,'expectSource','rfsoc4x2-hardware','logFile','','rawDir','', ...
+    'frameLogFile','','controlPort',session.ready.control_port,'controlLogFile',fullfile(out,'commands.jsonl'), ...
+    'wireMode','window4','prefetchWithoutVsa',true);
+settings=struct('app',app,'backend',backend,'session',struct('maxSeconds',session.seconds, ...
+    'stopFile',fullfile(out,'STOP'),'reportFile',fullfile(out,'result.json')));
+settingsPath=fullfile(out,'frontend.json');
+fid=fopen(settingsPath,'w');assert(fid>=0,'origapp:Standalone','Cannot write %s',settingsPath);
+fprintf(fid,'%s\n',jsonencode(settings));fclose(fid);
+failure=[];
+try
+    report=runOriginalVsa(settingsPath,opt);
+catch failure
+    report=struct();
+end
+report.mode='HARDWARE';report.host=host;report.runFolder=out;
+report.board=link.finish(150);
+if ~isempty(failure),rethrow(failure);end
+assert(isfield(report.board,'dac_off_commanded') && logical(report.board.dac_off_commanded), ...
+    'origapp:Shutdown',['The board did not confirm that the DAC outputs were switched off (%s). ' ...
+    'Check the board before connecting anything to its outputs.'],char(string(report.board.reason)));
 end
 
 function report=runDemo(opt)

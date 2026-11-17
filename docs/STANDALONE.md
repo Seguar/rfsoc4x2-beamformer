@@ -12,11 +12,34 @@ for the launched process).
 
 | Command | What it does |
 |---|---|
-| `RFSoCBeamformer.exe` or `RFSoCBeamformer.exe demo` | **Simulation, no hardware.** A synthetic four-element array receives the reference OFDM loop from a model angle that sweeps ±20°. The real session, DSP and view run on it. |
-| `RFSoCBeamformer.exe <frontend.json>` | **Hardware session.** The JSON is the one `tools/run_original_vsa.py` writes; the launcher owns the board helper and its shutdown. |
+| `RFSoCBeamformer.exe` (double-click) | **Hardware session, board found automatically.** The search order is below. Needs the [board session service](BOARD_SERVICE.md), installed once. |
+| `RFSoCBeamformer.exe demo` | **Simulation, no hardware.** A synthetic four-element array receives the reference OFDM loop from a model angle that sweeps ±20°. The real session, DSP and view run on it. |
+| `RFSoCBeamformer.exe <frontend.json>` | **Hardware session owned by the launcher.** The JSON is the one `tools/run_original_vsa.py` writes; the launcher owns the board helper and its shutdown. |
 
-Optional name/value pairs after the first argument:
+Board search, in this order; the first address whose service answers is used:
 
+1. **USB:** `192.168.3.1`, the board's USB network address.
+2. **Ethernet:** the last address that worked, then `192.168.2.99` (the board's
+   static address), then a broadcast on every local network of the PC.
+3. **Address window:** if no board answers, a window asks for the board's IP
+   address. It also offers the simulation. A failed connection returns to this
+   window with the board's message, for example that a notebook kernel is running.
+
+Starting the session takes about 10 s (FPGA image load and converter
+synchronisation); a progress window with Cancel is shown. The session then
+transmits the reference loop from DAC_B at 3 GHz at the usual low level (peak
+code 1200), as the launcher does. Closing the window stops the board session and
+switches the DAC outputs off; the application reports an error if the board does
+not confirm it. A session ends by itself after 4 hours or 200000 frames.
+
+An address that worked, other than the USB one, is stored in
+`%APPDATA%\RFSoCBeamformer\board.txt`. Each hardware run keeps its settings and
+command log in `%LOCALAPPDATA%\RFSoCBeamformer\runs` (newest 10 kept).
+
+Optional name/value pairs:
+
+- `board ADDRESS` skips the search and uses this address.
+- `dialog off` never opens the address window; the application fails instead.
 - `seconds N` closes the window after N seconds.
 - `snapshot DIR` saves one snapshot (PNG and MAT) under `DIR/snapshots` before closing.
 - `theme dark|light` selects the start-up theme.
@@ -28,14 +51,14 @@ The first start takes longer while the runtime unpacks the application. The
 window has no console: a start-up failure opens a dialog and writes
 `%TEMP%\RFSoCBeamformer-error.log`.
 
-With hardware, the launcher starts the compiled window instead of MATLAB:
+With the launcher instead of the board service, the compiled window replaces MATLAB:
 
 ```powershell
 py -3 tools/run_original_vsa.py --config <private-config.json> --i-own-board --mode durable --max-seconds 1800 --standalone C:\path\RFSoCBeamformer.exe
 ```
 
-The launcher still needs its private configuration, board access and the
-`vsa_rfsoc` checkout; only the MATLAB installation is replaced.
+The launcher needs its private configuration, board access and the `vsa_rfsoc`
+checkout.
 
 ## Limits
 
@@ -46,8 +69,10 @@ The launcher still needs its private configuration, board access and the
 - The simulation shows the processing chain on synthetic frames. It is not a
   measurement of the board, an antenna or interference rejection.
 - The application packages the `vsa_rfsoc` processing functions, the matched
-  OFDM setup file and the reference loop; it contains no board address,
-  credential, calibration or measurement.
+  OFDM setup file and the reference loop. It contains no credential, calibration
+  or measurement; the only addresses in it are the two PYNQ defaults above.
+- The automatic hardware session uses isotropic model elements and the
+  common-feed diagnostic scope, as the launcher's `--standalone` path does.
 
 ## Build
 
@@ -85,3 +110,6 @@ mode on a second Windows machine against its installed MATLAB R2026a, with no
 runtime: window up within about 3 minutes on first start, plots updating, no
 errors. The launcher's `--standalone` option was
 exercised only through its settings format, not by a full launcher run.
+
+The automatic board search and the board session service were validated
+separately; see [BOARD_SERVICE.md](BOARD_SERVICE.md).
