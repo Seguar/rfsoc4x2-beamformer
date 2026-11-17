@@ -67,8 +67,24 @@ reason inside each one; the EVM history stays and is labelled history only.
 ## Sidebar
 
 Always visible above the pages, as in the original GUI: Start/Pause, then
-**Output** (combined beam or one receive stream), **Signal priority** (strongest
-or weaker source), **Beamformer**, **DOA estimator** and **Data amount**.
+**Output** (combined beam, or one ADC: ADC_D, ADC_C, ADC_B, ADC_A), **Signal
+priority** (strongest or weaker source), **Beamformer**, **DOA estimator**, **Data
+amount** and **Set 0°**.
+
+Receive streams 0..3 are ADC_D, ADC_C, ADC_B and ADC_A (tile 224 blocks 0/1, tile
+226 blocks 0/1, as the RFSoC 4x2 manual rev A5 and the PYNQ base design name
+them); the order was checked on the board by turning one ADC mixer phase at a time.
+DAC index 0 is DAC_B (tile 228), index 2 DAC_A (tile 230).
+
+**Set 0°** is the common-feed calibration: every ADC receives the same splitter
+output, so ADC_C, ADC_B and ADC_A are brought to ADC_D in phase (ADC mixer phase
+offsets, written on the running NCOs without re-synchronising the tiles) and level
+(QMC gains; the weakest ADC keeps gain 1.99). It measures six frames, corrects,
+repeats once and checks; the state next to the button shows the residual. The
+array model then reads the loopback signal at 0°. The converters are synchronised
+again at every session start and frequency change, which moves the phase between
+tile 224 and tile 226, so calibrate after each of them (the label says so). On the
+board the residual stayed within 0.6° and 0.06 dB over 30 s.
 
 **Data amount** sets the samples per frame: 32768 (full, checked), 16384, 8192
 or 4096 (one complete OFDM frame, fastest). With the board service a reduced
@@ -89,7 +105,15 @@ Four pages, switched by the segmented control:
   zone and mirror; DAC B and DAC A centers with their even Nyquist zones (one
   Apply sends the `fc` command); power of DAC B and DAC A (`dacPow`; both play the
   same waveform and add in the combiner); **SYNC** (`da`: DAC = ADC, DAC = DAC,
-  free running); ADC or DAC mixer phases; calibration-file loading. An Apply
+  free running); calibration-file loading; and the original **channel control**:
+  one Setting list with a field per connector for ADC/DAC mixer phase (0.01°),
+  ADC/DAC gain (QMC, 0–1.99), ADC/DAC I/Q phase (QMC, ±26.49°), ADC attenuator
+  (0–27 dB) and DAC output current (2.25–40.5 mA). The fields start from the
+  values the board reports (the board starts with ADC phases −90/−90/90/90). The
+  board helper keeps these settings and writes them again after every frequency
+  or legacy phase command, because the board wrapper resets QMC gain to 1.99 and
+  the DAC current to its maximum then. An older board helper offers only integer
+  mixer phases. An Apply
   button is highlighted while its fields differ from the last values the board
   accepted.
 - **Algorithms:** diagonal/robust loading, uncertainty, iteration count, mismatch

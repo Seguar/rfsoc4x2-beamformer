@@ -6,6 +6,14 @@ else:
     from control_service import parse_commands
 
 
+ADC_CONNECTORS = ('ADC_D', 'ADC_C', 'ADC_B', 'ADC_A')    # ADC index 0..3 (tile 224 b0/b1, 226 b0/b1)
+DAC_CONNECTORS = {0: 'DAC_B', 2: 'DAC_A'}                # DAC index (tile 228, 230)
+EVNT_SRC_TILE, EVENT_MIXER, EVENT_QMC = 2, 1, 4          # xrfdc constants (no xrfdc import here)
+WRAPPER_QMC_GAIN = 1.99                                  # /boot wrapper writes this on every configure
+WRAPPER_VOP_UA = 40500
+PATH_COMMANDS = ('phasec', 'dphasec', 'again', 'dgain', 'aiqphase', 'diqphase', 'adsa', 'dvop')
+
+
 class BoardCommands:
     def __init__(self, overlay, dac, data_words, check_lock, set_output=None, allowed_words=None, both_dacs=False):
         self.overlay = overlay
@@ -20,6 +28,15 @@ class BoardCommands:
         self.revision = 0
         self.fault = None
         self.log = []
+        # Converter path settings kept here: the /boot wrapper rewrites QMC gain 1.99,
+        # no I/Q phase and maximum DAC current whenever fc/phase/dphase reconfigure
+        # the converters, so they are written again after every such command.
+        self.adc_gain = [WRAPPER_QMC_GAIN] * 4
+        self.adc_iq = [0.0] * 4
+        self.adc_dsa = [None] * 4               # None: left as the board started
+        self.dac_gain = {0: WRAPPER_QMC_GAIN, 2: WRAPPER_QMC_GAIN}
+        self.dac_iq = {0: 0.0, 2: 0.0}
+        self.dac_vop = {0: WRAPPER_VOP_UA, 2: WRAPPER_VOP_UA}
 
     def check(self):
         if self.fault:
@@ -31,7 +48,74 @@ class BoardCommands:
                     data_words=self.data_words, da=int(o.da), dac_power=list(o.dacPower),
                     adc_mixers=[dict(o.adc[n].MixerSettings) for n in range(4)],
                     dac_mixers=[dict(o.dac[n].MixerSettings) for n in (0, 2)],
+                    adc_phase=[float(v) for v in o.phases], dac_phase=[float(o.d_phases[n]) for n in (0, 2)],
+                    adc_connectors=list(ADC_CONNECTORS), dac_connectors=[DAC_CONNECTORS[0], DAC_CONNECTORS[2]],
+                    adc_gain=list(self.adc_gain), adc_iq_phase=list(self.adc_iq),
+                    adc_attenuation=[self._dsa(n) for n in range(4)],
+                    dac_gain=[self.dac_gain[0], self.dac_gain[2]], dac_iq_phase=[self.dac_iq[0], self.dac_iq[2]],
+                    dac_current_ua=[self.dac_vop[0], self.dac_vop[2]],
                     rf_off_verified=False)
+
+    def _dsa(self, n):
+        try:
+            return float(self.overlay.adc[n].DSA['Attenuation'])
+        except Exception:
+            return None
+
+    def _qmc(self, block, gain, iq):
+        block.QMCSettings = {'EnablePhase': 1, 'EnableGain': 1, 'GainCorrectionFactor': float(gain),
+                             'PhaseCorrectionFactor': float(iq), 'OffsetCorrectionFactor': 0,
+                             'EventSource': EVNT_SRC_TILE}
+        block.UpdateEvent(EVENT_QMC)
+
+    @staticmethod
+    def _mixer_phase(block, degrees):
+        settings = dict(block.MixerSettings)
+        settings.update(PhaseOffset=float(degrees), EventSource=EVNT_SRC_TILE)
+        block.MixerSettings = settings
+        block.UpdateEvent(EVENT_MIXER)
+
+    def _write_paths(self):
+        """(Re)write every stored path setting to the converters."""
+        o = self.overlay
+        for n in range(4):
+            self._qmc(o.adc[n], self.adc_gain[n], self.adc_iq[n])
+            if self.adc_dsa[n] is not None:
+                o.adc[n].DSA = {'DisableRTS': 0, 'Attenuation': float(self.adc_dsa[n])}
+        for n in (0, 2):
+            self._qmc(o.dac[n], self.dac_gain[n], self.dac_iq[n])
+            o.dac[n].SetDACVOP(int(self.dac_vop[n]))
+
+    def _path(self, name, values):
+        o = self.overlay
+        if name in ('phasec', 'dphasec'):
+            values = [(v + 18000) % 36000 - 18000 for v in values]
+        if name == 'phasec':
+            # Fine mixer phase offset only, applied at once on the running NCOs: no NCO
+            # reset and no tile re-synchronisation (the wrapper's phase command does both,
+            # and its re-sync moved tile 226 against tile 224 by 144 deg in a live test).
+            o.phases = [v / 100 for v in values]    # kept for later wrapper reconfiguration
+            for n in range(4):
+                self._mixer_phase(o.adc[n], o.phases[n])
+        elif name == 'dphasec':
+            o.d_phases = [v / 100 for v in values]
+            for n in (0, 2):
+                self._mixer_phase(o.dac[n], o.d_phases[n])
+        elif name == 'again':
+            self.adc_gain = [v / 100 for v in values]
+        elif name == 'aiqphase':
+            self.adc_iq = [v / 100 for v in values]
+        elif name == 'adsa':
+            self.adc_dsa = [float(v) for v in values]
+        elif name == 'dgain':
+            self.dac_gain = {n: values[n] / 100 for n in (0, 2)}
+        elif name == 'diqphase':
+            self.dac_iq = {n: values[n] / 100 for n in (0, 2)}
+        elif name == 'dvop':
+            if not all(values[n] for n in (0, 2)):
+                raise ValueError('dvop needs a current for DAC index 0 (DAC_B) and 2 (DAC_A)')
+            self.dac_vop = {n: values[n] for n in (0, 2)}
+        self._write_paths()
 
     def apply(self, line):
         """Service holds lock. Validate entire batch before any hardware operation.
@@ -48,6 +132,8 @@ class BoardCommands:
             if name == 'dataChan' and values[0] not in self.allowed_words:
                 raise ValueError('dataChan must be one of %s lane words for this stream'
                                  % '/'.join(map(str, self.allowed_words)))
+            if name == 'dvop' and not all(values[n] for n in (0, 2)):
+                raise ValueError('dvop needs a current for DAC index 0 (DAC_B) and 2 (DAC_A)')
             if name == 'dacPow':
                 allowed = (0, 2) if self.both_dacs else ((0,) if self.dac == 0 else (2,))
                 if any(v for n, v in enumerate(values) if n not in allowed):
@@ -65,11 +151,15 @@ class BoardCommands:
                     continue
                 if name == 'dataStream':
                     self.streaming = bool(values[0])
+                elif name in PATH_COMMANDS:
+                    self._path(name, values)
                 else:
                     if name in ('phase', 'dphase'):
                         values = [(v+180)%360-180 for v in values]
                     text = name+' '+ '/'.join(map(str, values))
                     self.overlay.handle_commands([text])
+                    if name in ('fc', 'phase', 'dphase'):
+                        self._write_paths()     # the wrapper reset QMC gain/phase and DAC current
                     if name == 'dacPow':
                         if self.set_output is not None:
                             # both_dacs: (DAC_B, DAC_A) mask; else the selected DAC's state

@@ -18,11 +18,12 @@ classdef BeamformerApp < handle
                 cb=struct('start',@()obj.startAcquisition(),'pause',@(on)obj.pause(on), ...
                     'rf',@(rf)obj.rf(rf),'phase',@(r)obj.phase(r), ...
                     'dac',@(on)obj.dac(on),'sync',@(m)obj.sync(m),'configure',@(delta)obj.configure(delta), ...
-                    'calibration',@()obj.calibration(),'close',@()obj.close());
-                if ~cfg.allowBoardCommands,cb=rmfield(cb,{'pause','rf','phase','dac','sync'});end
+                    'calibration',@()obj.calibration(),'zero',@()obj.zero(),'close',@()obj.close());
+                if ~cfg.allowBoardCommands,cb=rmfield(cb,{'pause','rf','phase','dac','sync','zero'});end
                 vc=obj.Session.Config;vc.ofdmProfile=obj.Session.Analyzer.Profile.summary;
                 vc.availableChannels=obj.Controller.availableChannels();
                 vc.rows=obj.Session.Rows;vc.rowsAllowed=obj.Session.rowsAllowed();
+                vc.adcConnectors=obj.Session.AdcConnectors;vc.dacConnectors=obj.Session.DacConnectors;
                 obj.View=origapp.BeamformerView(vc,cb);
                 % Finish building the window now: its first draw takes seconds and
                 % would otherwise age the first frame past the stale limit.
@@ -37,14 +38,22 @@ classdef BeamformerApp < handle
         end
         function startAcquisition(obj)
             obj.Session.start();
+            % board path state and the settings it supports are known only now
+            if ~isempty(obj.View) && isvalid(obj.View),obj.refreshControls();end
             if strcmp(obj.AcqTimer.Running,'off'),start(obj.AcqTimer);end
         end
         function tick(obj)
             if obj.Busy || obj.Closed,return,end
             obj.Busy=true;g=onCleanup(@()obj.unbusy()); %#ok<NASGU>
+            zs=obj.Session.ZeroCal.state;
             obj.Session.step(@(s)obj.render(s));
+            if obj.Session.ZeroCal.state~=zs,obj.refreshControls();end
             obj.render(obj.Session.snapshot());
             if ~obj.Controller.IsOpen && strcmp(obj.AcqTimer.Running,'on'),stop(obj.AcqTimer);end
+        end
+        function calibrateZero(obj)
+            % "Set 0 deg" from a launcher option (same path as the button).
+            obj.zero();
         end
         function setRows(obj,n)
             % Data amount (samples per frame) from a launcher option.
@@ -99,6 +108,9 @@ classdef BeamformerApp < handle
         function sync(obj,mode)
             obj.Session.setSync(mode);obj.render(obj.Session.snapshot());
         end
+        function zero(obj)
+            obj.Session.calibrateZero();obj.refreshControls();obj.render(obj.Session.snapshot());
+        end
         function rf(obj,value)
             obj.Session.applyRf(value);obj.refreshControls();obj.render(obj.Session.snapshot());
         end
@@ -111,7 +123,9 @@ classdef BeamformerApp < handle
         function refreshControls(obj)
             c=obj.Session.Config;c.ofdmProfile=obj.Session.Analyzer.Profile.summary;
             c.availableChannels=obj.Controller.availableChannels();
-            c.rows=obj.Session.Rows;c.rowsAllowed=obj.Session.rowsAllowed();obj.View.updateConfig(c);
+            c.rows=obj.Session.Rows;c.rowsAllowed=obj.Session.rowsAllowed();
+            c.paths=obj.Session.Paths;c.pathKinds=obj.Session.pathKinds();c.zeroCal=obj.Session.ZeroCal;
+            obj.View.updateConfig(c);
         end
         function timerError(obj,event)
             reason="acquisition timer failed";

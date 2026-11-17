@@ -166,6 +166,14 @@ classdef Controller < handle
             end
         end
 
+        function s = controlState(obj)
+            % Last acknowledged board state (control channel), [] without one.
+            s = [];
+            if obj.hasBackend() && origapp.Controller.hasOp(obj.Backend, "controlStatus")
+                s = obj.Backend.controlStatus();
+            end
+        end
+
         function s = vsaStatus(obj)
             % Optional backend op: latest guarded native-VSA result
             % (valid, reason, evmPercent...). [] when the backend has none.

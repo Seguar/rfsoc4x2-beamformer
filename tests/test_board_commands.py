@@ -6,6 +6,16 @@ from board.board_commands import BoardCommands
 class Block:
     def __init__(self):
         self.MixerSettings = {'Freq': 3000, 'PhaseOffset': 0}
+        self.QMCSettings = {'GainCorrectionFactor': 1.99, 'PhaseCorrectionFactor': 0.0}
+        self.DSA = {'DisableRTS': 0, 'Attenuation': 0.0}
+        self.vop = 40500
+        self.events = []
+
+    def UpdateEvent(self, event):
+        self.events.append(event)
+
+    def SetDACVOP(self, ua):
+        self.vop = ua
 
 
 class Overlay:
@@ -14,6 +24,8 @@ class Overlay:
         self.dac = [Block() for _ in range(4)]
         self.da = 0
         self.dacPower = [1, 0, 0, 0]
+        self.phases = [-90, -90, 90, 90]
+        self.d_phases = [0, 0, 0, 0]
         self.calls = []
         self.failure = None
 
@@ -34,11 +46,30 @@ class Overlay:
             elif name == 'dphase':
                 for block, phase in zip(self.dac, values):
                     block.MixerSettings['PhaseOffset'] = phase
-            elif name == 'fc':
+            elif name in ('phase', 'fc', 'dphase'):
+                self.reconfigure()
+            if name == 'fc':
                 for block in self.adc:
                     block.MixerSettings['Freq'] = values[0]
                 self.dac[0].MixerSettings['Freq'] = values[2]
                 self.dac[2].MixerSettings['Freq'] = values[4]
+
+    def reconfigure(self):
+        # as the /boot wrapper: every configure rewrites QMC gain 1.99 and maximum current
+        for block in self.adc + self.dac:
+            block.QMCSettings = {'GainCorrectionFactor': 1.99, 'PhaseCorrectionFactor': 0.0}
+            block.vop = 40500
+
+    def configure_adcs(self):
+        self.calls.append('configure_adcs')
+        self.reconfigure()
+
+    def configure_dacs(self):
+        self.calls.append('configure_dacs')
+        self.reconfigure()
+
+    def sync_tiles(self):
+        self.calls.append('sync_tiles')
 
     def dacs_control(self):
         self.calls.append('dacs_control')
@@ -164,6 +195,30 @@ class BoardCommandTests(unittest.TestCase):
         self.assertEqual(masks, [(True, True), (False, True)])
         with self.assertRaises(ValueError):
             adapter.apply('dacPow 1/1/0/0')
+
+    def test_path_settings_survive_wrapper_reconfiguration(self):
+        adapter = BoardCommands(self.overlay, 0, 262144, lambda: None)
+        r = adapter.apply('again 199/150/120/100#aiqphase 0/-250/0/1000#adsa 0/3/0/27#'
+                          'dgain 180/0/90/0#diqphase 10/0/-20/0#dvop 20000/0/30000/0')
+        self.assertEqual(r['adc_gain'], [1.99, 1.5, 1.2, 1.0])
+        self.assertEqual(r['adc_iq_phase'], [0.0, -2.5, 0.0, 10.0])
+        self.assertEqual(r['adc_attenuation'], [0.0, 3.0, 0.0, 27.0])
+        self.assertEqual((r['dac_gain'], r['dac_iq_phase'], r['dac_current_ua']), ([1.8, 0.9], [0.1, -0.2], [20000, 30000]))
+        self.assertEqual(r['adc_connectors'], ['ADC_D', 'ADC_C', 'ADC_B', 'ADC_A'])
+        adapter.apply('fc 3000/2/3000/1/3000/1')                  # wrapper rewrites 1.99 / 40500
+        self.assertEqual([b.QMCSettings['GainCorrectionFactor'] for b in self.overlay.adc], [1.99, 1.5, 1.2, 1.0])
+        self.assertEqual([self.overlay.dac[n].vop for n in (0, 2)], [20000, 30000])
+        self.assertEqual(self.overlay.adc[3].QMCSettings['PhaseCorrectionFactor'], 10.0)
+        r = adapter.apply('phasec 1234/-9000/9000/27000')         # hundredths, wrapped
+        self.assertEqual(self.overlay.phases, [12.34, -90.0, 90.0, -90.0])
+        self.assertEqual(r['adc_phase'], [12.34, -90.0, 90.0, -90.0])
+        self.assertEqual([b.MixerSettings['PhaseOffset'] for b in self.overlay.adc], [12.34, -90.0, 90.0, -90.0])
+        self.assertNotIn('sync_tiles', self.overlay.calls)                 # running NCOs, no re-sync
+        self.assertEqual(self.overlay.adc[1].QMCSettings['GainCorrectionFactor'], 1.5)
+        with self.assertRaises(Exception):
+            adapter.apply('again 200/0/0/0')
+        with self.assertRaises(ValueError):
+            adapter.apply('dvop 20000/0/0/0')
 
     def test_disable_error_does_not_mask_original_fault(self):
         self.overlay.handle_commands = lambda _: (_ for _ in ()).throw(RuntimeError('original failure'))

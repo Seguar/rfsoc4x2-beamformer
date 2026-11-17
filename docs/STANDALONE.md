@@ -43,6 +43,7 @@ Optional name/value pairs:
 - `seconds N` closes the window after N seconds.
 - `rows N` starts with N samples per frame (32768, 16384, 8192 or 4096), as the
   Data amount control.
+- `calibrate on` runs Set 0° once the first frame arrives (common-feed calibration).
 - `record <folder>` writes every received window, a frame log and a per-frame
   demodulation log there (diagnostics; keep them out of the repository).
 - `snapshot DIR` saves one snapshot (PNG and MAT) under `DIR/snapshots` before closing.

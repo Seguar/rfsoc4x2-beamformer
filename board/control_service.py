@@ -38,7 +38,14 @@ def parse_commands(line):
     if len(parts) > MAX_COMMANDS or any(not p.strip() for p in parts):
         raise ControlError('BadCommand', 'batch must contain 1 to 16 nonempty commands')
     counts = {'status': 0, 'fc': 6, 'phase': 4, 'dphase': 4,
-              'dataStream': 1, 'da': 1, 'dacPow': 4, 'dataChan': 1}
+              'dataStream': 1, 'da': 1, 'dacPow': 4, 'dataChan': 1,
+              # converter path settings (RFSoC4x2 adapter; per ADC index 0..3 = ADC_D, ADC_C,
+              # ADC_B, ADC_A, per DAC index 0 = DAC_B, 2 = DAC_A; 1 and 3 unused)
+              'phasec': 4, 'dphasec': 4,          # mixer phase, hundredths of a degree
+              'again': 4, 'dgain': 4,             # QMC gain, hundredths (0..199 = 0..1.99)
+              'aiqphase': 4, 'diqphase': 4,       # QMC I/Q phase correction, hundredths of a degree
+              'adsa': 4,                          # ADC step attenuator, dB
+              'dvop': 4}                          # DAC output current, microamperes
     result = []
     for part in parts:
         tokens = part.split()
@@ -60,6 +67,16 @@ def parse_commands(line):
             raise ControlError('OutOfRange', name + ' requires binary values')
         if name == 'da' and values[0] not in (0, 1, 2):
             raise ControlError('OutOfRange', 'da must be 0, 1 or 2')
+        if name in ('phasec', 'dphasec') and any(abs(x) > 36000 for x in values):
+            raise ControlError('OutOfRange', name + ' requires |hundredths of a degree| <= 36000')
+        if name in ('again', 'dgain') and any(not 0 <= x <= 199 for x in values):
+            raise ControlError('OutOfRange', name + ' requires 0..199 (gain 0..1.99)')
+        if name in ('aiqphase', 'diqphase') and any(abs(x) > 2649 for x in values):
+            raise ControlError('OutOfRange', name + ' requires |hundredths of a degree| <= 2649')
+        if name == 'adsa' and any(not 0 <= x <= 27 for x in values):
+            raise ControlError('OutOfRange', 'adsa requires 0..27 dB')
+        if name == 'dvop' and any(x and not 2250 <= x <= 40500 for x in values):
+            raise ControlError('OutOfRange', 'dvop requires 2250..40500 uA (0 for an unused index)')
         if name == 'dataChan' and not (0 < values[0] <= 1048576 and values[0] % 8 == 0):
             raise ControlError('OutOfRange', 'dataChan requires 8..1048576 lane words in multiples of eight')
         result.append((name, values))

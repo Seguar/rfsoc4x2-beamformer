@@ -20,7 +20,7 @@ function report=RFSoCBeamformer(varargin)
 % and written to a log.
 report=struct();
 try
-    opt=struct('seconds',Inf,'snapshot','','theme','','interferer',-Inf,'board','','dialog','on','rows',NaN,'record','');
+    opt=struct('seconds',Inf,'snapshot','','theme','','interferer',-Inf,'board','','dialog','on','rows',NaN,'record','','calibrate','off');
     optionName=@(x)lower(regexprep(char(string(x)),'^-+',''));
     mode='auto';rest=varargin;
     if ~isempty(rest) && ~isfield(opt,optionName(rest{1})),mode=char(string(rest{1}));rest=rest(2:end);end

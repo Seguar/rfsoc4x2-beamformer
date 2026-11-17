@@ -15,14 +15,31 @@ and selected-DAC mask match the launcher's initial 3 GHz setup.
 
 | Command | Meaning / units |
 |---|---|
-| `status` | Current revision, streaming state and ADC/DAC mixer register readbacks |
+| `status` | Current revision, streaming state, ADC/DAC mixer readbacks and the path settings below |
 | `fc ADC/NZ/DAC_B/NZ/DAC_A/NZ` | Integer MHz and Nyquist zones 1 or 2; wrapper configure + MTS |
 | `phase p0/p1/p2/p3` | ADC mixer phases in degrees, wrapped to −180…180 |
 | `dphase p0/p1/p2/p3` | Wrapper DAC phase vector; physical DAC_B is index 0, DAC_A index 2 |
 | `dataStream 0` / `dataStream 1` | Pause/resume capture; commands still work while paused |
 | `da 0`, `da 1`, `da 2` | Original 4x2 DAC/ADC trigger modes |
-| `dacPow p0/p1/p2/p3` | Binary mask; only the session-selected DAC may be enabled |
-| `dataChan N` | Acknowledged only when N equals the current fixed lane-word count |
+| `dacPow p0/p1/p2/p3` | Binary mask; with the session service DAC_B (index 0) and DAC_A (index 2) |
+| `dataChan N` | Lane words per frame (8 per row); one of the sizes the stream declared (`window_rows_allowed`) |
+| `phasec p0/p1/p2/p3` | ADC mixer phase offsets, hundredths of a degree, written on the running NCOs (no NCO reset, no tile re-sync) |
+| `dphasec p0/p1/p2/p3` | DAC mixer phase offsets as `phasec`; indices 0 and 2 used |
+| `again g0/g1/g2/g3` | ADC QMC gain, hundredths (0..199 = 0..1.99); index 0..3 = ADC_D, ADC_C, ADC_B, ADC_A |
+| `aiqphase p0/p1/p2/p3` | ADC QMC I/Q phase correction, hundredths of a degree (±2649) |
+| `adsa a0/a1/a2/a3` | ADC step attenuator, dB (0..27) |
+| `dgain g0/x/g2/x` | DAC QMC gain, hundredths; index 0 = DAC_B, 2 = DAC_A |
+| `diqphase p0/x/p2/x` | DAC QMC I/Q phase correction, hundredths of a degree |
+| `dvop c0/x/c2/x` | DAC output current, µA (2250..40500) |
+
+The path settings (`again` … `dvop`) are kept by the board helper and written
+again after `fc`, `phase` and `dphase`, because the board wrapper rewrites QMC
+gain 1.99, no I/Q phase and the maximum DAC current whenever it reconfigures the
+converters. The stream header lists them in `path_controls`; the host offers only
+what is listed. Live check (2026-11-17): ADC_C gain 1.00 −5.98 dB on ADC_C only,
+ADC_B 6 dB attenuation −6.00 dB on ADC_B only, DAC_B gain 1.00 and half current
+about −6 dB on all streams. The wrapper's own `phase` command re-synchronises the
+tiles, which moved tile 226 against tile 224 by 144° in one test; use `phasec`.
 
 The current four-stream profile has 32768 complex rows per channel (`dataChan
 262144` lane words). Changing frame size requires a compatible profile and a new

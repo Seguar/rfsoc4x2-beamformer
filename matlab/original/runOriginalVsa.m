@@ -65,6 +65,9 @@ try
         pause(.1);
         if isvalid(app) && isnan(firstFrame) && app.Controller.FramesAccepted>0
             firstFrame=toc(started);firstCount=app.Controller.FramesAccepted;
+            if isfield(opt,'calibrate') && strcmpi(char(string(opt.calibrate)),'on') && string(cfg.frontend)=="clean"
+                app.calibrateZero();   % option "calibrate on": Set 0 deg once frames arrive
+            end
         end
         if isvalid(app) && ~app.Controller.IsOpen
             assert(app.Controller.ConsecutiveErrors<cfg.maxConsecutiveErrors, ...
@@ -83,7 +86,12 @@ try
         report.uiNoSignalFrames=c.NoSignalFrames; report.uiLastError=c.LastError;
         % Accepted frames per second after the first one (excludes start-up).
         report.displayRateHz=(c.FramesAccepted-firstCount)/max(toc(started)-firstFrame,eps);
-        if string(cfg.frontend)=="clean",report.rows=app.Session.Rows;report.boardRows=app.Session.BoardRows;end
+        if string(cfg.frontend)=="clean"
+            report.rows=app.Session.Rows;report.boardRows=app.Session.BoardRows;
+            z=app.Session.ZeroCal;if isfield(z,'acc'),z=rmfield(z,'acc');end
+            report.zeroCal=z;
+            s=app.Session.snapshot();if s.valid && ~isempty(s.angles),report.modelAngleDeg=s.angles;end
+        end
     end
     closeAppHandle(app); backend.close();
     fid=fopen(s.session.reportFile,'w'); assert(fid>=0); fileGuard=onCleanup(@()fclose(fid));

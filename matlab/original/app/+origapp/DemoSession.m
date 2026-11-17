@@ -12,6 +12,18 @@ classdef DemoSession < handle
         Rows = NaN              % samples per frame handed to the DSP (data amount)
         FullRows = NaN          % frame size of the stream at its full amount
         BoardRows = false       % true: the board sends Rows; false: cropped here
+        Paths = struct()        % converter path settings acknowledged by the board (pathState)
+        ZeroCal = struct('state',"none")  % common-feed 0 deg calibration (calibrateZero)
+    end
+    properties (Constant)
+        % ADC index 0..3 / DAC index 0, 2 by connector (RFSoC 4x2 manual rev A5;
+        % stream k = ADC index k verified live by per-ADC mixer phase steps)
+        AdcConnectors = ["ADC_D","ADC_C","ADC_B","ADC_A"]
+        DacConnectors = ["DAC_B","DAC_A"]
+        % path kind -> board command, scale to integer command units, DAC (two-port) flag
+        PathKinds = struct('ADC',{{'phasec',100,false}},'DAC',{{'dphasec',100,true}}, ...
+            'adcGain',{{'again',100,false}},'adcIq',{{'aiqphase',100,false}},'adcAtten',{{'adsa',1,false}}, ...
+            'dacGain',{{'dgain',100,true}},'dacIq',{{'diqphase',100,true}},'dacCurrent',{{'dvop',1000,true}})
     end
     properties (Access=private)
         Params
@@ -56,6 +68,7 @@ classdef DemoSession < handle
             obj.Controller.open();
             if obj.Paused,obj.pause(false);end
             if obj.Rows~=obj.FullRows,obj.applyRows(obj.Rows);end
+            obj.readPaths();
             obj.Status="acquiring";
         end
         function pause(obj,on)
@@ -82,18 +95,65 @@ classdef DemoSession < handle
             obj.command(sprintf('fc %d/%d/%d/%d/%d/%d', ...
                 rf.adcMHz*next.adcMirror,next.nyquistZone,rf.dacMHz,next.nyquistZone_d0,rf.dac1MHz,next.nyquistZone_d1));
             obj.Config=next;obj.Params=p;obj.IqFilter=zeros(next.sizeL,4);
+            % the fc command re-synchronises the converter tiles: a 0 deg calibration
+            % no longer holds (the stored phase offsets and gains are re-applied)
+            if obj.ZeroCal.state~="none",obj.ZeroCal.state="changed";end
+            obj.readPaths();
             obj.invalidate("RF settings applied; calibration cleared");
         end
+        function k=pathKinds(obj)
+            % Path settings this session can write: fine phases, gains, I/Q
+            % phase, attenuator and DAC current when the board declares them,
+            % otherwise the legacy integer mixer phases only.
+            k=strings(1,0);
+            if ~obj.Config.allowBoardCommands,return,end
+            c=obj.Controller.capabilities().commands;
+            k=["ADC","DAC"];
+            for n=["adcGain","adcIq","adcAtten","dacGain","dacIq","dacCurrent"]
+                if any(c==obj.PathKinds.(n){1}),k(end+1)=n;end %#ok<AGROW>
+            end
+        end
         function applyPhase(obj,request)
-            v=request.values;
-            assert(isnumeric(v) && numel(v)==4 && all(isfinite(v)) && all(v==fix(v)) && ...
-                all(abs(v)<=360000),'origapp:Control','Four integer phases required.');
-            kind=string(request.kind);assert(any(kind==["ADC","DAC"]),'origapp:Control','Unknown phase bank.');
-            name='phase';if kind=="DAC",name='dphase';end
-            next=obj.uncalibrated(obj.Config);p=obj.parameters(next);
-            obj.command([name ' ' char(strjoin(string(v),'/'))]);
+            % request.kind: a PathKinds name; request.values: 1x4 in display
+            % units (degrees, gain 0..1.99, dB, mA). DAC kinds use elements 1
+            % and 3 (DAC_B, DAC_A).
+            v=request.values;kind=string(request.kind);
+            assert(isfield(obj.PathKinds,kind),'origapp:Control','Unknown converter setting.');
+            assert(isnumeric(v) && numel(v)==4 && all(isfinite(v)),'origapp:Control','Four values required.');
+            spec=obj.PathKinds.(kind);c=obj.Controller.capabilities().commands;
+            v=reshape(double(v),1,4);if spec{3},v([2 4])=0;end
+            if any(kind==["ADC","DAC"]) && ~any(c==spec{1})
+                % older board helper: integer degrees through the wrapper (re-syncs tiles)
+                assert(all(v==fix(v)) && all(abs(v)<=360000),'origapp:Control','Four integer phases required.');
+                name='phase';if kind=="DAC",name='dphase';end
+                line=[name ' ' char(strjoin(string(v),'/'))];
+            else
+                assert(any(c==spec{1}),'origapp:Control','This board helper does not support %s.',spec{1});
+                line=[spec{1} ' ' char(strjoin(string(round(v*spec{2})),'/'))];
+            end
+            next=obj.Config;
+            if any(kind==["ADC","DAC"]),next=obj.uncalibrated(next);end
+            p=obj.parameters(next);
+            obj.command(line);
             obj.Config=next;obj.Params=p;obj.IqFilter=zeros(next.sizeL,4);
-            obj.invalidate("phase applied; calibration cleared");
+            obj.readPaths();
+            if kind=="ADC" || kind=="adcGain",obj.ZeroCal.state="changed";end
+            obj.invalidate("converter setting applied; awaiting a fresh frame");
+        end
+        function calibrateZero(obj)
+            % Common-feed 0 deg calibration: every ADC receives the same splitter
+            % output, so after this the four streams agree in phase and level and
+            % the array model reads the loopback signal at 0 deg. Measures each
+            % stream against ADC_D over a few frames, then writes ADC mixer phase
+            % offsets (on the running NCOs) and QMC gains; twice, then checks.
+            assert(obj.Controller.IsOpen,'origapp:Control','Start acquisition before calibrating.');
+            c=obj.Controller.capabilities().commands;
+            assert(all(ismember(["phasec","again"],c)),'origapp:Control', ...
+                'This board helper cannot set fine ADC phases and gains; reinstall the board service.');
+            assert(isfield(obj.Paths,'ADC') && isfield(obj.Paths,'adcGain'),'origapp:Control','Board path state unknown.');
+            obj.ZeroCal=struct('state',"running",'step',1,'steps',3,'acc',zeros(4,4),'frames',0, ...
+                'startPhase',obj.Paths.ADC,'startGain',obj.Paths.adcGain);
+            obj.invalidate("calibrating 0 deg: measuring");
         end
         function setDac(obj,on)
             % on: logical scalar (the session's selected DAC, DAC_B by default)
@@ -206,6 +266,9 @@ classdef DemoSession < handle
                     if state=="stale",obj.invalidate("no fresh frame");end
                     return
                 end
+                if obj.ZeroCal.state=="running"
+                    obj.zeroStep(frame);obj.Controller.recordSuccess();return
+                end
                 if size(frame.samples,1)>obj.Rows
                     frame.samples=origapp.DemoSession.cropFrame(frame.samples,obj.Rows);
                 end
@@ -314,6 +377,49 @@ classdef DemoSession < handle
         end
     end
     methods (Access=private)
+        function readPaths(obj)
+            % Path settings as the board acknowledged them (its status reply).
+            if ~obj.Config.allowBoardCommands || ~obj.Controller.IsOpen,return,end
+            if ~any(obj.Controller.capabilities().commands=="phasec"),return,end
+            obj.command('status');s=obj.Controller.controlState();
+            if ~isstruct(s) || ~isfield(s,'adc_phase'),return,end
+            two=@(x)[x(1) 0 x(2) 0];
+            obj.Paths=struct('ADC',reshape(s.adc_phase,1,[]),'DAC',two(s.dac_phase), ...
+                'adcGain',reshape(s.adc_gain,1,[]),'adcIq',reshape(s.adc_iq_phase,1,[]), ...
+                'adcAtten',reshape(s.adc_attenuation,1,[]),'dacGain',two(s.dac_gain), ...
+                'dacIq',two(s.dac_iq_phase),'dacCurrent',two(double(s.dac_current_ua)/1000));
+        end
+        function zeroStep(obj,frame)
+            z=obj.ZeroCal;x=double(frame.samples);
+            if isfield(frame,'signalChannels') && ~all(frame.signalChannels)
+                obj.invalidate("calibrating 0 deg: no signal on every ADC; waiting");return
+            end
+            % per stream: power and cross term against ADC_D (same as the board check)
+            z.acc(1,:)=z.acc(1,:)+mean(abs(x).^2,1);
+            z.acc(2,:)=z.acc(2,:)+(x(:,1)'*x)/size(x,1);
+            z.frames=z.frames+1;
+            if z.frames<6
+                obj.ZeroCal=z;obj.invalidate(sprintf("calibrating 0 deg: step %d/%d, frame %d/6",z.step,z.steps,z.frames));return
+            end
+            level=10*log10(z.acc(1,:)/z.frames);phase=angle(z.acc(2,:))*180/pi;
+            z.acc(:)=0;z.frames=0;
+            if z.step==z.steps
+                z.state="done";z.residualDeg=phase;z.levelDb=level-level(1);z.time=datetime('now');
+                z.phases=obj.Paths.ADC;z.gains=obj.Paths.adcGain;obj.ZeroCal=z;
+                obj.invalidate(sprintf("0 deg calibration done: residual %.2f deg, %.2f dB", ...
+                    max(abs(phase)),max(abs(z.levelDb))));
+                return
+            end
+            % a mixer phase offset +p turns the stream by -p: add the measured phase;
+            % the weakest stream stays at the largest gain, the others come down to it
+            g=obj.Paths.adcGain;amp=10.^(level/20);target=min(amp.*1.99./max(g,eps));
+            g=min(1.99,g.*target./amp);ph=obj.Paths.ADC+phase;ph=mod(ph+180,360)-180;
+            obj.command(sprintf('phasec %s#again %s',strjoin(string(round(ph*100)),'/'), ...
+                strjoin(string(round(g*100)),'/')));
+            obj.readPaths();z.step=z.step+1;obj.ZeroCal=z;
+            next=obj.uncalibrated(obj.Config);obj.Params=obj.parameters(next);obj.Config=next;
+            obj.invalidate(sprintf("calibrating 0 deg: step %d/%d applied",z.step-1,z.steps));
+        end
         function applyRows(obj,n)
             % The board sends the reduced window when its stream declares the
             % dataChan command; otherwise full frames are cropped in step().

@@ -777,7 +777,12 @@ def main():
                                  'window_rows': WIN, 'capture_rows': RAM // 8,
                                  'window_rows_allowed': list(ROWS_ALLOWED) if a.control_port else [WIN],
                                  'wire_channels': [0, 1, 2, 3], 'available_channels': [1, 1, 1, 1],
-                                 'channel_connectors': ['ADC_D', 'unverified', 'unverified', 'unverified'],
+                                 # stream k = ADC index k (verified by per-ADC mixer phase steps);
+                                 # connector names per the RFSoC 4x2 manual rev A5 / PYNQ base design
+                                 'channel_connectors': ['ADC_D', 'ADC_C', 'ADC_B', 'ADC_A'],
+                                 'dac_connectors': {'0': 'DAC_B', '2': 'DAC_A'},
+                                 'path_controls': ['phasec', 'dphasec', 'again', 'dgain', 'aiqphase', 'diqphase',
+                                                   'adsa', 'dvop'] if a.control_port else [],
                                  'lane_convention': 'board lanes I,Q per stream; host builds I - 1j*Q (tcpDataRec)',
                                  'frame_bytes': WIRE_BYTES3, 'frame_header': FRAME_HDR, 'frame_extension': EXT3,
                                  'extension_json_max': EXT3_JSON_MAX,

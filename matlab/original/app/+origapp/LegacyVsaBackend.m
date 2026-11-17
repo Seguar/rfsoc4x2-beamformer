@@ -160,6 +160,11 @@ classdef LegacyVsaBackend < handle
             if obj.Config.controlPort>0, names=["fc","phase","dphase","dacPow","da","dataStream"];end
             % Reduced windows: only when the connected stream declared them.
             if obj.Config.controlPort>0 && numel(obj.RowsAllowed)>1, names(end+1)="dataChan";end
+            % Converter path settings (gains, I/Q phase, attenuator, current, fine
+            % phases) only when the connected board helper declares them.
+            if obj.Config.controlPort>0 && isfield(obj.Metadata,'path_controls')
+                names=[names reshape(string(obj.Metadata.path_controls),1,[])];
+            end
             c=struct('commands',names,'txArrayElements',0,'uploadDac',false);
         end
 

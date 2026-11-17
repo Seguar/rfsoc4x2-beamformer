@@ -55,7 +55,12 @@ classdef BeamformerView < handle
         Callbacks
         Panels = []
         Accepted = struct()
-        PhaseValues = struct('ADC',[0 0 0 0],'DAC',[0 0 0 0])
+        % converter path settings by kind (DemoSession.PathKinds); DAC kinds use
+        % elements 1 and 3 (DAC_B, DAC_A). Replaced by the board's state on start.
+        PhaseValues = struct('ADC',[-90 -90 90 90],'DAC',[0 0 0 0],'adcGain',[1.99 1.99 1.99 1.99], ...
+            'adcIq',[0 0 0 0],'adcAtten',[0 0 0 0],'dacGain',[1.99 0 1.99 0],'dacIq',[0 0 0 0],'dacCurrent',[40.5 0 40.5 0])
+        AdcNames = {'ADC_D','ADC_C','ADC_B','ADC_A'}   % stream 0..3 by RFSoC 4x2 connector
+        DacNames = {'DAC_B','DAC_A'}                   % DAC index 0, 2
         UserSidebar = []
         Closing = false
         LastData = []
@@ -88,6 +93,8 @@ classdef BeamformerView < handle
             if ~any(strcmp(name,{'dark','light'})),name='dark';end
             obj.ThemeName=name;obj.Theme=obj.palette(name);
             if isfield(cfg,'dphase'),obj.PhaseValues.DAC=reshape(cfg.dphase,1,[]);end
+            if isfield(cfg,'adcConnectors'),obj.AdcNames=cellstr(string(cfg.adcConnectors));end
+            if isfield(cfg,'dacConnectors'),obj.DacNames=cellstr(string(cfg.dacConnectors));end
             obj.SnapshotDir=char(string(obj.field(cfg,'snapshotDir','')));
             out=char(string(obj.field(cfg,'outputDir','')));
             if isempty(obj.SnapshotDir) && ~isempty(out),obj.SnapshotDir=fullfile(out,'snapshots');end
@@ -266,6 +273,20 @@ classdef BeamformerView < handle
             obj.Controls.phComp.Enable=matlab.lang.OnOffSwitchState(ready);
             obj.Controls.phComp.Value=logical(cfg.phComp);obj.Accepted.phComp=logical(cfg.phComp);
             obj.Controls.doa.Value=char(cfg.doa);obj.Accepted.doa=char(cfg.doa);
+            if isfield(cfg,'pathKinds') && ~isempty(cfg.pathKinds)
+                kinds=cellstr(string(cfg.pathKinds));labels=cell(size(kinds));
+                for j=1:numel(kinds),sp=obj.pathSpec(kinds{j});labels{j}=sp{1};end
+                old=obj.Controls.PhaseKind.Value;
+                obj.Controls.PhaseKind.Items=labels;obj.Controls.PhaseKind.ItemsData=kinds;
+                if any(strcmp(kinds,old)),obj.Controls.PhaseKind.Value=old;else,obj.Controls.PhaseKind.Value=kinds{1};end
+            end
+            if isfield(cfg,'paths') && isstruct(cfg.paths)
+                for n=string(fieldnames(cfg.paths)).'
+                    v=double(cfg.paths.(n));v(~isfinite(v))=0;obj.PhaseValues.(n)=v;
+                end
+            end
+            obj.phaseKind();
+            if isfield(cfg,'zeroCal'),obj.zeroLook(cfg.zeroCal);end
             if isfield(cfg,'rows') && any(cellfun(@(v)isequal(v,cfg.rows),obj.Controls.rows.ItemsData))
                 obj.Controls.rows.Value=cfg.rows;obj.Accepted.rows=cfg.rows;
             end
@@ -610,7 +631,7 @@ classdef BeamformerView < handle
             th=obj.Theme;colors={th.s1,th.s2,th.s3,th.s4};
             switch obj.TimeMode
                 case 'iq',labels={'I','Q','▼ burst','▼ flagged / incomplete'};colors={th.s1,th.s2,th.ok,th.warn};
-                otherwise,labels={'RX0','RX1','RX2','RX3'};
+                otherwise,labels=obj.AdcNames;
             end
             obj.Marks.timeKey.String=obj.keyText(labels,colors);
             if isfield(obj.Marks,'constKey')
@@ -619,7 +640,7 @@ classdef BeamformerView < handle
         end
         function buildControls(obj,parent)
             th=obj.Theme;
-            g=uigridlayout(parent,[5 1],'RowHeight',{34,0,146,30,'1x'},'Padding',[10 10 10 8],'RowSpacing',8, ...
+            g=uigridlayout(parent,[5 1],'RowHeight',{34,0,176,30,'1x'},'Padding',[10 10 10 8],'RowSpacing',8, ...
                 'BackgroundColor',th.panel);obj.Controls.SideGrid=g;
             buttons=uigridlayout(g,[1 2],'ColumnWidth',{'1x','1x'},'Padding',[0 0 0 0], ...
                 'BackgroundColor',th.panel);
@@ -635,7 +656,7 @@ classdef BeamformerView < handle
                 'FontSize',11,'Visible','off');
             % Always visible, whatever page is open (as in the original GUI):
             % what is shown, which source, and the two algorithm selectors.
-            q=uigridlayout(g,[5 2],'ColumnWidth',{104,'1x'},'RowHeight',{26,26,26,26,26},'Padding',[0 0 0 0], ...
+            q=uigridlayout(g,[6 2],'ColumnWidth',{104,'1x'},'RowHeight',{26,26,26,26,26,26},'Padding',[0 0 0 0], ...
                 'RowSpacing',4,'ColumnSpacing',6,'BackgroundColor',th.panel);q.Layout.Row=3;obj.Controls.QuickGrid=q;
             seg=uigridlayout(g,[2 4],'RowHeight',{'1x',2},'ColumnWidth',{'1x','1x','1.35x','1.15x'},'RowSpacing',0, ...
                 'ColumnSpacing',2,'Padding',[0 0 0 0],'BackgroundColor',th.panel);seg.Layout.Row=4;
@@ -684,29 +705,32 @@ classdef BeamformerView < handle
             obj.Controls.Sync.ValueChangedFcn=@(h,~)obj.syncAction(h);
             obj.Controls.Sync.Tooltip=['DAC = ADC: the DACs play during each capture, started with it. ' ...
                 'DAC = DAC: both DACs start together and play continuously. Free running: no common start.'];
-            obj.heading(r,15,'REQUESTED MIXER PHASES');
-            obj.Controls.PhaseKind=obj.dropdown(r,16,'Converters','phaseKind',{'ADC','DAC'},'DAC',false);
+            obj.heading(r,15,'CONVERTER PATHS (original channel control)');
+            obj.Controls.PhaseKind=obj.dropdown(r,16,'Setting','phaseKind',{'ADC mixer phase','DAC mixer phase'},'DAC mixer phase',false);
+            obj.Controls.PhaseKind.ItemsData={'ADC','DAC'};obj.Controls.PhaseKind.Value='DAC';
             obj.Controls.PhaseKind.ValueChangedFcn=@(~,~)obj.phaseKind();
             for k=1:4
                 obj.number(r,16+k,sprintf('Channel %d',k),sprintf('phase%d',k),obj.PhaseValues.DAC(k),[-180 180],false,'%g°');
                 obj.Controls.(sprintf('phase%d',k)).ValueChangedFcn=@(~,~)obj.dirty();
                 obj.Controls.(sprintf('phase%d',k)).RoundFractionalValues='on';
             end
-            obj.Controls.ApplyPhase=obj.button(r,21,'Apply phases',@(~,~)obj.phaseAction());
-            obj.Controls.ApplyPhase.Tooltip='Write the requested mixer phases. Clears model calibration and averaging.';
+            obj.Controls.ApplyPhase=obj.button(r,21,'Apply',@(~,~)obj.phaseAction());
+            obj.Controls.ApplyPhase.Tooltip=['Write the selected converter setting. Mixer phases clear the model and 0° ' ...
+                'calibration; every change clears averaging.'];
             if obj.has('calibration'),obj.Controls.Calibration=obj.button(r,23,'Load calibration…',@(~,~)obj.action('calibration',[]));end
-            info=uilabel(r,'Text','ADC_D = stream 0. Other connector mappings remain unverified.', ...
+            info=uilabel(r,'Text',['Streams 0..3 = ADC_D, ADC_C, ADC_B, ADC_A (RFSoC 4x2 manual rev A5; order checked ' ...
+                'by per-ADC phase steps). DAC index 0 = DAC_B, 2 = DAC_A.'], ...
                 'WordWrap','on','FontColor',th.dim,'FontSize',10,'VerticalAlignment','top');info.Layout.Row=24;info.Layout.Column=[1 2];
             if ~obj.has('rf'),obj.Controls.ApplyRF.Enable='off';end
             if ~obj.has('dac'),obj.Controls.Dac.Enable='off';obj.Controls.DacA.Enable='off';end
             if ~obj.has('sync'),obj.Controls.Sync.Enable='off';end
             if ~obj.has('phase'),obj.Controls.ApplyPhase.Enable='off';end
             % --- DSP --------------------------------------------------------
-            obj.Controls.ch=obj.dropdown(q,1,'Output','ch',{'Combined','ADC_D · stream 0','RX stream 1','RX stream 2','RX stream 3'},'Combined',false);
+            obj.Controls.ch=obj.dropdown(q,1,'Output','ch',[{'Combined beam'} obj.AdcNames],'Combined beam',false);
             mask=true(1,4);if obj.field(obj.Config,'directOnly',false),mask=[true false false false];end
             mask=logical(obj.field(obj.Config,'availableChannels',mask));
-            vals=find(mask);labels={'ADC_D · stream 0','RX stream 1','RX stream 2','RX stream 3'};labels=labels(mask);
-            if all(mask) && ~obj.field(obj.Config,'directOnly',false),vals=[5 vals];labels=[{'Combined'} labels];end
+            vals=find(mask);labels=obj.AdcNames(mask);
+            if all(mask) && ~obj.field(obj.Config,'directOnly',false),vals=[5 vals];labels=[{'Combined beam'} labels];end
             obj.Controls.ch.Items=labels;obj.Controls.ch.ItemsData=num2cell(vals);
             selected=obj.field(obj.Config,'ch',5);if ~ismember(selected,vals),selected=vals(1);end
             obj.Controls.ch.Value=selected;
@@ -737,6 +761,15 @@ classdef BeamformerView < handle
                 'OFDM frame. Reduced frames are checked against the reference at both ends only; the full frame ' ...
                 'gets the complete continuity check.'];
             if numel(rows)<2,obj.Controls.rows.Enable='off';end
+            obj.Controls.Zero=uibutton(q,'Text','Set 0°','BackgroundColor',th.input,'FontColor',th.text, ...
+                'ButtonPushedFcn',@(~,~)obj.action('zero',[]),'Interruptible','off','BusyAction','cancel', ...
+                'Tooltip',['Common-feed calibration: every ADC gets the same splitter output, so the ADC mixer phases ' ...
+                'and gains are set until ADC_C, ADC_B and ADC_A match ADC_D (twice, then checked). The array model then ' ...
+                'reads the loopback signal at 0°. Repeat after every new session or frequency change.']);
+            obj.Controls.Zero.Layout.Row=6;obj.Controls.Zero.Layout.Column=1;
+            obj.Controls.ZeroState=uilabel(q,'Text','not calibrated','FontSize',10,'FontColor',th.warn,'WordWrap','on');
+            obj.Controls.ZeroState.Layout.Row=6;obj.Controls.ZeroState.Layout.Column=2;
+            if ~obj.has('zero'),obj.Controls.Zero.Enable='off';obj.Controls.ZeroState.Text='needs board control';end
             d=obj.controlGrid(dsp,{20,28,28,28,28,28,22,24,24,24,24});
             obj.heading(d,1,'RECEIVE PROCESSING');
             obj.number(d,2,'Source count','num',obj.field(obj.Config,'num',1),[1 3],true,'%g');
@@ -775,7 +808,7 @@ classdef BeamformerView < handle
             tg=uigridlayout(m,[5 6],'ColumnWidth',{34,'1x','1x','1x','1x','1x'},'RowHeight',repmat({'1x'},1,5), ...
                 'RowSpacing',2,'ColumnSpacing',4,'Padding',[0 0 0 0],'BackgroundColor',th.panel);
             tg.Layout.Row=2;tg.Layout.Column=[1 2];
-            heads={'RX','dBFS','Δφ °','coh','w dB','w °'};colors={th.s1,th.s2,th.s3,th.s4};
+            heads={'ADC','dBFS','Δφ °','coh','w dB','w °'};colors={th.s1,th.s2,th.s3,th.s4};
             for c=1:6
                 uilabel(tg,'Text',heads{c},'FontSize',10,'FontWeight','bold','FontColor',th.dim,'HorizontalAlignment','right');
             end
@@ -783,7 +816,7 @@ classdef BeamformerView < handle
                 for c=1:6
                     h=uilabel(tg,'Text','—','FontSize',11,'FontColor',th.text,'HorizontalAlignment','right');
                     h.Layout.Row=rr+1;h.Layout.Column=c;
-                    if c==1,h.Text=sprintf('%d',rr-1);h.FontColor=colors{rr};h.FontWeight='bold';end
+                    if c==1,h.Text=extractAfter(obj.AdcNames{rr},'_');h.FontColor=colors{rr};h.FontWeight='bold';end
                     obj.Monitor.cell(rr,c)=h;
                 end
             end
@@ -931,6 +964,20 @@ classdef BeamformerView < handle
             end
             obj.dirty();
         end
+        function zeroLook(obj,z)
+            th=obj.Theme;h=obj.Controls.ZeroState;
+            switch string(z.state)
+                case "running",h.Text='calibrating…';h.FontColor=th.muted;
+                case "done"
+                    h.Text=sprintf('0° set %s · ±%.2f° ±%.2f dB',char(z.time,'HH:mm'),max(abs(z.residualDeg)),max(abs(z.levelDb)));
+                    h.FontColor=th.ok;
+                    obj.logEvent(sprintf('0° calibration: residual %s° · %s dB · phases %s° · gains %s', ...
+                        strjoin(compose('%.2f',z.residualDeg(2:4)),'/'),strjoin(compose('%.2f',z.levelDb(2:4)),'/'), ...
+                        strjoin(compose('%.2f',z.phases),'/'),strjoin(compose('%.2f',z.gains),'/')));
+                case "changed",h.Text='settings changed: set 0° again';h.FontColor=th.warn;
+                otherwise,h.Text='not calibrated';h.FontColor=th.warn;
+            end
+        end
         function dacAction(obj,h)
             % Power of DAC B / DAC A (original "Power" boxes): one dacPow command.
             mask=[logical(obj.Controls.Dac.Value) logical(obj.Controls.DacA.Value)];
@@ -951,19 +998,32 @@ classdef BeamformerView < handle
                 h.Value=obj.Accepted.da;obj.showError(err.message);
             end
         end
+        function spec=pathSpec(~,kind)
+            % label, display format, limits, two-port DAC kind
+            switch kind
+                case 'ADC',spec={'ADC mixer phase','%.2f°',[-180 180],false};
+                case 'DAC',spec={'DAC mixer phase','%.2f°',[-180 180],true};
+                case 'adcGain',spec={'ADC gain (QMC)','%.2f',[0 1.99],false};
+                case 'adcIq',spec={'ADC I/Q phase (QMC)','%.2f°',[-26.49 26.49],false};
+                case 'adcAtten',spec={'ADC attenuator','%g dB',[0 27],false};
+                case 'dacGain',spec={'DAC gain (QMC)','%.2f',[0 1.99],true};
+                case 'dacIq',spec={'DAC I/Q phase (QMC)','%.2f°',[-26.49 26.49],true};
+                case 'dacCurrent',spec={'DAC output current','%.2f mA',[2.25 40.5],true};
+            end
+        end
         function phaseKind(obj)
-            kind=obj.Controls.PhaseKind.Value;v=obj.PhaseValues.(kind);
+            kind=obj.Controls.PhaseKind.Value;v=obj.PhaseValues.(kind);spec=obj.pathSpec(kind);
             g=obj.Controls.phase1.Parent;rh=g.RowHeight;
             for k=1:4
                 h=obj.Controls.(sprintf('phase%d',k));lab=obj.Controls.(sprintf('phase%dLabel',k));
-                h.Value=v(k);h.Layout.Row=16+k;lab.Layout.Row=16+k;
-                h.Visible='on';lab.Visible='on';
-                if k==1,lab.Text='RX0 · ADC_D';else,lab.Text=sprintf('RX%d · unverified',k-1);end
+                h.Limits=spec{3};h.ValueDisplayFormat=spec{2};h.RoundFractionalValues='off';
+                h.Value=min(max(v(k),spec{3}(1)),spec{3}(2));h.Layout.Row=16+k;lab.Layout.Row=16+k;
+                h.Visible='on';lab.Visible='on';lab.Text=obj.AdcNames{k};
                 rh{16+k}=28;
             end
-            if strcmp(kind,'DAC')
-                obj.Controls.phase1Label.Text='DAC_B (index 0)';
-                obj.Controls.phase3Label.Text='DAC_A (index 2)';
+            if spec{4}
+                obj.Controls.phase1Label.Text=obj.DacNames{1};
+                obj.Controls.phase3Label.Text=obj.DacNames{2};
                 obj.Controls.phase3.Layout.Row=18;obj.Controls.phase3Label.Layout.Row=18;
                 for k=[2 4]
                     obj.Controls.(sprintf('phase%d',k)).Visible='off';
@@ -975,14 +1035,14 @@ classdef BeamformerView < handle
             if isfield(obj.Controls,'ApplyPhase'),obj.dirty();end
         end
         function phaseAction(obj)
-            kind=obj.Controls.PhaseKind.Value;values=zeros(1,4);
-            indices=1:4;if strcmp(kind,'DAC'),indices=[1 3];end
+            kind=obj.Controls.PhaseKind.Value;values=zeros(1,4);spec=obj.pathSpec(kind);
+            indices=1:4;if spec{4},indices=[1 3];end
             for k=indices,values(k)=obj.Controls.(sprintf('phase%d',k)).Value;end
             try
-                assert(obj.has('phase'),'origapp:View','Phase controls are unavailable.');
+                assert(obj.has('phase'),'origapp:View','Converter settings are unavailable.');
                 obj.Callbacks.phase(struct('kind',kind,'values',values));
                 obj.PhaseValues.(kind)=values;obj.noError();
-                obj.logEvent(sprintf('%s phases applied · %s°',kind,strjoin(compose('%g',values(indices)),' / ')));
+                obj.logEvent(sprintf('%s applied · %s',spec{1},strjoin(compose('%g',values(indices)),' / ')));
             catch err,obj.phaseKind();obj.showError(err.message);end
             obj.dirty();
         end
@@ -993,7 +1053,7 @@ classdef BeamformerView < handle
             if ~isfield(obj.Controls,'ApplyRF') || ~isfield(obj.Controls,'ApplyPhase'),return,end
             rf=false;for n=obj.RfFields,rf=rf || obj.Controls.(n).Value~=obj.Accepted.(n);end
             kind=obj.Controls.PhaseKind.Value;v=obj.PhaseValues.(kind);
-            indices=1:4;if strcmp(kind,'DAC'),indices=[1 3];end
+            indices=1:4;spec=obj.pathSpec(kind);if spec{4},indices=[1 3];end
             ph=false;for k=indices,ph=ph || obj.Controls.(sprintf('phase%d',k)).Value~=v(k);end
             pairs={obj.Controls.ApplyRF,rf;obj.Controls.ApplyPhase,ph};
             for k=1:2
