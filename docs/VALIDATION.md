@@ -742,3 +742,30 @@ capture-loss repair, combining-gain proof or an independent RF-off observation.
 MTS module. Recalibrate paths after reinitialization; automatic latency changes
 between inits. Known sample loss and precise cross-DAC phase/timing remain separate
 hardware work. No hardware or MATLAB session is left running.
+
+## Mixed-DPI window layout (BeamformerView, MATLAB R2026a, simulation only)
+
+**Test:** window layout on a Windows desktop whose monitors have different
+scales (primary 2880x1800 at 175 %, two 1920x1080 at 100 %).
+**How:** `RFSoCBeamformer('demo',...)` from source; the window was moved and
+maximised with Win32 SetWindowPos / ShowWindow; Figure.Position was compared
+with the Win32 client rectangle and DPI read from a per-monitor-aware thread;
+screenshots by PrintWindow. Then validateBeamformerView and validateStandaloneDemo.
+**Results:** MATLAB reports Figure.Position in primary-scale pixels on every
+monitor: a maximised 1920x1009 client at 96 dpi reads 1097x577 (factor 1.75).
+The client draws grid layouts in true CSS pixels but sizes uipanels, the '1x'
+columns of scrollable grids and text in normalized axes units from the 1.75
+times smaller server size. Before: plots in 2 columns ending at x = 1068 of
+1920, sidebar cut, constellation key entries overlapping. After (cards, sidebar
+and control pages are grids; column / row choice from the client-reported inner
+size; explicit column widths while scrolling; series keys in the axes title):
+the plot area fills the window in all five states (175 % start, 100 % normal,
+100 % maximised, back on 175 %, 950x600). Both MATLAB validations pass.
+**Conclusions:** the fault is MATLAB's mixed-DPI scaling, mitigated in the view.
+Not corrected, on a monitor whose scale differs from the primary one only:
+axes margins are wider, the collapsed axes toolbar sits inside the plot, long
+label texts are shortened earlier than their cell requires, and the scrolling
+single-column layout shows a horizontal scrollbar. Only this 175 % / 100 %
+arrangement was measured; a primary monitor with the smaller scale was not.
+**Ways to resolve:** these remaining items need a MATLAB fix; keeping all
+monitors at one scale, or the window on the primary monitor, avoids them.

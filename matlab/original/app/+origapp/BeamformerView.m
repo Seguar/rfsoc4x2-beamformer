@@ -73,6 +73,9 @@ classdef BeamformerView < handle
         EvmNow = [NaN NaN]
         LastFs = 125e6
         Theme = struct()
+        Probe = []
+        ClientSize = []
+        Scale = 1
     end
     methods
         function obj=BeamformerView(cfg,callbacks)
@@ -343,7 +346,7 @@ classdef BeamformerView < handle
             for k=1:numel(names)
                 obj.Ax.(names{k}).XLabel.Color=next.muted;obj.Ax.(names{k}).YLabel.Color=next.muted;
             end
-            obj.Theme=next;obj.ThemeName=name;obj.themeLook();
+            obj.Theme=next;obj.ThemeName=name;obj.themeLook();obj.keys();
             obj.logEvent([name ' theme']);
         end
         function clearHistory(obj)
@@ -412,7 +415,10 @@ classdef BeamformerView < handle
             % --- sidebar and plots ----------------------------------------
             main=uigridlayout(outer,[1 2],'ColumnWidth',{300,'1x'},'ColumnSpacing',10, ...
                 'Padding',[0 0 0 0],'BackgroundColor',th.bg);main.Layout.Row=3;obj.RootGrid=main;
-            side=uipanel(main,'BorderType','none','BackgroundColor',th.panel);side.Layout.Column=1;obj.Sidebar=side;
+            % Containers are grids, not uipanels: on a monitor whose scale differs
+            % from the primary one MATLAB sizes a uipanel in primary-scale pixels
+            % (too small or too large for its cell); a grid always fills its cell.
+            side=uigridlayout(main,[1 1],'Padding',[0 0 0 0],'BackgroundColor',th.panel);side.Layout.Column=1;obj.Sidebar=side;
             obj.buildControls(side);
             pg=uigridlayout(main,[2 3],'ColumnWidth',{'1x','1x','1x'}, ...
                 'RowHeight',{'1x','1x'},'Padding',[0 0 0 0], ...
@@ -430,6 +436,19 @@ classdef BeamformerView < handle
             obj.Panels=gobjects(1,6);
             for k=1:6,obj.buildCard(pg,k,keys{k},titles{k},badges{k});obj.Card.(keys{k}).title.Tooltip=tips{k};end
             obj.buildPlots();
+            % --- client size probe (hidden under the footer) --------------
+            % Figure.Position is in primary-monitor pixels. On a monitor with
+            % another scale the window is really Position*primaryScale/ownScale
+            % CSS pixels; only the client knows that, so it reports its size.
+            try
+                obj.Probe=uihtml(outer,'HTMLSource',['<html><body style="margin:0;background:#000"><script>function setup(c){var l="";' ...
+                    'function r(){try{var w=window.top,s=w.innerWidth+"x"+w.innerHeight;if(s!==l){l=s;c.Data=[w.innerWidth,w.innerHeight];}}catch(e){}}' ...
+                    'try{window.top.addEventListener("resize",r);}catch(e){}r();setInterval(r,500);}</script></body></html>'], ...
+                    'DataChangedFcn',@(h,~)obj.clientSize(h.Data));
+                obj.Probe.Layout.Row=4;obj.Probe.Layout.Column=1;
+            catch
+                obj.Probe=[];
+            end
             % --- footer ---------------------------------------------------
             footer=uigridlayout(outer,[1 3],'ColumnWidth',{'1x',330,330},'Padding',[0 0 0 0], ...
                 'BackgroundColor',th.bg);footer.Layout.Row=4;obj.FooterGrid=footer;
@@ -441,6 +460,9 @@ classdef BeamformerView < handle
             obj.Monitor.log.FontName='Consolas';
             f.SizeChangedFcn=@(~,~)obj.reflow();
             f.WindowKeyPressFcn=@(~,e)obj.onKey(e);
+            % Start on the primary monitor (row 1): the only one whose
+            % MonitorPositions row is in the units of Figure.Position when
+            % monitor scales differ. Never larger than that monitor.
             mp=get(groot,'MonitorPositions');m=mp(1,:);
             w=min(1540,max(420,m(3)-48));h=min(930,max(340,m(4)-110));
             f.Position=[m(1)+round((m(3)-w)/2),m(2)+max(45,round((m(4)-h)/2)),w,h];
@@ -463,7 +485,7 @@ classdef BeamformerView < handle
         end
         function buildCard(obj,parent,k,key,titleText,badge)
             th=obj.Theme;
-            p=uipanel(parent,'BorderType','none','BackgroundColor',th.panel);obj.Panels(k)=p;
+            p=uigridlayout(parent,[1 1],'Padding',[0 0 0 0],'BackgroundColor',th.panel);obj.Panels(k)=p;
             g=uigridlayout(p,[2 1],'RowHeight',{24,'1x'},'RowSpacing',2,'Padding',[10 7 8 6],'BackgroundColor',th.panel);
             head=uigridlayout(g,[1 4],'ColumnWidth',{'fit','1x',0,0},'Padding',[0 0 0 0],'ColumnSpacing',8, ...
                 'BackgroundColor',th.panel);
@@ -523,7 +545,7 @@ classdef BeamformerView < handle
                 obj.Lines.chPhase(k)=plot(A.time,NaN,NaN,'.-','Color',colors{k},'LineWidth',1,'MarkerSize',9,'Visible','off');
                 obj.Lines.chLevel(k)=plot(A.time,NaN,NaN,'.-','Color',colors{k},'LineWidth',1,'MarkerSize',9,'Visible','off');
             end
-            obj.Marks.timeKey=obj.key(A.time,4);
+            obj.Marks.timeKey=obj.key(A.time,'left');
             obj.Controls.TimeMode=uidropdown(obj.Card.time.slot,'Items',{'I/Q waveform','Stream phase','Stream level'}, ...
                 'ItemsData',{'iq','phase','level'},'Value','iq','FontSize',10,'BackgroundColor',th.input,'FontColor',th.text, ...
                 'ValueChangedFcn',@(~,~)obj.timeMode(), ...
@@ -548,10 +570,7 @@ classdef BeamformerView < handle
             xlabel(A.constellation,'I');ylabel(A.constellation,'Q');
             A.constellation.DataAspectRatio=[1 1 1];
             A.constellation.XLim=[-1.45 1.45];A.constellation.YLim=[-1.45 1.45];
-            h=obj.key(A.constellation,3);
-            labels={'● 16QAM data','◆ BPSK header','▲ pilots'};colors={th.s1,th.s3,th.s4};
-            for k=1:3,h(k).String=labels{k};h(k).Color=colors{k};end
-            obj.Marks.constKey=h;
+            obj.Marks.constKey=obj.key(A.constellation,'center');obj.keys();
             % Payload EVM: history, or the current frame per subcarrier / symbol
             obj.Marks.evmMedian=yline(A.evm,0,':','median','Color',th.muted,'FontSize',9,'LabelHorizontalAlignment','left', ...
                 'Visible','off','HandleVisibility','off');
@@ -572,12 +591,24 @@ classdef BeamformerView < handle
             obj.Card.evm.head.ColumnWidth{3}=170;
             for n=["doa","pattern","evm"],obj.defaultLimits(char(n));end
         end
-        function h=key(obj,ax,n)
-            % Persistent coloured series key inside the axes (cheaper than a legend).
-            h=gobjects(1,n);
-            for k=1:n
-                h(k)=text(ax,.02+(k-1)*.98/n,.975,'','Units','normalized','VerticalAlignment','top', ...
-                    'FontSize',9,'FontWeight','bold','Color',obj.Theme.muted,'HandleVisibility','off','PickableParts','none');
+        function h=key(obj,ax,align)
+            % Persistent coloured series key (cheaper than a legend), kept in
+            % the axes title: one text object, so its entries cannot overlap
+            % each other whatever the panel width is, and the title is placed
+            % correctly on a monitor with another scale, where text in
+            % normalized units inside the axes is not.
+            h=ax.Title;ax.TitleHorizontalAlignment=align;
+            set(h,'String','','FontSize',9,'FontWeight','bold','Color',obj.Theme.muted,'Interpreter','tex');
+        end
+        function keys(obj)
+            th=obj.Theme;colors={th.s1,th.s2,th.s3,th.s4};
+            switch obj.TimeMode
+                case 'iq',labels={'I','Q','▼ burst','▼ flagged / incomplete'};colors={th.s1,th.s2,th.ok,th.warn};
+                otherwise,labels={'RX0','RX1','RX2','RX3'};
+            end
+            obj.Marks.timeKey.String=obj.keyText(labels,colors);
+            if isfield(obj.Marks,'constKey')
+                obj.Marks.constKey.String=obj.keyText({'● 16QAM data','◆ BPSK header','▲ pilots'},{th.s1,th.s3,th.s4});
             end
         end
         function buildControls(obj,parent)
@@ -607,7 +638,7 @@ classdef BeamformerView < handle
                 obj.Controls.PageRule(k).Layout.Row=2;obj.Controls.PageRule(k).Layout.Column=k;
             end
             for k=1:4
-                obj.Controls.PagePanel(k)=uipanel(g,'BorderType','none','BackgroundColor',th.panel,'Visible','off');
+                obj.Controls.PagePanel(k)=uigridlayout(g,[1 1],'Padding',[0 0 0 0],'BackgroundColor',th.panel,'Visible','off');
                 obj.Controls.PagePanel(k).Layout.Row=4;obj.Controls.PagePanel(k).Layout.Column=1;
             end
             rf=obj.Controls.PagePanel(1);dsp=obj.Controls.PagePanel(2);
@@ -1084,20 +1115,15 @@ classdef BeamformerView < handle
             set([obj.Lines.timeI obj.Lines.timeQ obj.Lines.burstOk obj.Lines.burstBad],'Visible',matlab.lang.OnOffSwitchState(iq));
             set(obj.Lines.chPhase,'Visible',matlab.lang.OnOffSwitchState(strcmp(mode,'phase')));
             set(obj.Lines.chLevel,'Visible',matlab.lang.OnOffSwitchState(strcmp(mode,'level')));
-            k=obj.Marks.timeKey;colors={th.s1,th.s2,th.s3,th.s4};
             switch mode
                 case 'iq'
-                    labels={'I','Q','▼ burst','▼ flagged / incomplete'};colors={th.s1,th.s2,th.ok,th.warn};
                     xlabel(ax,'Time (µs) · min/max per display bin');ylabel(ax,'Amplitude');
                 case 'phase'
-                    labels={'RX0','RX1','RX2','RX3'};
                     xlabel(ax,'Acquisition sequence');ylabel(ax,'Phase vs first stream (°)');
                 case 'level'
-                    labels={'RX0','RX1','RX2','RX3'};
                     xlabel(ax,'Acquisition sequence');ylabel(ax,'Mean level (dBFS)');
             end
-            at=.02+(0:3)*.1;if iq,at=[.02 .07 .13 .27];end
-            for j=1:4,k(j).String=labels{j};k(j).Color=colors{j};k(j).Position(1)=at(j);end
+            obj.keys();
             if ~iq,obj.Empty.time.Visible='off';end
             obj.pad();obj.defaultLimits('time');
             n=0;fs=NaN;
@@ -1389,7 +1415,17 @@ classdef BeamformerView < handle
         end
         function reflow(obj)
             if ~obj.isOpen(),return,end
-            width=obj.Figure.Position(3);height=obj.Figure.Position(4);
+            % Layout thresholds are in CSS pixels of the monitor the window is
+            % on. Scale is client size / Figure.Position; it is refreshed when
+            % both agree on the aspect, i.e. after whichever event came last.
+            sz=obj.Figure.Position(3:4);
+            if numel(obj.ClientSize)==2 && all(sz>0)
+                k=obj.ClientSize./sz;
+                if abs(k(1)-k(2))<.04*k(1)
+                    obj.Scale=mean(k);if abs(obj.Scale-1)<.03,obj.Scale=1;end
+                end
+            end
+            width=sz(1)*obj.Scale;height=sz(2)*obj.Scale;
             names=fieldnames(obj.Kpi);
             if width<1000
                 obj.HeaderGrid.ColumnWidth={112,'1x',76,104,90,84};obj.HeaderGrid.RowHeight={34,30};
@@ -1442,6 +1478,12 @@ classdef BeamformerView < handle
             else
                 nc=1;obj.PlotGrid.ColumnWidth={'1x'};obj.PlotGrid.RowHeight=repmat({290},1,6);obj.PlotGrid.Scrollable='on';
             end
+            % A scrollable grid resolves '1x' columns in Figure.Position pixels,
+            % which is wrong on a monitor with another scale: give it explicit
+            % widths from the true width (padding 28, sidebar 310, scrollbar 32).
+            if strcmp(obj.PlotGrid.Scrollable,'on')
+                obj.PlotGrid.ColumnWidth=repmat({max(160,floor((width-60-310*side-9*(nc-1))/nc))},1,nc);
+            end
             % Pairs stay stacked: pattern under DOA, time domain under the
             % spectrum, EVM under the constellation.
             switch nc
@@ -1450,6 +1492,11 @@ classdef BeamformerView < handle
                 otherwise,rows=1:6;cols=ones(1,6);
             end
             for k=1:6,obj.Panels(k).Layout.Row=rows(k);obj.Panels(k).Layout.Column=cols(k);end
+        end
+        function clientSize(obj,d)
+            % Window inner size in CSS pixels, reported by the probe.
+            if ~obj.isOpen() || ~isnumeric(d) || numel(d)~=2 || ~all(isfinite(d)) || any(d<=0),return,end
+            obj.ClientSize=double(d(:).');obj.reflow();
         end
         function onClose(obj)
             if obj.Closing,return,end
@@ -1466,6 +1513,13 @@ classdef BeamformerView < handle
         end
     end
     methods (Static)
+        function text=keyText(labels,colors)
+            text='';
+            for k=1:numel(labels)
+                text=[text sprintf('{\\color[rgb]{%.3f,%.3f,%.3f}%s}   ',colors{k},labels{k})]; %#ok<AGROW>
+            end
+            text=strtrim(text);
+        end
         function th=palette(name)
             % One palette per theme. Status hues (ok/warn/fault) are never used
             % for data series. Every entry is unique within a palette so a live
