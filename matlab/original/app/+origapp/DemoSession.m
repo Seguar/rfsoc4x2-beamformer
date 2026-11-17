@@ -298,7 +298,8 @@ classdef DemoSession < handle
                     'samples',displaySamples,'weights',weights,'analysis',r,'spectrum',r.spectrum,'vendor',[], ...
                     'fsHz',obj.Config.fsRfsoc,'directOnly',obj.Config.directOnly, ...
                     'channels',origapp.DemoSession.channelDiagnostics(frame));
-                if obj.Config.phComp,obj.Last.scope=string(obj.Config.arrayLabel)+", MODEL CALIBRATION";end
+                if obj.Config.phComp,obj.Last.scope=string(obj.Config.arrayLabel)+", MODEL CALIBRATION";
+                elseif obj.ZeroCal.state=="done",obj.Last.scope=string(obj.Config.arrayLabel)+", 0° SET ON THE COMMON FEED";end
                 obj.Status="acquiring";
                 if ~isempty(render),render(obj.snapshot());end
                 if any(string(obj.Config.analyzer)==["vsa","both"])

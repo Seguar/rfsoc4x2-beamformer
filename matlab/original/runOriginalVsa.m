@@ -90,7 +90,8 @@ try
             report.rows=app.Session.Rows;report.boardRows=app.Session.BoardRows;
             z=app.Session.ZeroCal;if isfield(z,'acc'),z=rmfield(z,'acc');end
             report.zeroCal=z;
-            s=app.Session.snapshot();if s.valid && ~isempty(s.angles),report.modelAngleDeg=s.angles;end
+            last=app.Session.snapshot();   % not "s": that holds the launcher settings
+            if last.valid && ~isempty(last.angles),report.modelAngleDeg=last.angles;end
         end
     end
     closeAppHandle(app); backend.close();
