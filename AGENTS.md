@@ -42,7 +42,7 @@ credentials, raw board archives, private measurements or calibration files.
 - Stop the existing service before exclusive wrapper access; record prior state.
   An automatically restarted boot service may reload its original waveform and
   RF settings. Do not restart it blindly at experiment end. Record its end state.
-- DAC output peak is 9600 codes by default (reference 1200, scaled on the board);
+- DAC output peak is 24000 codes by default (reference 1200, scaled on the board);
   the helper refuses a session whose start-up ADC peak exceeds -6 dBFS. No inferred dBm from DAC codes. Shut down both DAC GPIOs
   in finally and record disable commands and direction registers. PYNQ InOut
   slice reads change direction; Output reads use a software shadow. AXI GPIO

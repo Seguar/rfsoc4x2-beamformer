@@ -50,8 +50,8 @@ MAX_FRAMES = 200000
 # import the helper): start frequency in MHz -> ADC / DAC Nyquist zone.
 RF_PROFILES = {3000: dict(adc_zone=2, dac_zone=1), 5200: dict(adc_zone=1, dac_zone=2)}
 DEFAULT_RF_MHZ = 5200
-DAC_PEAK_MAX = 9600          # equal to the helper's; it also checks ADC headroom at start
-DEFAULT_DAC_PEAK = 9600          # over the air at 0.2 m: 1200 no lock, 4800 ~0.76, 9600 0.92 (2026-11-19)
+DAC_PEAK_MAX = 24000          # equal to the helper's; it also checks ADC headroom at start
+DEFAULT_DAC_PEAK = 24000         # over the air at 0.2 m: 1200 no lock, 9600 0.92, 24000 0.98 (2026-11-19)
 KEEP_RUNS = 20
 READY_LINE = 'Waiting for legacy client'
 EXPECTED = {

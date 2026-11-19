@@ -38,8 +38,8 @@ client network (see Access).
    on the board changes.
 3. If `bootpy.service` is running, the service stops it for the session.
 4. The service starts the capture helper (`legacy_capture.py`, four-stream
-   `window4` profile, DAC_B, DAC peak code 9600 by
-   default (`--dac-peak`, or `dac_peak` 100..9600 in the start request; the helper
+   `window4` profile, DAC_B, DAC peak code 24000 by
+   default (`--dac-peak`, or `dac_peak` 100..24000 in the start request; the helper
    scales the 1200-peak reference and refuses the session if a start-up capture
    peaks above −6 dBFS at the ADC), bounded to at most 4 hours
    and 200000 frames) at the start frequency: 5.2 GHz by default (service option

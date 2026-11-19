@@ -214,7 +214,7 @@ class SessionTests(unittest.TestCase):
         self.pre = good()
         for request in [{'max_seconds': 0}, {'max_seconds': 14401}, {'max_seconds': 'x'},
                         {'rf_mhz': 5700}, {'rf_mhz': '5200'}, {'rf_mhz': True},
-                        {'dac_peak': 9601}, {'dac_peak': 99}, {'dac_peak': 2400.0}, {'dac_peak': True}]:
+                        {'dac_peak': 24001}, {'dac_peak': 99}, {'dac_peak': 2400.0}, {'dac_peak': True}]:
             c, f = self.start(**request)
             self.assertEqual(self.until(f, 'error')['code'], 'bad_request')
             c.close()

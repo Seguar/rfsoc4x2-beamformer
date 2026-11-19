@@ -12,7 +12,7 @@ request) and the application takes its RF fields from the board's ready message.
 | 3000 MHz | +3000 MHz, no mirror | 2 (2.5–5.0 GHz) | 3000 MHz | 1 |
 
 Unchanged in both: ADC attenuation 0 dB, DAC current 40.5 mA (maximum), QMC gain
-1.99, DAC_B waveform peak code 9600 (since 2026-11-19; the
+1.99, DAC_B waveform peak code 24000 (since 2026-11-19; the
 conducted measurements below used 1200), Steering beamformer.
 
 ## Why the DAC zone is measured at 5.2 GHz
@@ -78,9 +78,12 @@ board → ADC_A–D.
 | 0.5 m | 1200 | about −54 dBFS | none |
 | 0.2 m | 1200 | −61 dBFS | 0.24–0.28, mostly none |
 | 0.2 m | 4800 | −56 dBFS | 0.72–0.79 |
-| 0.2 m | 9600 | −50 dBFS | 0.91–0.92, every frame |
+| 0.2 m | 9600 | −50 dBFS | 0.90–0.93, every frame |
+| 0.2 m | 16000 | −48 dBFS | 0.96–0.97 |
+| 0.2 m | 24000 | −45 dBFS | 0.98 (about 17–18 dB SNR per stream) |
 
-So sessions now start at peak 9600; the helper's start-up capture refuses a
+Received SNR follows the DAC level dB for dB up to 24000 (no visible
+compression), so sessions now start at peak 24000; the helper's start-up capture refuses a
 session whose ADC peak exceeds −6 dBFS. With the filter, the DAC zone measurement
 at start no longer shows the 7 dB difference (0.1–2.4 dB at the noise floor).
 
@@ -93,7 +96,7 @@ DAC_B only.
 
 - The link is noise limited: the ADC peak is about −41 dBFS and each stream's EVM
   follows its level. The DAC is already at maximum current and QMC gain; the
-  remaining lever was the waveform peak, now 9600 codes by default (below).
+  remaining lever was the waveform peak, now 24000 codes by default (below).
 - Stream 0 (ADC_D) is about 3 dB weaker than the others at 5.2 GHz in both zones.
 - The passives are specified for 2–4.2 GHz; these numbers characterize this cable
   set only.

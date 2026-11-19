@@ -72,7 +72,7 @@ ZONE_MARGIN_DB = 3.0
 # 1200 left every stream near the noise floor. Before any frame, a start-up capture must
 # show the ADC peak below ADC_PEAK_LIMIT_DBFS, else the session is refused.
 REFERENCE_PEAK = 1200
-DAC_PEAK_MAX = 9600
+DAC_PEAK_MAX = 24000
 ADC_PEAK_LIMIT_DBFS = -6.0
 SRC_SHA = '3f17e6cccef941d1bac4fefff4439472d8a6e6923b0ef7633e6184448be9eef3'
 RAM = 1048576
