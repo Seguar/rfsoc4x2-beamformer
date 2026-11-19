@@ -50,6 +50,8 @@ MAX_FRAMES = 200000
 # import the helper): start frequency in MHz -> ADC / DAC Nyquist zone.
 RF_PROFILES = {3000: dict(adc_zone=2, dac_zone=1), 5200: dict(adc_zone=1, dac_zone=2)}
 DEFAULT_RF_MHZ = 5200
+DAC_PEAK_MAX = 9600          # equal to the helper's; it also checks ADC headroom at start
+DEFAULT_DAC_PEAK = 9600          # over the air at 0.2 m: 1200 no lock, 4800 ~0.76, 9600 0.92 (2026-11-19)
 KEEP_RUNS = 20
 READY_LINE = 'Waiting for legacy client'
 EXPECTED = {
@@ -303,6 +305,9 @@ class Service:
         rf_mhz = request.get('rf_mhz', a.rf_mhz)
         if isinstance(rf_mhz, bool) or rf_mhz not in RF_PROFILES:
             raise Refused('bad_request', 'rf_mhz must be one of %s.' % ', '.join(map(str, sorted(RF_PROFILES))))
+        dac_peak = request.get('dac_peak', getattr(a, 'dac_peak', DEFAULT_DAC_PEAK))
+        if not isinstance(dac_peak, int) or isinstance(dac_peak, bool) or not 100 <= dac_peak <= DAC_PEAK_MAX:
+            raise Refused('bad_request', 'dac_peak must be an integer 100..%d.' % DAC_PEAK_MAX)
         send(conn, dict(state='starting', step='checking the board', elapsed=0))
         boot_was_running = check_preflight(self.preflight_fn([a.stream_port, a.control_port]))
         keepalive(conn)
@@ -322,6 +327,7 @@ class Service:
                     '--continuous', '--max-seconds', str(int(seconds)), '--max-frames', str(MAX_FRAMES),
                     '--stream-bind', local, '--stream-port', str(a.stream_port), '--request-timeout', '120',
                     '--control-port', str(a.control_port), '--dac', '0', '--rf-mhz', str(rf_mhz),
+                    '--dac-peak', str(dac_peak),
                     '--sampling-freq-unit', 'GHz', '--wire-mode', 'window4']
             clock = request.get('capture_clock_mhz', getattr(a, 'capture_clock_mhz', 0))
             if clock:
@@ -333,7 +339,7 @@ class Service:
             ready = threading.Event()
             # the helper reports the zones it really set (5200: DAC zone measured per session)
             rf_state = dict(rf_mhz=rf_mhz, adc_nyquist_zone=RF_PROFILES[rf_mhz]['adc_zone'],
-                            dac_nyquist_zone=RF_PROFILES[rf_mhz]['dac_zone'])
+                            dac_nyquist_zone=RF_PROFILES[rf_mhz]['dac_zone'], dac_peak=dac_peak)
 
             def log_output():
                 with (run / 'board.log').open('wb') as log:
@@ -470,6 +476,8 @@ def parser():
                    help='PL clock 0 for every session (0: overlay value); a client may request another')
     p.add_argument('--rf-mhz', type=int, default=DEFAULT_RF_MHZ, choices=sorted(RF_PROFILES),
                    help='start frequency of every session (measured profiles only); a client may request another')
+    p.add_argument('--dac-peak', type=int, default=DEFAULT_DAC_PEAK,
+                   help='DAC waveform peak code of every session (100..%d); a client may request another' % DAC_PEAK_MAX)
     p.add_argument('--allow-cidr', action='append', default=[], help='extra client network, e.g. 198.51.100.0/24')
     p.add_argument('--board-name', default='', help=argparse.SUPPRESS)
     return p

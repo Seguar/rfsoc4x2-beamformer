@@ -163,6 +163,17 @@ class SessionTests(unittest.TestCase):
         self.until(f, 'ended', 'error')
         argv = self.manifest()['argv']
         self.assertEqual(argv[argv.index('--rf-mhz')+1], '3000')
+        self.assertEqual(argv[argv.index('--dac-peak')+1], str(svc.DEFAULT_DAC_PEAK))
+        c.close()
+
+    def test_requested_dac_peak(self):
+        c, f = self.start(max_seconds=60, dac_peak=4800)
+        ready = self.until(f, 'ready', 'error')
+        self.assertEqual(ready['dac_peak'], 4800)
+        c.sendall(b'{"op":"stop"}\n')
+        self.until(f, 'ended', 'error')
+        argv = self.manifest()['argv']
+        self.assertEqual(argv[argv.index('--dac-peak')+1], '4800')
         c.close()
 
     def test_ready_reports_the_zone_the_helper_set(self):
@@ -185,6 +196,9 @@ class SessionTests(unittest.TestCase):
         exec(src[src.index('RF_PROFILES = '):src.index('\n', src.index('DEFAULT_RF_MHZ = '))], ns)
         self.assertEqual(ns['RF_PROFILES'], svc.RF_PROFILES)
         self.assertEqual(ns['DEFAULT_RF_MHZ'], svc.DEFAULT_RF_MHZ)
+        ns3 = {}
+        exec(src[src.index('REFERENCE_PEAK = '):src.index('\n', src.index('DAC_PEAK_MAX = '))], ns3)
+        self.assertEqual(ns3['DAC_PEAK_MAX'], svc.DAC_PEAK_MAX)
         launcher = (ROOT/'tools/run_original_vsa.py').read_text()
         ns2 = {}
         exec(launcher[launcher.index('RF_ZONES = '):launcher.index('\n', launcher.index('RF_ZONES = '))], ns2)
@@ -199,7 +213,8 @@ class SessionTests(unittest.TestCase):
         c.close()
         self.pre = good()
         for request in [{'max_seconds': 0}, {'max_seconds': 14401}, {'max_seconds': 'x'},
-                        {'rf_mhz': 5700}, {'rf_mhz': '5200'}, {'rf_mhz': True}]:
+                        {'rf_mhz': 5700}, {'rf_mhz': '5200'}, {'rf_mhz': True},
+                        {'dac_peak': 9601}, {'dac_peak': 99}, {'dac_peak': 2400.0}, {'dac_peak': True}]:
             c, f = self.start(**request)
             self.assertEqual(self.until(f, 'error')['code'], 'bad_request')
             c.close()

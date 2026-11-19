@@ -33,13 +33,14 @@ class FakeOverlay:
     def dacs_off(self):
         self.enabled = False
 
-    def capture(self):
+    def capture(self, gain=1):
         zone = self.dac[0].NyquistZone
         amp = np.array([46, 66, 68, 58]) if zone == self.strong else np.array([46, 15, 8, 25])
         if not self.dac0_player.any():
             amp = np.zeros(4)
         x = self.rng.normal(0, 1, (lc.RAM // 8, 8)) * 11
         x += np.repeat(amp, 2) / np.sqrt(2) * self.rng.choice([-1, 1], (lc.RAM // 8, 8))
+        x *= gain
         self.adc_capture[:] = np.clip(x, -32768, 32767).astype('<i2').ravel()
 
 
@@ -79,6 +80,35 @@ class Selection(unittest.TestCase):
 
     def test_only_5200_selects(self):
         self.assertEqual(lc.SELECT_DAC_ZONE, {5200})
+
+
+class Headroom(unittest.TestCase):
+    def run_check(self, gain):
+        o = FakeOverlay(2)
+        orig = lc.synced_trigger
+        lc.synced_trigger = lambda ov: ov.capture(gain)
+        try:
+            manifest = {}
+            try:
+                lc.check_adc_headroom(o, np.full(lc.RAM, 1000, '<i2'), '0', manifest)
+                error = None
+            except RuntimeError as exc:
+                error = str(exc)
+        finally:
+            lc.synced_trigger = orig
+        return o, manifest['adc_headroom'], error
+
+    def test_quiet_input_passes_and_leaves_the_dac_off(self):
+        o, r, error = self.run_check(1)
+        self.assertIsNone(error)
+        self.assertLess(r['peak_dbfs'], lc.ADC_PEAK_LIMIT_DBFS)
+        self.assertFalse(o.enabled or o.dac0_player.any() or o.dac1_player.any())
+
+    def test_near_full_scale_is_refused_and_the_dac_is_off(self):
+        o, r, error = self.run_check(400)
+        self.assertIn('lower the DAC peak', error)
+        self.assertGreater(r['peak_dbfs'], lc.ADC_PEAK_LIMIT_DBFS)
+        self.assertFalse(o.enabled or o.dac0_player.any() or o.dac1_player.any())
 
 
 if __name__ == '__main__':

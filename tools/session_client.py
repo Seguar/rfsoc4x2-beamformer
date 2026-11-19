@@ -44,7 +44,7 @@ def _exact(sock, n):
 
 
 class Session:
-    def __init__(self, host, port=4013, max_seconds=600, timeout=180, progress=print, capture_clock_mhz=None, rf_mhz=None):
+    def __init__(self, host, port=4013, max_seconds=600, timeout=180, progress=print, capture_clock_mhz=None, rf_mhz=None, dac_peak=None):
         self.host = host
         self.svc = socket.create_connection((host, port), timeout=10)
         req = {'op': 'start', 'max_seconds': max_seconds}
@@ -52,6 +52,8 @@ class Session:
             req['capture_clock_mhz'] = capture_clock_mhz
         if rf_mhz is not None:
             req['rf_mhz'] = rf_mhz
+        if dac_peak is not None:
+            req['dac_peak'] = dac_peak
         self.svc.sendall(json.dumps(req).encode() + b'\n')
         self.svc.settimeout(timeout)
         while True:

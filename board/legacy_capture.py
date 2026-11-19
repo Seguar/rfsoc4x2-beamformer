@@ -67,6 +67,13 @@ RF_PROFILES = {3000: dict(adc_zone=2, dac_zone=1), 5200: dict(adc_zone=1, dac_zo
 SELECT_DAC_ZONE = {5200}
 DEFAULT_RF_MHZ = 5200
 ZONE_MARGIN_DB = 3.0
+# DAC waveform peak (int16 code per I/Q rail). The reviewed reference is stored at 1200;
+# --dac-peak rescales it on the board. Over the air (2026-11-19, 0.5 m, AKF-1252 filter)
+# 1200 left every stream near the noise floor. Before any frame, a start-up capture must
+# show the ADC peak below ADC_PEAK_LIMIT_DBFS, else the session is refused.
+REFERENCE_PEAK = 1200
+DAC_PEAK_MAX = 9600
+ADC_PEAK_LIMIT_DBFS = -6.0
 SRC_SHA = '3f17e6cccef941d1bac4fefff4439472d8a6e6923b0ef7633e6184448be9eef3'
 RAM = 1048576
 SENTINEL = np.array([32767, -32768, 32767, -32768, 32767, -32768, 32767, -32768], dtype='<i2')
@@ -592,6 +599,30 @@ def select_dac_zone(overlay, words, dac, rf_mhz, manifest, captures=2):
     return result['chosen']
 
 
+def check_adc_headroom(overlay, words, dac, manifest, captures=2):
+    """Play the (scaled) waveform, capture, and refuse the session when any ADC stream
+    peaks above ADC_PEAK_LIMIT_DBFS. The DAC is off and its RAM zero afterwards."""
+    peaks = []
+    try:
+        write_dac(overlay, words, dac)
+        overlay.dacs_control()
+        time.sleep(.01)
+        sha = None
+        for _ in range(captures):
+            raw, refreshed, _, sha = full_capture(overlay, sha)
+            if not refreshed:
+                raise RuntimeError('ADC headroom capture was not fresh')
+            peaks.append(int(np.max(np.abs(raw.astype(int)))))
+    finally:
+        overlay.dacs_off()
+        write_dac(overlay, np.zeros(RAM, dtype='<i2'), dac)
+    peak_dbfs = round(float(20 * np.log10(max(peaks) / 32767.0 + 1e-12)), 2)
+    manifest['adc_headroom'] = dict(peak_codes=peaks, peak_dbfs=peak_dbfs, limit_dbfs=ADC_PEAK_LIMIT_DBFS)
+    if peak_dbfs > ADC_PEAK_LIMIT_DBFS:
+        raise RuntimeError('ADC peak %.1f dBFS above %.1f dBFS: lower the DAC peak' % (peak_dbfs, ADC_PEAK_LIMIT_DBFS))
+    return peak_dbfs
+
+
 def require_lock(overlay, manifest, stage):
     value = int(overlay.clocktreeMTS.MTSclkwiz.read(4))
     if len(manifest.setdefault('clock_lock_readbacks', {})) < 2000:
@@ -705,6 +736,8 @@ def main():
     p.add_argument('--control-port', type=int, default=0, help='separate acknowledged command socket; window4 only')
     p.add_argument('--rf-mhz', type=int, default=DEFAULT_RF_MHZ, choices=sorted(RF_PROFILES))
     p.add_argument('--dac', choices=['0', '1'], default='0')
+    p.add_argument('--dac-peak', type=int, default=REFERENCE_PEAK,
+                   help='DAC waveform peak code, %d..%d (reference is scaled from %d)' % (100, DAC_PEAK_MAX, REFERENCE_PEAK))
     p.add_argument('--sampling-freq-unit', choices=['GHz'], required=True)
     p.add_argument('--request-timeout', type=float, default=30)
     p.add_argument('--wire-codec', choices=['raw', 'deflate'], default='deflate')
@@ -750,8 +783,13 @@ def main():
         raise ValueError('window4 needs the reference ref125 (131072 complex) and burst length')
     if words.dtype != np.dtype('<i2') or words.shape != (RAM,) or np.max(np.abs(words.astype(int))) > 1200:
         raise ValueError('Legacy helper requires 1048576 int16 words with peak <= 1200')
+    if not 100 <= a.dac_peak <= DAC_PEAK_MAX:
+        raise ValueError('--dac-peak must be 100..%d' % DAC_PEAK_MAX)
+    if a.dac_peak != REFERENCE_PEAK:
+        words = np.clip(np.rint(words.astype(float) * (a.dac_peak / REFERENCE_PEAK)), -32767, 32767).astype('<i2')
     manifest = {'board': board.decode(), 'rf_mhz': a.rf_mhz, 'dac': a.dac,
                 'dac_connector': {'0': 'DAC_B', '1': 'DAC_A'}[a.dac],
+                'dac_peak': a.dac_peak, 'dac_words_peak': int(np.max(np.abs(words.astype(int)))),
                 'receive_stream0_connector': 'ADC_D', 'fs_assumed_hz': 125e6,
                 'profile': PROFILE, 'schedule': a.schedule, 'frames_planned': total,
                 'continuous': bool(a.continuous), 'max_seconds': a.max_seconds, 'owner_stdin': True,
@@ -818,8 +856,10 @@ def main():
         if a.rf_mhz in SELECT_DAC_ZONE:
             manifest['dac_nyquist_zone'] = select_dac_zone(overlay, words, a.dac, a.rf_mhz, manifest)
             require_lock(overlay, manifest, 'after_dac_zone_selection')
+        check_adc_headroom(overlay, words, a.dac, manifest)
         rf_state = dict(rf_mhz=a.rf_mhz, adc_nyquist_zone=manifest['adc_nyquist_zone'],
-                        dac_nyquist_zone=manifest['dac_nyquist_zone'])
+                        dac_nyquist_zone=manifest['dac_nyquist_zone'], dac_peak=a.dac_peak,
+                        adc_peak_dbfs=manifest['adc_headroom']['peak_dbfs'])
         print('RF profile ' + json.dumps(rf_state), flush=True)
         if a.control_port:
             from board_commands import BoardCommands

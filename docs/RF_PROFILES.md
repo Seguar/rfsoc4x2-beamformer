@@ -12,7 +12,8 @@ request) and the application takes its RF fields from the board's ready message.
 | 3000 MHz | +3000 MHz, no mirror | 2 (2.5–5.0 GHz) | 3000 MHz | 1 |
 
 Unchanged in both: ADC attenuation 0 dB, DAC current 40.5 mA (maximum), QMC gain
-1.99, DAC_B waveform peak code 1200, Steering beamformer.
+1.99, DAC_B waveform peak code 9600 (since 2026-11-19; the
+conducted measurements below used 1200), Steering beamformer.
 
 ## Why the DAC zone is measured at 5.2 GHz
 
@@ -66,12 +67,33 @@ Beamformers on the same 5.2 GHz frames: Steering 5.33 %, PC 5.25 % (within the
 frame-to-frame spread), RVL 7.1 %, QCB 13.3 %; MVDR, DL MVDR, DL ITER MVDR and DMR
 did not reach preamble sync on this common feed (as at 3 GHz).
 
+## Over the air (2026-11-19)
+
+DAC_B → ZN2PD-9G-S+ combiner → AKF-1252 band-pass filter (5170–5330 MHz, about
+40 dB at 4.8 GHz) → single 5.2 GHz patch; four patches of one row of the 4×4
+board → ADC_A–D.
+
+| Distance | DAC peak | ADC peak | Stream locks |
+|---|---|---|---|
+| 0.5 m | 1200 | about −54 dBFS | none |
+| 0.2 m | 1200 | −61 dBFS | 0.24–0.28, mostly none |
+| 0.2 m | 4800 | −56 dBFS | 0.72–0.79 |
+| 0.2 m | 9600 | −50 dBFS | 0.91–0.92, every frame |
+
+So sessions now start at peak 9600; the helper's start-up capture refuses a
+session whose ADC peak exceeds −6 dBFS. With the filter, the DAC zone measurement
+at start no longer shows the 7 dB difference (0.1–2.4 dB at the noise floor).
+
+Both DACs into the 0° combiner are not usable yet: every DAC mixer phase update
+(`dphasec`, even to the same value) lands DAC_A at a different phase relative to
+DAC_B, so the sum is either about +6 dB or a full cancellation. Sessions play
+DAC_B only.
+
 ## Limits
 
 - The link is noise limited: the ADC peak is about −41 dBFS and each stream's EVM
   follows its level. The DAC is already at maximum current and QMC gain; the
-  remaining lever is the waveform peak, held at 1200 codes by the helper's guard.
-  Raising it is a separate, reviewed change.
+  remaining lever was the waveform peak, now 9600 codes by default (below).
 - Stream 0 (ADC_D) is about 3 dB weaker than the others at 5.2 GHz in both zones.
 - The passives are specified for 2–4.2 GHz; these numbers characterize this cable
   set only.
