@@ -65,6 +65,20 @@ the cable is pulled (TCP keepalive, about 8 s) or the service is stopped, the
 helper shuts down the same way. As with the launcher, the DAC-off record is a
 command and readback record, not an independent RF measurement.
 
+## Capture read time
+
+The FPGA image writes each capture into on-chip RAM (2 MB, about 1 ms of signal);
+the PS reads it word by word through an AXI BRAM controller (no DMA in the
+image). Reading all of it takes about 69 ms per frame. A reduced window (Data
+amount below 32768) reads only the rows its window search can use (the wrap
+guard, one burst and the window: 44403 of 131072 rows for 4096) and the
+sentinel tail; if a window ever ends beyond them, the rest of the same capture
+is read. Measured on the board with a client one request ahead (4096 rows):
+11.7 frames/s with the full read, 19.3 frames/s with the partial read. A start
+request with `"full_read": true` (or the service option `--full-read`) restores
+the full read. Capturing the next frame ahead on the board gave nothing more,
+because the application already keeps one request ahead.
+
 ## Board display (OLED)
 
 The service writes the board's 2x16 character OLED (NHD-0216AW, `/dev/spidev1.0`,

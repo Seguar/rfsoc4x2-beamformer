@@ -652,9 +652,20 @@ def write_dac(overlay, words, selected):
         raise RuntimeError('DAC RAM readback mismatch')
 
 
-def full_capture(overlay, previous_sha):
+def read_rows_needed(n, burst):
+    """Capture rows fast_window can use for an n-row window: the wrap guard, one
+    burst to find the next frame start, the lead and the window, plus margin."""
+    return min(RAM // 8, WRAP_GUARD + int(np.ceil(burst)) + FRAME_LEAD + n + 256)
+
+
+def full_capture(overlay, previous_sha, read_rows=None):
     """Freshness: tail sentinel must be overwritten (if RAM is PS-writable) AND the
-    capture must differ from the previous one (ADC noise makes repeats impossible)."""
+    capture must differ from the previous one (ADC noise makes repeats impossible).
+
+    read_rows: copy only the first read_rows rows (and the sentinel tail) from the
+    capture RAM; the PS reads the RAM word by word through an AXI BRAM controller
+    (about 69 ms for all 2 MB), so a reduced window reads only what it can use.
+    The rest of the array is zero; read_rest() fills it from the same capture."""
     overlay.adc_capture[RAM-8:RAM] = SENTINEL
     writable = np.array_equal(np.asarray(overlay.adc_capture[RAM-8:RAM]), SENTINEL)
     if overlay.da == 2:
@@ -662,10 +673,25 @@ def full_capture(overlay, previous_sha):
     else:
         overlay.trigger_capture()
     time.sleep(SETTLE)
-    raw = np.array(overlay.adc_capture[:RAM], dtype='<i2', copy=True)
-    sha = hashlib.sha256(raw.tobytes()).hexdigest()
-    refreshed = sha != previous_sha and not (writable and np.array_equal(raw[-8:], SENTINEL))
+    if read_rows is None or read_rows * 8 >= RAM:
+        raw = np.array(overlay.adc_capture[:RAM], dtype='<i2', copy=True)
+        sha = hashlib.sha256(raw.tobytes()).hexdigest()
+        tail = raw[-8:]
+    else:
+        words = read_rows * 8
+        raw = np.zeros(RAM, dtype='<i2')
+        raw[:words] = overlay.adc_capture[:words]
+        tail = np.array(overlay.adc_capture[RAM-8:RAM], dtype='<i2', copy=True)
+        raw[RAM-8:] = tail
+        sha = hashlib.sha256(raw[:words].tobytes() + tail.tobytes()).hexdigest()
+    refreshed = sha != previous_sha and not (writable and np.array_equal(tail, SENTINEL))
     return raw, refreshed, writable, sha
+
+
+def read_rest(overlay, raw, read_rows):
+    """Complete a partial read from the same capture (no new trigger)."""
+    raw[read_rows * 8:RAM - 8] = overlay.adc_capture[read_rows * 8:RAM - 8]
+    raw[RAM - 8:] = overlay.adc_capture[RAM - 8:RAM]
 
 
 def write_live_status(path, overlay, controls, frames, wire):
@@ -763,6 +789,8 @@ def main():
     p.add_argument('--sampling-freq-unit', choices=['GHz'], required=True)
     p.add_argument('--request-timeout', type=float, default=30)
     p.add_argument('--wire-codec', choices=['raw', 'deflate'], default='deflate')
+    p.add_argument('--full-read', action='store_true',
+                   help='read the whole capture RAM also for reduced windows (slower)')
     p.add_argument('--capture-clock-mhz', type=float, default=0.0,
                    help='set PL clock 0 (ADC capture writer side of the stream clock converter) after loading '
                         'the overlay; 0 keeps the overlay value. The RF stream runs on the RF fabric clock; a '
@@ -1008,11 +1036,14 @@ def main():
                         if controls is not None:
                             controls.check()
                         if controls is None or controls.streaming:
+                            rows_now = controls.data_words // 8 if controls else WIN
                             require_lock(overlay, manifest, 'frame%d' % sequence)
-                            raw, refreshed, writable, previous_sha = full_capture(overlay, previous_sha)
+                            # a reduced window reads only the capture rows it can use
+                            read_rows = (read_rows_needed(rows_now, burst125)
+                                         if v3 and rows_now != WIN and not a.full_read else None)
+                            raw, refreshed, writable, previous_sha = full_capture(overlay, previous_sha, read_rows)
                             mono = time.monotonic_ns()
                             control_revision = controls.revision if controls else 0
-                            rows_now = controls.data_words // 8 if controls else WIN
                             break
                     time.sleep(.05)
                 if not refreshed:
@@ -1023,6 +1054,10 @@ def main():
                 if v3:
                     if reduced:
                         start, sel = fast_window(raw, ref125, burst125, rows_now, ref_fft_conj)
+                        if read_rows is not None and start + rows_now > read_rows:
+                            with hardware_lock:      # same capture: no trigger since
+                                read_rest(overlay, raw, read_rows)
+                            manifest['partial_read_completed'] = manifest.get('partial_read_completed', 0) + 1
                     else:
                         start, sel = select_window(raw, ref125, burst125, ref_fft_conj)
                     wire = np.ascontiguousarray(raw.reshape(-1, 8)[start:start + rows_now, :])   # all 4 streams
@@ -1057,6 +1092,7 @@ def main():
                                  candidate=sel.get('candidate'), lock_block=sel.get('lock_block'), wrap_row=sel.get('wrap_row'), wrap_from=sel.get('wrap_from'),
                                  stream_locks=sel.get('stream_locks'), sub_lags=sel.get('sub_lags'),
                                  stream_rms=sel.get('rms_sub4'))
+                entry['read_rows'] = read_rows or RAM // 8
                 if len(manifest['frames']) < 2000:
                     manifest['frames'].append(entry)
                 if time.monotonic() - status_written >= 1:

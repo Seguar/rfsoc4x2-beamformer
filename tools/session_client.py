@@ -44,7 +44,7 @@ def _exact(sock, n):
 
 
 class Session:
-    def __init__(self, host, port=4013, max_seconds=600, timeout=180, progress=print, capture_clock_mhz=None, rf_mhz=None, dac_peak=None, dacs=None, dac_a_phase_deg=None):
+    def __init__(self, host, port=4013, max_seconds=600, timeout=180, progress=print, capture_clock_mhz=None, rf_mhz=None, dac_peak=None, dacs=None, dac_a_phase_deg=None, **extra):
         self.host = host
         self.svc = socket.create_connection((host, port), timeout=10)
         req = {'op': 'start', 'max_seconds': max_seconds}
@@ -58,6 +58,7 @@ class Session:
             req['dacs'] = dacs
         if dac_a_phase_deg is not None:
             req['dac_a_phase_deg'] = dac_a_phase_deg
+        req.update(extra)            # other start fields, e.g. precapture=True
         self.svc.sendall(json.dumps(req).encode() + b'\n')
         self.svc.settimeout(timeout)
         while True:
@@ -90,9 +91,11 @@ class Session:
             raise RuntimeError('board refused %r: %s' % (line, reply.get('error')))
         return reply['result']
 
-    def frame(self):
-        """Request and return one window: rows x 4 complex, columns = streams 0..3."""
-        self.stream.sendall(b'N')
+    def frame(self, request=True):
+        """Request and return one window: rows x 4 complex, columns = streams 0..3.
+        request=False reads a frame requested earlier (request_next)."""
+        if request:
+            self.stream.sendall(b'N')
         magic, seq, mono, req, real, label, mask, nbytes = HDR.unpack(_exact(self.stream, HDR.size))
         if magic not in (b'IQZ3', b'IQL3'):
             raise RuntimeError('unexpected frame %r' % magic)
@@ -109,6 +112,10 @@ class Session:
         w = np.frombuffer(body, '<i2').astype(float).reshape(-1, 8)
         self.last_info.update(sequence=seq, start=start, select_us=sel_us)
         return w[:, 0::2] - 1j * w[:, 1::2]
+
+    def request_next(self):
+        """Ask for the next frame now (one request ahead, as the application does)."""
+        self.stream.sendall(b'N')
 
     def close(self):
         for s in ('ctrl', 'stream'):

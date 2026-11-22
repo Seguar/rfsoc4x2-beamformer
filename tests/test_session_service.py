@@ -195,6 +195,7 @@ class SessionTests(unittest.TestCase):
         argv = self.manifest()['argv']
         self.assertNotIn('--both-dacs', argv)
         self.assertNotIn('--dac-a-phase', argv)
+        self.assertNotIn('--full-read', argv)          # partial read is the default
         c.close()
 
     def test_requested_dac_peak(self):
@@ -246,7 +247,7 @@ class SessionTests(unittest.TestCase):
         for request in [{'max_seconds': 0}, {'max_seconds': 14401}, {'max_seconds': 'x'},
                         {'rf_mhz': 5700}, {'rf_mhz': '5200'}, {'rf_mhz': True},
                         {'dac_peak': 24001}, {'dac_peak': 99}, {'dac_peak': 2400.0}, {'dac_peak': True},
-                        {'dacs': 'A'}, {'dac_a_phase_deg': 180}, {'dac_a_phase_deg': '40'}]:
+                        {'dacs': 'A'}, {'dac_a_phase_deg': 180}, {'dac_a_phase_deg': '40'}, {'full_read': 1}]:
             c, f = self.start(**request)
             self.assertEqual(self.until(f, 'error')['code'], 'bad_request')
             c.close()

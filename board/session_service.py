@@ -399,6 +399,11 @@ class Service:
         if not isinstance(dac_peak, int) or isinstance(dac_peak, bool) or not 100 <= dac_peak <= DAC_PEAK_MAX:
             raise Refused('bad_request', 'dac_peak must be an integer 100..%d.' % DAC_PEAK_MAX)
         self.view = dict(mode='starting', rf_mhz=rf_mhz, t0=time.time())
+        modes = {}
+        for key in ('full_read',):
+            modes[key] = request.get(key, getattr(a, key, False))
+            if not isinstance(modes[key], bool):
+                raise Refused('bad_request', key + ' must be true or false.')
         send(conn, dict(state='starting', step='checking the board', elapsed=0))
         boot_was_running = check_preflight(self.preflight_fn([a.stream_port, a.control_port]))
         keepalive(conn)
@@ -420,7 +425,8 @@ class Service:
                     '--control-port', str(a.control_port), '--dac', '0', '--rf-mhz', str(rf_mhz),
                     '--dac-peak', str(dac_peak),
                     *(['--both-dacs', '--dac-a-phase', '%.2f' % dac_a_phase] if dacs == 'AB' else []),
-                    '--sampling-freq-unit', 'GHz', '--wire-mode', 'window4']
+                    '--sampling-freq-unit', 'GHz', '--wire-mode', 'window4',
+                    *(['--full-read'] if modes['full_read'] else [])]
             clock = request.get('capture_clock_mhz', getattr(a, 'capture_clock_mhz', 0))
             if clock:
                 if not isinstance(clock, (int, float)) or isinstance(clock, bool) or not 125 <= clock <= 150:
@@ -578,6 +584,8 @@ def parser():
                    help='DAC_A mixer phase at start with --dacs AB (degrees)')
     p.add_argument('--dac-peak', type=int, default=DEFAULT_DAC_PEAK,
                    help='DAC waveform peak code of every session (100..%d); a client may request another' % DAC_PEAK_MAX)
+    p.add_argument('--full-read', action='store_true',
+                   help='read the whole capture RAM also for reduced windows (a client may request otherwise)')
     p.add_argument('--no-oled', action='store_true', help='leave the board OLED alone')
     p.add_argument('--allow-cidr', action='append', default=[], help='extra client network, e.g. 198.51.100.0/24')
     p.add_argument('--board-name', default='', help=argparse.SUPPRESS)
