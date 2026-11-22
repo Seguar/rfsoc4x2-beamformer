@@ -110,6 +110,15 @@ def board_addresses():
     return found
 
 
+def bootpy_active():
+    """boot.py (the original TCP server) runs at idle and writes the OLED itself."""
+    try:
+        out = subprocess.run(['systemctl', 'is-active', 'bootpy.service'], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.stdout.strip() in ('active', 'activating', 'reloading')
+
+
 def peer_allowed(peer, attached, extra=()):
     try:
         address = ipaddress.ip_address(peer)
@@ -206,7 +215,7 @@ def keepalive(conn):
 
 class Service:
     def __init__(self, a, *, preflight_fn=preflight, networks_fn=local_networks, systemctl=None,
-                 oled=None, addresses_fn=board_addresses):
+                 oled=None, addresses_fn=board_addresses, bootpy_active_fn=None):
         self.a = a
         self.root = Path(a.root)
         self.state = Path(a.state)
@@ -220,6 +229,7 @@ class Service:
         self.port = a.port
         self.oled = oled if oled is not None else oled_status.Oled(enabled=not getattr(a, 'no_oled', False))
         self.addresses_fn = addresses_fn
+        self.bootpy_active_fn = bootpy_active_fn or bootpy_active
         self.view = dict(mode='idle')
 
     # -- identity -----------------------------------------------------------
@@ -250,7 +260,8 @@ class Service:
 
     # -- OLED ---------------------------------------------------------------
     def display_text(self, now, tick):
-        """(top, bottom) for the current view; the mode is set by the session."""
+        """(top, bottom) for the current view (set by the session), or None to leave
+        the display to boot.py, which writes its own address and state while it runs."""
         v = self.view
         mode = v['mode']
         if mode == 'ended' and now > v['until']:
@@ -265,13 +276,19 @@ class Service:
             return oled_status.waiting_text(v['rf_mhz'], v['dacs'])
         if mode == 'ended':
             return oled_status.ended_text(v['summary'])
+        if tick % 5 == 0 or 'bootpy' not in v:
+            v['bootpy'] = self.bootpy_active_fn()
+        if v['bootpy']:
+            return None
         return oled_status.idle_text(self.addresses_fn(), tick // 4)
 
     def display_loop(self):
         tick = 0
         while not self.stopping.is_set():
             try:
-                self.oled.show(*self.display_text(time.time(), tick))
+                text = self.display_text(time.time(), tick)
+                if text is not None:
+                    self.oled.show(*text)
             except Exception as exc:  # the display never stops the service
                 print('OLED text failed: %s: %s' % (type(exc).__name__, exc), flush=True)
             tick += 1

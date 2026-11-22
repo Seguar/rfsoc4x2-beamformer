@@ -81,9 +81,11 @@ class SessionTests(unittest.TestCase):
         def systemctl(*args):
             self.calls.append(args)
         self.oled = RecordingOled()
+        self.bootpy_running = False
         self.service = svc.Service(a, preflight_fn=lambda ports: self.pre, networks_fn=lambda: [],
                                    systemctl=systemctl, oled=self.oled,
-                                   addresses_fn=lambda: ['192.0.2.10', '198.51.100.7']).start()
+                                   addresses_fn=lambda: ['192.0.2.10', '198.51.100.7'],
+                                   bootpy_active_fn=lambda: self.bootpy_running).start()
         os.environ.pop('FAKE_HELPER_MODE', None)
 
     def tearDown(self):
@@ -294,6 +296,14 @@ class SessionTests(unittest.TestCase):
         # back to idle after the ended screen times out
         self.assertEqual(self.service.display_text(time.time() + 30, 0)[0], 'RFSoC4x2 BF idle')
         c.close()
+
+    def test_idle_display_is_left_to_bootpy(self):
+        self.service.view = dict(mode='idle')
+        self.bootpy_running = True
+        self.assertIsNone(self.service.display_text(time.time(), 0))
+        self.bootpy_running = False
+        self.assertIsNone(self.service.display_text(time.time(), 1))     # checked every 5 s
+        self.assertEqual(self.service.display_text(time.time(), 5)[0], 'RFSoC4x2 BF idle')
 
     def test_oled_shows_the_app_evm(self):
         os.environ['FAKE_HELPER_STATUS'] = '1'

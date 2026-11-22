@@ -72,7 +72,8 @@ driver `rfsoc4x2.oled` from the PYNQ board package) once per second:
 
 | State | Line 1 | Line 2 |
 |---|---|---|
-| idle | `RFSoC4x2 BF idle` | a board address (rotates every 4 s when there are several) |
+| idle, `boot.py` running | left to `boot.py` (its address and TCP server state) | |
+| idle, no `boot.py` | `RFSoC4x2 BF idle` | a board address (rotates every 4 s when there are several) |
 | starting | `Starting 5200MHz` | `load+sync   12s` |
 | ready, no frame yet | `Ready 5200MHz AB` | `waiting for app` |
 | streaming | `EVM 3.88%   LIVE` (`EVM --` until the app reports one) | `5200MHz -19dB AB`: current RF, ADC peak of the last frame (dBFS), DACs |
@@ -86,6 +87,8 @@ with the display-only `evm` command every 2 s over a second control connection,
 so a display failure never stops acquisition. Older applications work unchanged
 and show `EVM --`. Writes run in a background thread (a full write takes about
 0.5 s); without the driver the display stays off. `--no-oled` leaves it alone.
+`boot.py` is stopped during a session; `/boot/doa_mts.py` clears the display
+when the helper loads it, and the next one-second update writes it again.
 
 ## Capture sample loss
 
