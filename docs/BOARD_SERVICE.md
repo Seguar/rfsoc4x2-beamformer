@@ -65,6 +65,28 @@ the cable is pulled (TCP keepalive, about 8 s) or the service is stopped, the
 helper shuts down the same way. As with the launcher, the DAC-off record is a
 command and readback record, not an independent RF measurement.
 
+## Board display (OLED)
+
+The service writes the board's 2x16 character OLED (NHD-0216AW, `/dev/spidev1.0`,
+driver `rfsoc4x2.oled` from the PYNQ board package) once per second:
+
+| State | Line 1 | Line 2 |
+|---|---|---|
+| idle | `RFSoC4x2 BF idle` | a board address (rotates every 4 s when there are several) |
+| starting | `Starting 5200MHz` | `load+sync   12s` |
+| ready, no frame yet | `Ready 5200MHz AB` | `waiting for app` |
+| streaming | `EVM 3.88%   LIVE` (`EVM --` until the app reports one) | `5200MHz -19dB AB`: current RF, ADC peak of the last frame (dBFS), DACs |
+| paused / no frame for 3 s | `PAUSED` / `no frames` | as above |
+| ended (20 s) | `Session ended` | `DACs off 1234fr`, or `DAC OFF UNSURE!` |
+| refused or failed (20 s) | `Board error` | the code, e.g. `board_busy` |
+
+The helper writes `status.json` (frames, RF, ADC peak, the app's EVM) in the run
+folder at most once per second; the application (v0.6.5 and later) sends its EVM
+with the display-only `evm` command every 2 s over a second control connection,
+so a display failure never stops acquisition. Older applications work unchanged
+and show `EVM --`. Writes run in a background thread (a full write takes about
+0.5 s); without the driver the display stays off. `--no-oled` leaves it alone.
+
 ## Capture sample loss
 
 In the overlay the ADC streams run on the RF fabric clock (125 MHz from the RF

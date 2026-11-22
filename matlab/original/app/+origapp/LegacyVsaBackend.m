@@ -54,6 +54,9 @@ classdef LegacyVsaBackend < handle
         Config
         Control = []
         ControlPaused = false
+        Display = []            % second control connection, board OLED only (showEvm)
+        DisplayOff = false
+        DisplayAt = -Inf
         Metadata = struct()
         Log = struct([])
         Ended = false
@@ -165,7 +168,34 @@ classdef LegacyVsaBackend < handle
             if obj.Config.controlPort>0 && isfield(obj.Metadata,'path_controls')
                 names=[names reshape(string(obj.Metadata.path_controls),1,[])];
             end
-            c=struct('commands',names,'txArrayElements',0,'uploadDac',false);
+            display=strings(1,0);
+            if obj.Config.controlPort>0 && isfield(obj.Metadata,'display_controls')
+                display=reshape(string(obj.Metadata.display_controls),1,[]);
+            end
+            c=struct('commands',names,'txArrayElements',0,'uploadDac',false,'display',display);
+        end
+
+        function showEvm(obj,evmPercent)
+            % Board OLED only: the EVM in the app goes to the board at most every
+            % 2 s over its own control connection. evm changes no converter and no
+            % settings revision; any failure turns the display updates off for the
+            % session and never touches the IQ stream or the settings connection.
+            if obj.DisplayOff || obj.Closed || obj.WireMode~="window4", return, end
+            t=obj.now();
+            if t-obj.DisplayAt<2, return, end
+            obj.DisplayAt=t;
+            if ~any(obj.capabilities().display=="evm"), obj.DisplayOff=true; return, end
+            code=-1;
+            if isscalar(evmPercent) && isfinite(evmPercent), code=round(min(max(evmPercent,0),1000)*100);end
+            try
+                if isempty(obj.Display)
+                    obj.Display=origapp.BoardControl(obj.Config.host,obj.Config.controlPort,2);
+                end
+                obj.Display.send(sprintf('evm %d',code));
+            catch
+                obj.DisplayOff=true;
+                if ~isempty(obj.Display), delete(obj.Display); obj.Display=[]; end
+            end
         end
 
         function reply = send(obj,line)
@@ -487,6 +517,7 @@ classdef LegacyVsaBackend < handle
             end
             obj.Client = []; obj.Stream = [];
             if ~isempty(obj.Control), delete(obj.Control); obj.Control=[]; end
+            if ~isempty(obj.Display), delete(obj.Display); obj.Display=[]; end
             try
                 if ~isempty(obj.Session) && isvalid(obj.Session), delete(obj.Session); end
             catch

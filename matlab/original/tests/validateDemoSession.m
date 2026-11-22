@@ -3,9 +3,9 @@ function report=validateDemoSession(referenceMat,referenceRepo,outDir)
 if ~isfolder(outDir),mkdir(outDir);end
 addpath(fullfile(referenceRepo,'Functions'));
 d=load(referenceMat);x=d.ref125(1:32768);rng(20261116);
-q={};closed=0;sends={};vendorBuffers={};
+q={};closed=0;sends={};vendorBuffers={};shown={};showFails=false;
 backend=struct('open',@()[],'close',@closeBackend,'next',@nextFrame, ...
-    'availableChannels',@()true(1,4),'send',@send,'vsaSend',@sendVsa, ...
+    'availableChannels',@()true(1,4),'send',@send,'vsaSend',@sendVsa,'showEvm',@showEvm, ...
     'vsaStatus',@()struct('valid',true,'evmPercent',9,'sequence',2));
 c=origapp.defaultConfig();c.backend=backend;c.originalRepoPath=string(referenceRepo);
 c.visible=false;c.directOnly=false;c.dataChan=32768;c.ch=5;c.fc=3e9;c.fcAnt=3e9;
@@ -22,6 +22,8 @@ assert(a.valid,'First frame refused: %s',string(a.reason));
 assert(a.valid && a.analysis.valid && ~isempty(a.doaSpectrum) && ~isempty(a.patternDb));
 assert(numel(a.samples)==32768 && numel(a.spectrum.freqHz)>0 && isempty(sends));
 assert(numel(findall(groot,'Type','figure'))==figures0,'Headless session constructed a GUI.');
+% The board OLED gets the EVM of each analysed frame; a display failure is never a frame error.
+assert(numel(shown)==1 && isequaln(shown{1},a.analysis.evmPercent),'EVM was not passed to the board display.');
 s.configure(struct('avg_factor',2));a=s.snapshot();assert(s.Config.avg_factor==2 && ~a.valid);
 old=s.Config.doa;refused=false;
 try,s.configure(struct('doa','MVDRman'));catch e,refused=string(e.identifier)=='origapp:Calibration';end
@@ -61,6 +63,9 @@ refused=false;try,s.configure(struct('scan_res',1e-4,'scan_bw',360,'avg_factor',
 assert(refused,'Huge scan grid was not refused.');
 s.configure(struct('bf','Steering'));enqueue(400,0,true);s.step();a=s.snapshot();
 assert(a.valid,'Steering after refusals: %s',string(a.reason));
+n=numel(shown);errs=s.Controller.TotalErrors;
+showFails=true;enqueue(401,0,true);s.step();a=s.snapshot();showFails=false;
+assert(a.valid && s.Controller.TotalErrors==errs && numel(shown)==n+1,'A display failure affected acquisition.');
 s.close();delete(s);assert(closed==1);
 % Full clean frontend uses one figure and one timer, no hidden legacy app.
 closed=0;c.analyzer="integrated";c.allowBoardCommands=true;
@@ -125,4 +130,8 @@ disp('DEMO_SESSION_COMPLETE');
     function closeBackend(),closed=closed+1;end
     function send(line),sends{end+1}=line;end
     function sendVsa(z),vendorBuffers{end+1}=z;end
+    function showEvm(v)
+        shown{end+1}=v;
+        if showFails,error('test:display','display failed');end
+    end
 end

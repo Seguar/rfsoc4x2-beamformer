@@ -193,7 +193,7 @@ classdef Controller < handle
             %   commands        string array of command verbs it accepts
             %   txArrayElements DAC channels usable as one steerable TX array
             %   uploadDac       true when uploadDacWaveform(port, int16) exists
-            c = struct('commands', strings(1,0), 'txArrayElements', 0, 'uploadDac', false);
+            c = struct('commands', strings(1,0), 'txArrayElements', 0, 'uploadDac', false, 'display', strings(1,0));
             if obj.hasBackend() && origapp.Controller.hasOp(obj.Backend, "capabilities")
                 d = obj.Backend.capabilities();
                 assert(isstruct(d), 'origapp:Capabilities', 'capabilities() must return a struct.');
@@ -202,9 +202,19 @@ classdef Controller < handle
                     if isfield(d, f{k}), c.(f{k}) = d.(f{k}); end
                 end
                 c.commands = reshape(string(c.commands), 1, []);
+                c.display = reshape(string(c.display), 1, []);
                 assert(isscalar(c.txArrayElements) && c.txArrayElements >= 0 && ...
                     islogical(c.uploadDac) && isscalar(c.uploadDac), 'origapp:Capabilities', ...
                     'capabilities(): txArrayElements >= 0 and logical uploadDac expected.');
+            end
+        end
+
+        function showEvm(obj, evmPercent)
+            % Optional backend op: the app's EVM on the board display. Never an error.
+            if ~obj.IsOpen || ~obj.hasBackend() || ~origapp.Controller.hasOp(obj.Backend, "showEvm"), return, end
+            try
+                obj.Backend.showEvm(evmPercent);
+            catch
             end
         end
 

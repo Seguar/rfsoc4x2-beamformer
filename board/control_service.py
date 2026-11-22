@@ -45,7 +45,10 @@ def parse_commands(line):
               'again': 4, 'dgain': 4,             # QMC gain, hundredths (0..199 = 0..1.99)
               'aiqphase': 4, 'diqphase': 4,       # QMC I/Q phase correction, hundredths of a degree
               'adsa': 4,                          # ADC step attenuator, dB
-              'dvop': 4}                          # DAC output current, microamperes
+              'dvop': 4,                          # DAC output current, microamperes
+              # display only (board OLED): the app's EVM in hundredths of a percent,
+              # -1 = none; no converter is touched and the settings revision is kept
+              'evm': 1}
     result = []
     for part in parts:
         tokens = part.split()
@@ -82,6 +85,8 @@ def parse_commands(line):
             raise ControlError('OutOfRange', 'adsa requires 0..27 dB')
         if name == 'dvop' and any(x and not 2250 <= x <= 40500 for x in values):
             raise ControlError('OutOfRange', 'dvop requires 2250..40500 uA (0 for an unused index)')
+        if name == 'evm' and not -1 <= values[0] <= 100000:
+            raise ControlError('OutOfRange', 'evm requires -1 (none) or 0..100000 hundredths of a percent')
         if name == 'dataChan' and not (0 < values[0] <= 1048576 and values[0] % 8 == 0):
             raise ControlError('OutOfRange', 'dataChan requires 8..1048576 lane words in multiples of eight')
         result.append((name, values))

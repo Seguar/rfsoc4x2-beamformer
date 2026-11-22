@@ -113,6 +113,19 @@ class BoardCommandTests(unittest.TestCase):
         self.assertEqual(self.overlay.calls, [])
         self.assertEqual(len(self.lock_checks), 4)
 
+    def test_evm_is_display_only(self):
+        result = self.adapter.apply('evm 388')
+        self.assertEqual((result['revision'], self.adapter.evm_percent), (0, 3.88))
+        self.assertEqual(self.overlay.calls, [])        # no converter or wrapper call
+        self.adapter.apply('evm -1')
+        self.assertIsNone(self.adapter.evm_percent)
+        # in a batch with a real change only that change counts
+        self.assertEqual(self.adapter.apply('evm 500#da 1')['revision'], 1)
+        for line in ['evm -2', 'evm 100001', 'evm 1/2', 'evm']:
+            with self.subTest(command=line), self.assertRaises(ValueError):
+                self.adapter.apply(line)
+        self.assertIsNone(self.adapter.fault)
+
     def test_fixed_frame_size_noop(self):
         result = self.adapter.apply('dataChan 262144#status')
         self.assertEqual(result['data_words'], 262144)

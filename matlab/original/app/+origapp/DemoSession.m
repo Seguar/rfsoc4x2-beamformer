@@ -311,6 +311,7 @@ classdef DemoSession < handle
                 elseif obj.ZeroCal.state=="done",obj.Last.scope=string(obj.Config.arrayLabel)+", 0° SET ON THE COMMON FEED";end
                 obj.Status="acquiring";
                 if ~isempty(render),render(obj.snapshot());end
+                obj.Controller.showEvm(r.evmPercent);   % board OLED (rate-limited, never an error)
                 if any(string(obj.Config.analyzer)==["vsa","both"])
                     weights=[];if ~isempty(out),weights=out.weights;end
                     info=struct('kind',kind,'sequence',frame.sequence,'channel',obj.Config.ch,'weights',weights);

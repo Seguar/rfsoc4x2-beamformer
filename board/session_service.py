@@ -20,7 +20,9 @@ The session connection is the owner. When it closes, is lost (TCP keepalive,
 about 8 s) or the service is stopped, the helper's stdin is closed: the helper
 then zeroes both DAC RAMs and commands both outputs off, as with the launcher.
 bootpy.service is stopped for the session and started again afterwards only if
-it was running. /boot is never written. A UDP datagram b'rfsoc4x2-beamformer?'
+it was running. The board's OLED shows the service state (idle with the board
+address, starting, waiting for the app, live with the app's EVM, ended); see
+oled_status.py. /boot is never written. A UDP datagram b'rfsoc4x2-beamformer?'
 on the same port is answered with the identify reply (address discovery).
 """
 import argparse
@@ -39,6 +41,9 @@ import sys
 import threading
 import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # installed next to this file
+import oled_status  # noqa: E402
 
 SERVICE = 'rfsoc4x2-beamformer'
 PROTOCOL = 1
@@ -87,6 +92,22 @@ def local_networks():
             except ValueError:
                 pass
     return nets
+
+
+def board_addresses():
+    """IPv4 addresses of the board (not loopback), for the OLED."""
+    try:
+        out = subprocess.run(['ip', '-4', '-o', 'addr'], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found = []
+    for row in out.splitlines():
+        parts = row.split()
+        if 'inet' in parts:
+            address = parts[parts.index('inet') + 1].split('/')[0]
+            if not address.startswith('127.') and address not in found:
+                found.append(address)
+    return found
 
 
 def peer_allowed(peer, attached, extra=()):
@@ -184,7 +205,8 @@ def keepalive(conn):
 
 
 class Service:
-    def __init__(self, a, *, preflight_fn=preflight, networks_fn=local_networks, systemctl=None):
+    def __init__(self, a, *, preflight_fn=preflight, networks_fn=local_networks, systemctl=None,
+                 oled=None, addresses_fn=board_addresses):
         self.a = a
         self.root = Path(a.root)
         self.state = Path(a.state)
@@ -196,6 +218,9 @@ class Service:
         self.stopping = threading.Event()
         self.tcp = self.udp = None
         self.port = a.port
+        self.oled = oled if oled is not None else oled_status.Oled(enabled=not getattr(a, 'no_oled', False))
+        self.addresses_fn = addresses_fn
+        self.view = dict(mode='idle')
 
     # -- identity -----------------------------------------------------------
     def identity(self):
@@ -220,7 +245,37 @@ class Service:
         threading.Thread(target=self.discovery, daemon=True).start()
         self.acceptor = threading.Thread(target=self.accept_loop, daemon=True)
         self.acceptor.start()
+        threading.Thread(target=self.display_loop, daemon=True).start()
         return self
+
+    # -- OLED ---------------------------------------------------------------
+    def display_text(self, now, tick):
+        """(top, bottom) for the current view; the mode is set by the session."""
+        v = self.view
+        mode = v['mode']
+        if mode == 'ended' and now > v['until']:
+            self.view = v = dict(mode='idle')
+            mode = 'idle'
+        if mode == 'starting':
+            return oled_status.starting_text(v['rf_mhz'], now - v['t0'])
+        if mode == 'ready':
+            status = oled_status.read_status(v['status'])
+            if status:
+                return oled_status.live_text(status, v['rf_mhz'], v['dacs'], now)
+            return oled_status.waiting_text(v['rf_mhz'], v['dacs'])
+        if mode == 'ended':
+            return oled_status.ended_text(v['summary'])
+        return oled_status.idle_text(self.addresses_fn(), tick // 4)
+
+    def display_loop(self):
+        tick = 0
+        while not self.stopping.is_set():
+            try:
+                self.oled.show(*self.display_text(time.time(), tick))
+            except Exception as exc:  # the display never stops the service
+                print('OLED text failed: %s: %s' % (type(exc).__name__, exc), flush=True)
+            tick += 1
+            self.stopping.wait(1)
 
     def discovery(self):
         while not self.stopping.is_set():
@@ -258,6 +313,7 @@ class Service:
                     s.close()
                 except OSError:
                     pass
+        self.oled.close('RFSoC4x2 BF', 'service stopped')
 
     # -- one client ---------------------------------------------------------
     def client(self, conn, peer):
@@ -292,9 +348,11 @@ class Service:
         try:
             self._session(conn, request)
         except Refused as exc:
+            self.view = dict(mode='ended', summary=dict(error=exc.code), until=time.time() + 20)
             send(conn, dict(state='error', code=exc.code, message=str(exc)))
         except Exception as exc:  # report, never leave the client waiting
             print('session failed: %s: %s' % (type(exc).__name__, exc), flush=True)
+            self.view = dict(mode='ended', summary=dict(error=type(exc).__name__), until=time.time() + 20)
             send(conn, dict(state='error', code='service_error', message='%s: %s' % (type(exc).__name__, exc)))
         finally:
             self.session.release()
@@ -316,6 +374,7 @@ class Service:
         dac_peak = request.get('dac_peak', getattr(a, 'dac_peak', DEFAULT_DAC_PEAK))
         if not isinstance(dac_peak, int) or isinstance(dac_peak, bool) or not 100 <= dac_peak <= DAC_PEAK_MAX:
             raise Refused('bad_request', 'dac_peak must be an integer 100..%d.' % DAC_PEAK_MAX)
+        self.view = dict(mode='starting', rf_mhz=rf_mhz, t0=time.time())
         send(conn, dict(state='starting', step='checking the board', elapsed=0))
         boot_was_running = check_preflight(self.preflight_fn([a.stream_port, a.control_port]))
         keepalive(conn)
@@ -368,6 +427,7 @@ class Service:
             reader.start()
             reason = self.wait_ready(conn, helper, ready, t0)
             if reason is None:
+                self.view = dict(mode='ready', rf_mhz=rf_mhz, dacs=dacs, status=run / 'status.json')
                 send(conn, dict(state='ready', host=local, stream_port=a.stream_port, control_port=a.control_port,
                                 max_seconds=int(seconds), start_seconds=round(time.monotonic() - t0, 1),
                                 **rf_state))
@@ -393,6 +453,7 @@ class Service:
             except OSError:
                 pass
             print('session ended: ' + json.dumps(summary), flush=True)
+            self.view = dict(mode='ended', summary=dict(summary), until=time.time() + 20)
         if summary['reason'] == 'helper_failed':
             tail = ''
             try:
@@ -493,6 +554,7 @@ def parser():
                    help='DAC_A mixer phase at start with --dacs AB (degrees)')
     p.add_argument('--dac-peak', type=int, default=DEFAULT_DAC_PEAK,
                    help='DAC waveform peak code of every session (100..%d); a client may request another' % DAC_PEAK_MAX)
+    p.add_argument('--no-oled', action='store_true', help='leave the board OLED alone')
     p.add_argument('--allow-cidr', action='append', default=[], help='extra client network, e.g. 198.51.100.0/24')
     p.add_argument('--board-name', default='', help=argparse.SUPPRESS)
     return p

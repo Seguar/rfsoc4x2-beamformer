@@ -668,6 +668,20 @@ def full_capture(overlay, previous_sha):
     return raw, refreshed, writable, sha
 
 
+def write_live_status(path, overlay, controls, frames, wire):
+    """status.json for the session service's OLED (never fails the capture)."""
+    try:
+        from oled_status import write_status
+        peak = int(np.max(np.abs(wire.astype(np.int32))))
+        write_status(path, dict(
+            frames=frames, rf_mhz=float(overlay.centre_freq),
+            adc_peak_dbfs=round(20*np.log10(max(peak, 1)/32768), 1),
+            streaming=bool(controls.streaming) if controls is not None else True,
+            evm_percent=controls.evm_percent if controls is not None else None))
+    except Exception as exc:
+        print('status.json not written: %s: %s' % (type(exc).__name__, exc), flush=True)
+
+
 def wait_request(client, timeout, deadline, pads, controls=None):
     """Wait for one frame request b'N'; check owner and deadline every 0.25 s.
     b'W' asks for one PAD2 link warm-up filler (not ADC data; at most PAD_LIMIT)."""
@@ -917,6 +931,7 @@ def main():
                                  # connector names per the RFSoC 4x2 manual rev A5 / PYNQ base design
                                  'channel_connectors': ['ADC_D', 'ADC_C', 'ADC_B', 'ADC_A'],
                                  'dac_connectors': {'0': 'DAC_B', '2': 'DAC_A'},
+                                 'display_controls': ['evm'] if a.control_port else [],
                                  'path_controls': ['phasec', 'dphasec', 'again', 'dgain', 'aiqphase', 'diqphase',
                                                    'adsa', 'dvop'] if a.control_port else [],
                                  'lane_convention': 'board lanes I,Q per stream; host builds I - 1j*Q (tcpDataRec)',
@@ -952,6 +967,7 @@ def main():
             client.settimeout(30)
             client.sendall(b'R4X2IQ2\n'+struct.pack('<I', len(header))+header)
         loaded = None
+        status_written = 0.0
         previous_sha = None
         pads = [0]
         bound_stop = False
@@ -1043,6 +1059,9 @@ def main():
                                  stream_rms=sel.get('rms_sub4'))
                 if len(manifest['frames']) < 2000:
                     manifest['frames'].append(entry)
+                if time.monotonic() - status_written >= 1:
+                    status_written = time.monotonic()
+                    write_live_status(output.parent / 'status.json', overlay, controls, sequence + 1, wire)
                 if not a.continuous and (sequence == 0 or kind == 'blank' or a.save_all_captures):
                     np.save(output.parent/f'raw_{sequence:02d}_{kind}.npy', raw)
                 sequence += 1

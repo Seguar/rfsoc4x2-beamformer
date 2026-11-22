@@ -58,6 +58,18 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, code)
 
 
+class RecordingOled:
+    def __init__(self):
+        self.shown = []
+        self.closed = None
+
+    def show(self, top, bottom=''):
+        self.shown.append((top, bottom))
+
+    def close(self, top=None, bottom='', wait=3):
+        self.closed = (top, bottom)
+
+
 class SessionTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -68,8 +80,10 @@ class SessionTests(unittest.TestCase):
                                      '--start-timeout', '10'])
         def systemctl(*args):
             self.calls.append(args)
+        self.oled = RecordingOled()
         self.service = svc.Service(a, preflight_fn=lambda ports: self.pre, networks_fn=lambda: [],
-                                   systemctl=systemctl).start()
+                                   systemctl=systemctl, oled=self.oled,
+                                   addresses_fn=lambda: ['192.0.2.10', '198.51.100.7']).start()
         os.environ.pop('FAKE_HELPER_MODE', None)
 
     def tearDown(self):
@@ -256,6 +270,62 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(self.until(f, 'ended')['reason'], 'service_stopped')
         self.assertTrue(self.manifest()['dac_off_commanded'])
         c.close()
+
+
+    def test_oled_follows_the_session(self):
+        now = time.time()
+        self.assertEqual(self.service.display_text(now, 0), ('RFSoC4x2 BF idle', '192.0.2.10'))
+        self.assertEqual(self.service.display_text(now, 4), ('RFSoC4x2 BF idle', '198.51.100.7'))
+        os.environ['FAKE_HELPER_DELAY'] = '1.5'
+        try:
+            c, f = self.start(max_seconds=60)
+            self.until(f, 'starting')
+            deadline = time.monotonic() + 5
+            while self.service.view['mode'] != 'starting' and time.monotonic() < deadline:
+                time.sleep(.05)
+            self.assertEqual(self.service.display_text(time.time(), 0)[0], 'Starting 5200MHz')
+            self.until(f, 'ready')
+        finally:
+            os.environ.pop('FAKE_HELPER_DELAY')
+        self.assertEqual(self.service.display_text(time.time(), 0), ('Ready 5200MHz AB', 'waiting for app'))
+        c.sendall(b'{"op":"stop"}\n')
+        self.until(f, 'ended')
+        self.assertEqual(self.service.display_text(time.time(), 0), ('Session ended', 'DACs off 7fr'))
+        # back to idle after the ended screen times out
+        self.assertEqual(self.service.display_text(time.time() + 30, 0)[0], 'RFSoC4x2 BF idle')
+        c.close()
+
+    def test_oled_shows_the_app_evm(self):
+        os.environ['FAKE_HELPER_STATUS'] = '1'
+        try:
+            c, f = self.start(max_seconds=60)
+            self.until(f, 'ready')
+            deadline = time.monotonic() + 5
+            while self.service.display_text(time.time(), 0)[0].startswith('Ready') and time.monotonic() < deadline:
+                time.sleep(.05)
+        finally:
+            os.environ.pop('FAKE_HELPER_STATUS')
+        self.assertEqual(self.service.display_text(time.time(), 0), ('EVM 3.88%   LIVE', '5200MHz -19dB AB'))
+        # frames stop arriving: the screen says so instead of an old EVM
+        self.assertEqual(self.service.display_text(time.time() + 10, 0)[0], 'no frames')
+        c.sendall(b'{"op":"stop"}\n')
+        self.until(f, 'ended')
+        c.close()
+
+    def test_oled_shows_a_refusal(self):
+        self.pre = good(busy=['18 1 S python3 -m ipykernel_launcher'])
+        c, f = self.start()
+        self.until(f, 'error')
+        self.assertEqual(self.service.display_text(time.time(), 0), ('Board error', 'board_busy'))
+        c.close()
+
+    def test_display_loop_writes_and_close_leaves_a_last_text(self):
+        deadline = time.monotonic() + 5
+        while not self.oled.shown and time.monotonic() < deadline:
+            time.sleep(.05)
+        self.assertEqual(self.oled.shown[0], ('RFSoC4x2 BF idle', '192.0.2.10'))
+        self.service.close(wait=5)
+        self.assertEqual(self.oled.closed, ('RFSoC4x2 BF', 'service stopped'))
 
 
 if __name__ == '__main__':

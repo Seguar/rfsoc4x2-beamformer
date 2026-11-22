@@ -18,6 +18,11 @@ zones = {3000: (2, 1), 5200: (1, 2)}[rf]
 print('RF profile ' + json.dumps(dict(rf_mhz=rf, adc_nyquist_zone=zones[0],
                                       dac_nyquist_zone=int(os.environ.get('FAKE_DAC_ZONE', zones[1])))), flush=True)
 print('Waiting for legacy client on port %s; DACs disabled' % args[args.index('--stream-port') + 1], flush=True)
+if os.environ.get('FAKE_HELPER_STATUS'):
+    # like the real helper once frames flow: live status for the OLED
+    with open(os.path.join(os.path.dirname(out), 'status.json'), 'w') as f:
+        json.dump(dict(time=time.time(), frames=12, rf_mhz=float(rf), adc_peak_dbfs=-19.4, streaming=True,
+                       evm_percent=3.88), f)
 while os.read(0, 4096):
     pass
 with open(out, 'w') as f:

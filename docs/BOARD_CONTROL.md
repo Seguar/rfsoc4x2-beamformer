@@ -31,6 +31,7 @@ and selected-DAC mask match the launcher's initial 3 GHz setup.
 | `dgain g0/x/g2/x` | DAC QMC gain, hundredths; index 0 = DAC_B, 2 = DAC_A |
 | `diqphase p0/x/p2/x` | DAC QMC I/Q phase correction, hundredths of a degree |
 | `dvop c0/x/c2/x` | DAC output current, µA (2250..40500) |
+| `evm e` | Display only: the app's EVM for the board OLED, hundredths of a percent (0..100000, −1 = none). No converter is touched and the settings revision is kept. Listed in the header as `display_controls` |
 
 The path settings (`again` … `dvop`) are kept by the board helper and written
 again after `fc`, `phase` and `dphase`, because the board wrapper rewrites QMC

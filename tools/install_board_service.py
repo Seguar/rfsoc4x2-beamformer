@@ -35,7 +35,8 @@ STATE = '/var/lib/' + NAME
 UNIT = '/etc/systemd/system/' + NAME + '.service'
 PORT = 4013
 FILES = [ROOT/'board/session_service.py', ROOT/'board/legacy_capture.py', ROOT/'board/control_service.py',
-         ROOT/'board/board_commands.py', ROOT/'board/mts_sync.py', ROOT/'tools/legacy_reference.py']
+         ROOT/'board/board_commands.py', ROOT/'board/mts_sync.py', ROOT/'board/oled_status.py',
+         ROOT/'tools/legacy_reference.py']
 BOARD_PYTHON = '/usr/local/share/pynq-venv/bin/python3'
 
 
@@ -67,7 +68,7 @@ def install_script(stage, python, hashes):
 {checks}
 systemctl stop {NAME}.service 2>/dev/null || true
 install -d -o root -g root -m 755 {DEST} {STATE}
-for f in session_service.py legacy_capture.py control_service.py board_commands.py mts_sync.py legacy_reference.py; do
+for f in session_service.py legacy_capture.py control_service.py board_commands.py mts_sync.py oled_status.py legacy_reference.py; do
   install -o root -g root -m 644 {stage}/$f {DEST}/$f
 done
 cd {DEST}
