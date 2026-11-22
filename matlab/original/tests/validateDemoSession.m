@@ -16,6 +16,16 @@ c.ofdm=struct('setupSha256',origapp.LegacyVsaBackend.sha256(c.vsaSetupFile), ...
 figures0=numel(findall(groot,'Type','figure'));timers0=numel(timerfindall);
 assert(isequal(origapp.DemoSession.mixerPhaseCode([-180 180 179.999 -90 90 540 12.345]), ...
     [17999 17999 17999 -9000 9000 17999 1235]),'Mixer phase codes must stay inside (-180, 180).');
+% The kept steering object gives exactly what a new phased.SteeringVector gives.
+ula=phased.ULA('NumElements',4,'ElementSpacing',0.0288);
+for ang=[-37.5 0 12.25 60]
+    ref=phased.SteeringVector('SensorArray',ula);
+    assert(isequal(origapp.steeringVector(ula,5.2e9,ang),ref(5.2e9,ang)),'Cached steering vector differs at %g deg.',ang);
+end
+ref=phased.SteeringVector('SensorArray',ula);grid=-90:.25:90;
+assert(isequal(origapp.steeringVector(ula,3e9,grid),ref(3e9,grid)),'Cached manifold differs.');
+ula2=phased.ULA('NumElements',4,'ElementSpacing',0.05);ref=phased.SteeringVector('SensorArray',ula2);
+assert(isequal(origapp.steeringVector(ula2,5.2e9,10),ref(5.2e9,10)),'Another geometry reused the first object.');
 s=origapp.DemoSession(c);s.start();
 enqueue(0,0,true);s.step();a=s.snapshot();
 assert(a.valid,'First frame refused: %s',string(a.reason));

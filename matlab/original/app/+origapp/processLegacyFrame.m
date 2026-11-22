@@ -113,8 +113,8 @@ assert(p.ang_num <= npc, 'origapp:Priority', ...
     'Signal priority %d requested but only %d direction(s) found.', p.ang_num, npc);
 powbp = zeros(1, npc);
 for i = 1:npc
-    [rawDataAdjM, ~] = steerBf(rawData, estimated_angle(i), p.ula, p.fc);
-    rawSumM = sum(rawDataAdjM, 2);
+    % as steerBf (conj(sv).' per column), with the steering object kept between frames
+    rawSumM = sum(rawData .* origapp.steeringVector(p.ula, p.fc, estimated_angle(i))', 2);
     powbp(i,:) = bandpower(rawSumM, p.fsRfsoc, [-p.bw/2 p.bw/2]);
 end
 [~, idx] = sort(powbp, 'ascend');
@@ -196,7 +196,7 @@ function weights = originalWeights(rawData, estimated_angle, npc, p)
 ula = p.ula;
 switch char(p.bf)
     case 'Steering'
-        [~, weights] = steerBf(rawData, estimated_angle(1), ula, p.fc);
+        weights = origapp.steeringVector(ula, p.fc, estimated_angle(1))';   % as steerBf
     case 'MVDR'
         [~, weights] = mvdrBf(rawData, estimated_angle(1), p.diag, ula, p.fc, p.c);
         weights = conj(weights);
@@ -248,8 +248,7 @@ rc.fcHz = p.fc;
 % Use the app's own phased.ULA geometry as the manifold, so the reviewed core
 % steers in the same angle convention as the original DOA estimators.
 grid = -90:0.25:90;
-sv = phased.SteeringVector('SensorArray', p.ula);
-rc.manifold = sv(p.fc, grid);
+rc.manifold = origapp.steeringVector(p.ula, p.fc, grid);
 rc.manifoldAnglesDeg = grid;
 if rc.algorithm == "LCMV"
     assert(numel(estimated_angle) >= 2, 'origapp:Constraints', 'LCMV needs a second direction.');
