@@ -10,6 +10,10 @@ function [estimator, kind] = makeEstimator(doa, ula, scan_axis, num, fc, calibra
 %  * 'MVDRman_corr' takes the steering correction from cfg.calibration
 %    instead of importdata("steering_correction.mat") in the current folder.
 %  * Unknown names are an error instead of falling back to MVDR.
+%  * Every estimator takes the Source count (num). The toolbox default for
+%    MUSIC, root-MUSIC, (beamspace) ESPRIT and root-WSF is to guess the count
+%    (NumSignalsSource 'Auto'); live, beamspace ESPRIT then reported two angles
+%    for one transmitter (2026-11-22).
 switch char(doa)
     case 'MVDR'
         estimator = phased.MVDREstimator('SensorArray',ula, ...
@@ -30,10 +34,11 @@ switch char(doa)
     case 'MUSIC'
         estimator = phased.MUSICEstimator('SensorArray',ula, ...
             'OperatingFrequency',fc,'ScanAngles',scan_axis, ...
-            'DOAOutputPort',true);
+            'DOAOutputPort',true,'NumSignalsSource','Property','NumSignals',num);
         kind = "spectrum";
     case 'MUSICR'
-        estimator = phased.RootMUSICEstimator('SensorArray',ula,'OperatingFrequency',fc);
+        estimator = phased.RootMUSICEstimator('SensorArray',ula,'OperatingFrequency',fc, ...
+            'NumSignalsSource','Property','NumSignals',num);
         kind = "angles";
     case 'Beamscan'
         estimator = phased.BeamscanEstimator('SensorArray',ula, ...
@@ -41,13 +46,16 @@ switch char(doa)
             'DOAOutputPort',true,'NumSignals',num);
         kind = "spectrum";
     case 'ESPRITE'
-        estimator = phased.ESPRITEstimator('SensorArray',ula,'OperatingFrequency',fc);
+        estimator = phased.ESPRITEstimator('SensorArray',ula,'OperatingFrequency',fc, ...
+            'NumSignalsSource','Property','NumSignals',num);
         kind = "angles";
     case 'ESPRITEBS'
-        estimator = phased.BeamspaceESPRITEstimator('SensorArray',ula,'OperatingFrequency',fc);
+        estimator = phased.BeamspaceESPRITEstimator('SensorArray',ula,'OperatingFrequency',fc, ...
+            'NumSignalsSource','Property','NumSignals',num);
         kind = "angles";
     case 'WSFR'
-        estimator = phased.RootWSFEstimator('SensorArray',ula,'OperatingFrequency',fc);
+        estimator = phased.RootWSFEstimator('SensorArray',ula,'OperatingFrequency',fc, ...
+            'NumSignalsSource','Property','NumSignals',num);
         kind = "angles";
     otherwise
         error('origapp:DoaMethod', 'Unknown DOA method "%s".', doa);

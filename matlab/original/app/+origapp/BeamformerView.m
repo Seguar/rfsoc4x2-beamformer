@@ -640,7 +640,7 @@ classdef BeamformerView < handle
         end
         function buildControls(obj,parent)
             th=obj.Theme;
-            g=uigridlayout(parent,[5 1],'RowHeight',{34,0,176,30,'1x'},'Padding',[10 10 10 8],'RowSpacing',8, ...
+            g=uigridlayout(parent,[5 1],'RowHeight',{34,176,30,'1x',0},'Padding',[10 10 10 8],'RowSpacing',8, ...
                 'BackgroundColor',th.panel);obj.Controls.SideGrid=g;
             buttons=uigridlayout(g,[1 2],'ColumnWidth',{'1x','1x'},'Padding',[0 0 0 0], ...
                 'BackgroundColor',th.panel);
@@ -654,12 +654,15 @@ classdef BeamformerView < handle
             if ~obj.has('pause'),obj.Controls.Pause.Enable='off';end
             obj.Controls.Error=uilabel(g,'Text','','FontColor',th.warn,'BackgroundColor',th.warnBg,'WordWrap','on', ...
                 'FontSize',11,'Visible','off');
+            % Bottom row: a refusal must not move the selectors (scripts and
+            % users click them by position); the page area shrinks instead.
+            obj.Controls.Error.Layout.Row=5;
             % Always visible, whatever page is open (as in the original GUI):
             % what is shown, which source, and the two algorithm selectors.
             q=uigridlayout(g,[6 2],'ColumnWidth',{104,'1x'},'RowHeight',{26,26,26,26,26,26},'Padding',[0 0 0 0], ...
-                'RowSpacing',4,'ColumnSpacing',6,'BackgroundColor',th.panel);q.Layout.Row=3;obj.Controls.QuickGrid=q;
+                'RowSpacing',4,'ColumnSpacing',6,'BackgroundColor',th.panel);q.Layout.Row=2;obj.Controls.QuickGrid=q;
             seg=uigridlayout(g,[2 4],'RowHeight',{'1x',2},'ColumnWidth',{'1x','1x','1.35x','1.15x'},'RowSpacing',0, ...
-                'ColumnSpacing',2,'Padding',[0 0 0 0],'BackgroundColor',th.panel);seg.Layout.Row=4;
+                'ColumnSpacing',2,'Padding',[0 0 0 0],'BackgroundColor',th.panel);seg.Layout.Row=3;
             names={'DSP','RF','Algorithms','Monitor'};
             for k=1:4
                 obj.Controls.PageButton(k)=uibutton(seg,'state','Text',names{k},'FontSize',11, ...
@@ -670,7 +673,7 @@ classdef BeamformerView < handle
             end
             for k=1:4
                 obj.Controls.PagePanel(k)=uigridlayout(g,[1 1],'Padding',[0 0 0 0],'BackgroundColor',th.panel,'Visible','off');
-                obj.Controls.PagePanel(k).Layout.Row=5;obj.Controls.PagePanel(k).Layout.Column=1;
+                obj.Controls.PagePanel(k).Layout.Row=4;obj.Controls.PagePanel(k).Layout.Column=1;
             end
             dsp=obj.Controls.PagePanel(1);rf=obj.Controls.PagePanel(2);
             advanced=obj.Controls.PagePanel(3);mon=obj.Controls.PagePanel(4);
@@ -1064,14 +1067,14 @@ classdef BeamformerView < handle
         function showError(obj,text)
             text=char(string(text));
             obj.Controls.Error.Text=text;obj.Controls.Error.Visible='on';
-            obj.Controls.SideGrid.RowHeight{2}=44;
+            obj.Controls.SideGrid.RowHeight{5}=44;
             obj.StatusLabel.Text=['control refused · ' text];
             obj.StatusLabel.FontColor=obj.Theme.warn;
             obj.logEvent("REFUSED · "+string(text));
         end
         function noError(obj)
             obj.Controls.Error.Text='';obj.Controls.Error.Visible='off';
-            obj.Controls.SideGrid.RowHeight{2}=0;
+            obj.Controls.SideGrid.RowHeight{5}=0;
         end
         function showAnalysis(obj,r,seq)
             th=obj.Theme;

@@ -135,8 +135,11 @@ assert(any(contains(v.EventLog,'STALE synthetic fixture')));
 % Callback changes map to supported session fields and refusals revert values.
 h=v.Controls.bf;old=h.Value;h.Value='MVDR';h.ValueChangedFcn(h,struct());
 assert(strcmp(calls{end}.name,'configure') && strcmp(calls{end}.value.bf,'MVDR'));
+drawnow;where=getpixelposition(v.Controls.doa,true);
 reject=true;h.Value='DMR';h.ValueChangedFcn(h,struct());
 assert(strcmp(h.Value,'MVDR') && contains(v.Controls.Error.Text,'deliberate'));
+drawnow;assert(isequal(getpixelposition(v.Controls.doa,true),where), ...
+    'A refusal moved the selectors (scripts and users click them by position).');
 reject=false;
 h=v.Controls.CompareVsa;h.Value=true;h.ValueChangedFcn(h,struct());
 assert(string(calls{end}.value.analyzer)=='both');
