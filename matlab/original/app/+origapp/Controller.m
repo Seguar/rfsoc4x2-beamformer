@@ -14,6 +14,7 @@ classdef Controller < handle
         BoundaryFrames = 0         % intact frames with invalid sample continuity
         ExpiredFrames = 0          % frames too old after processing
         NoSignalFrames = 0          % intact frames rejected for missing wanted signal (not errors)
+        ModeRefusals = 0            % frames a selected beamformer/estimator refused (not errors)
         SettingsDiscards = 0        % frames captured before an acknowledged settings change (deliberate)
         TotalErrors = 0
         FramesAccepted = 0
@@ -303,6 +304,15 @@ classdef Controller < handle
                 % stream (blank DAC phase, lost cable) is not a transport
                 % failure: the display is cleared and acquisition continues.
                 obj.NoSignalFrames = obj.NoSignalFrames + 1;
+                mustStop = false;
+                return
+            end
+            if any(string(err.identifier) == ["origapp:Constraints", "origapp:Pending"])
+                % The selected beamformer/estimator refuses this scene (LCMV with a
+                % single source) or is not implemented (PC_corr). The frame is
+                % rejected with that reason on screen; the session must survive a
+                % mode choice, so this never counts toward stopping acquisition.
+                obj.ModeRefusals = obj.ModeRefusals + 1;
                 mustStop = false;
                 return
             end

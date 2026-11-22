@@ -36,6 +36,17 @@ s.configure(struct('bf','DL MVDR','diag',1e-6,'analyzer','integrated'));
 enqueue(6,0,true);same=q{1};s.step();a=s.snapshot();assert(a.valid);w1=a.weights;
 s.configure(struct('diag',1e6));same.sequence=7;q={same};s.step();a=s.snapshot();assert(a.valid);
 assert(norm(w1-a.weights)>1e-5,'Loading control did not reach the reviewed DSP engine.');
+% A beamformer that refuses the scene (LCMV needs a second source) rejects each
+% frame with its reason but never stops acquisition.
+s.configure(struct('bf','LCMV'));
+for k=1:c.maxConsecutiveErrors+2
+    enqueue(100+k,0,true);s.step();a=s.snapshot();
+    assert(~a.valid && s.Controller.IsOpen,'LCMV stopped acquisition: %s',string(a.reason));
+end
+assert(contains(string(a.reason),"LCMV"),'LCMV refusal not shown: %s',string(a.reason));
+assert(s.Controller.ModeRefusals==c.maxConsecutiveErrors+2 && s.Controller.ConsecutiveErrors==0);
+s.configure(struct('bf','Steering'));enqueue(200,0,true);s.step();a=s.snapshot();
+assert(a.valid,'Steering after refusals: %s',string(a.reason));
 s.close();delete(s);assert(closed==1);
 % Full clean frontend uses one figure and one timer, no hidden legacy app.
 closed=0;c.analyzer="integrated";c.allowBoardCommands=true;
