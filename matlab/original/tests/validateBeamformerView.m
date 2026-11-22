@@ -141,6 +141,25 @@ assert(strcmp(h.Value,'MVDR') && contains(v.Controls.Error.Text,'deliberate'));
 drawnow;assert(isequal(getpixelposition(v.Controls.doa,true),where), ...
     'A refusal moved the selectors (scripts and users click them by position).');
 reject=false;
+% Field limits are the accepted ranges (origapp.processingLimits, measured RF limits).
+C=v.Controls;
+lims=struct('num',C.num.Limits,'adc',C.adcMHz.Limits,'dac',C.dacMHz.Limits,'phase',C.phase1.Limits, ...
+    'bw',C.bwMHz.Limits,'res',C.scan_res.Limits,'scanbw',C.scan_bw.Value);
+assert(isequal(lims.num,[1 3]) && isequal(lims.adc,[0 6000]) && isequal(lims.dac,[-6000 6000]) ...
+    && isequal(lims.phase,[-179.99 179.99]) && lims.bw(2)==125 && lims.res(2)==lims.scanbw, ...
+    'Field limits do not match the accepted ranges: %s',jsonencode(lims));
+h=v.Controls.bf;h.Value='DL ITER MVDR';h.ValueChangedFcn(h,struct());
+assert(isequal(C.alpha.Limits,[0 2]) && string(C.alpha.LowerLimitInclusive)=="off" && string(C.alpha.UpperLimitInclusive)=="off", ...
+    'Iterative MVDR uncertainty limits not applied.');
+h.Value='MVDR';h.ValueChangedFcn(h,struct());
+assert(isinf(C.alpha.Limits(2)),'Uncertainty limits not released for MVDR.');
+h=C.scan_bw;h.Value=60;h.ValueChangedFcn(h,struct());
+assert(C.scan_res.Limits(2)==60,'Scan step limit does not follow the scan width.');
+h=C.avg_factor;h.Value=1000;h.ValueChangedFcn(h,struct());
+assert(C.scan_res.Limits(1)>1e-4,'Scan step lower limit does not follow averaging.');
+avg0=C.avg_factor.Value;
+h=C.avg_factor;h.Value=10;h.ValueChangedFcn(h,struct());h=C.scan_bw;h.Value=120;h.ValueChangedFcn(h,struct());
+assert(avg0==1000 && C.scan_res.Limits(2)==120);
 h=v.Controls.CompareVsa;h.Value=true;h.ValueChangedFcn(h,struct());
 assert(string(calls{end}.value.analyzer)=='both');
 h=v.Controls.Pause;h.Value=true;h.ValueChangedFcn(h,struct());

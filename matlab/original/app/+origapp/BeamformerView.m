@@ -446,7 +446,7 @@ classdef BeamformerView < handle
             % from the primary one MATLAB sizes a uipanel in primary-scale pixels
             % (too small or too large for its cell); a grid always fills its cell.
             side=uigridlayout(main,[1 1],'Padding',[0 0 0 0],'BackgroundColor',th.panel);side.Layout.Column=1;obj.Sidebar=side;
-            obj.buildControls(side);
+            obj.buildControls(side);obj.fitLimits();
             pg=uigridlayout(main,[2 3],'ColumnWidth',{'1x','1x','1x'}, ...
                 'RowHeight',{'1x','1x'},'Padding',[0 0 0 0], ...
                 'RowSpacing',9,'ColumnSpacing',9,'BackgroundColor',th.bg);
@@ -680,15 +680,18 @@ classdef BeamformerView < handle
             % --- RF ---------------------------------------------------------
             % Rows 17..20 hold the four phase fields (see phaseKind).
             r=obj.controlGrid(rf,{20,28,22,22,20,28,22,28,22,28,22,22,28,6,20,28,28,28,28,28,28,6,28,44});
+            % RF limits measured on the board (2026-11-22): the RF data converter
+            % accepts mixer frequencies -6000..6000 MHz for the ADC and each DAC
+            % (6001 refused); the ADC sign is the Mirror box. Phases: -180 refused.
             obj.heading(r,1,'ADC');
-            obj.number(r,2,'ADC center','adcMHz',obj.field(obj.Config,'fc',3e9)/1e6,[1 10000],false,'%g MHz');
+            obj.number(r,2,'ADC center','adcMHz',obj.field(obj.Config,'fc',3e9)/1e6,[0 6000],false,'%g MHz');
             obj.checkbox(r,3,'Even Nyquist zone','adcEven',obj.field(obj.Config,'nyquistZone',1)==2,false);
             obj.checkbox(r,4,'Mirror','adcMirror',obj.field(obj.Config,'adcMirror',1)<0,false);
             obj.Controls.adcMirror.Tooltip='Negative ADC mixer frequency: mirrors the received spectrum.';
             obj.heading(r,5,'DAC');
-            obj.number(r,6,'DAC B center','dacMHz',obj.field(obj.Config,'fc_d0',3e9)/1e6,[-10000 10000],false,'%g MHz');
+            obj.number(r,6,'DAC B center','dacMHz',obj.field(obj.Config,'fc_d0',3e9)/1e6,[-6000 6000],false,'%g MHz');
             obj.checkbox(r,7,'DAC B even Nyquist zone','d0Even',obj.field(obj.Config,'nyquistZone_d0',1)==2,false);
-            obj.number(r,8,'DAC A center','dac1MHz',obj.field(obj.Config,'fc_d1',3e9)/1e6,[-10000 10000],false,'%g MHz');
+            obj.number(r,8,'DAC A center','dac1MHz',obj.field(obj.Config,'fc_d1',3e9)/1e6,[-6000 6000],false,'%g MHz');
             obj.checkbox(r,9,'DAC A even Nyquist zone','d1Even',obj.field(obj.Config,'nyquistZone_d1',1)==2,false);
             for n=["adcMHz","dacMHz","dac1MHz","adcEven","adcMirror","d0Even","d1Even"]
                 obj.Controls.(n).ValueChangedFcn=@(~,~)obj.dirty();
@@ -713,7 +716,7 @@ classdef BeamformerView < handle
             obj.Controls.PhaseKind.ItemsData={'ADC','DAC'};obj.Controls.PhaseKind.Value='DAC';
             obj.Controls.PhaseKind.ValueChangedFcn=@(~,~)obj.phaseKind();
             for k=1:4
-                obj.number(r,16+k,sprintf('Channel %d',k),sprintf('phase%d',k),obj.PhaseValues.DAC(k),[-179 179],false,'%g°');
+                obj.number(r,16+k,sprintf('Channel %d',k),sprintf('phase%d',k),obj.PhaseValues.DAC(k),[-179.99 179.99],false,'%g°');
                 obj.Controls.(sprintf('phase%d',k)).ValueChangedFcn=@(~,~)obj.dirty();
                 obj.Controls.(sprintf('phase%d',k)).RoundFractionalValues='on';
             end
@@ -779,6 +782,7 @@ classdef BeamformerView < handle
             obj.number(d,3,'Scan width','scan_bw',obj.field(obj.Config,'scan_bw',120),[2 360],true,'%g°');
             obj.number(d,4,'Scan step','scan_res',obj.field(obj.Config,'scan_res',1),[1e-4 Inf],true,'%g°');
             obj.number(d,5,'Average frames','avg_factor',obj.field(obj.Config,'avg_factor',10),[1 Inf],true,'%g');
+            for n=["num","avg_factor"],obj.Controls.(n).RoundFractionalValues='on';end
             obj.number(d,6,'Signal bandwidth','bwMHz',obj.field(obj.Config,'bw',100e6)/1e6,[1 500],false,'%g MHz');
             obj.Accepted.bw=obj.Controls.bwMHz.Value;
             obj.Controls.bwMHz.ValueChangedFcn=@(h,~)obj.bandwidth(h);
@@ -797,11 +801,12 @@ classdef BeamformerView < handle
             % --- Algorithms -------------------------------------------------
             a=obj.controlGrid(advanced,{20,28,28,28,28,28,28,6,22,28,28,44});
             obj.heading(a,1,'BEAMFORMER PARAMETERS');
-            % Ranges of the original App Designer controls (VSA_rfsoc_refactor_exported);
-            % the session still refuses values an algorithm cannot use, with the reason.
+            % Limits come from origapp.processingLimits (fitLimits), the same ranges
+            % DemoSession accepts: a value that would be refused cannot be entered.
             spec={'diag','Diagonal loading',[0 Inf],'%g';'alpha','Uncertainty',[0 Inf],'%g';'gamma','Robust loading γ',[0 Inf],'%g'; ...
                 'iter','Iterations',[1 Inf],'%g';'mis_ang','Mismatch angle',[0.1 20],'%g°';'alg_scan_res','Algorithm step',[0.001 10],'%g°'};
             for k=1:size(spec,1),obj.number(a,k+1,spec{k,2},spec{k,1},obj.field(obj.Config,spec{k,1},1),spec{k,3},true,spec{k,4});end
+            obj.Controls.iter.RoundFractionalValues='on';
             obj.heading(a,9,'IQ FILTER PARAMETERS');
             obj.number(a,10,'Filter length','sizeL',obj.field(obj.Config,'sizeL',4),[1 50],true,'%g');
             obj.number(a,11,'LMS step μ','stepMU',obj.field(obj.Config,'stepMU',1e-16),[1e-31 1],true,'%g');
@@ -857,6 +862,23 @@ classdef BeamformerView < handle
             h=uilabel(g,'Text',text,'FontColor',obj.Theme.muted,'FontSize',11);
             h.Layout.Row=row;h.Layout.Column=1;
         end
+        function fitLimits(obj)
+            % Field limits from origapp.processingLimits for the current settings.
+            % A bound is only tightened while the shown value satisfies it, so a
+            % field never errors; the session refuses anything still outside.
+            L=origapp.processingLimits(obj.Config);
+            keys=["num","scan_bw","scan_res","avg_factor","bwMHz","diag","alpha","gamma","iter","mis_ang","alg_scan_res"];
+            for k=keys
+                if ~isfield(obj.Controls,k) || ~isvalid(obj.Controls.(k)),continue,end
+                h=obj.Controls.(k);lim=L.(k);op=[false false];
+                if isfield(L.open,k),op=L.open.(k);end
+                v=h.Value;
+                inside=(v>lim(1) || (~op(1) && v==lim(1))) && (v<lim(2) || (~op(2) && v==lim(2)));
+                if ~inside || lim(1)>=lim(2),continue,end
+                set(h,'LowerLimitInclusive',matlab.lang.OnOffSwitchState(~op(1)), ...
+                    'UpperLimitInclusive',matlab.lang.OnOffSwitchState(~op(2)),'Limits',lim);
+            end
+        end
         function h=number(obj,g,row,text,key,value,limits,bind,fmt)
             lh=obj.label(g,row,text);obj.Controls.([key 'Label'])=lh;
             h=uieditfield(g,'numeric','Value',value,'Limits',limits,'BackgroundColor',obj.Theme.input, ...
@@ -904,6 +926,7 @@ classdef BeamformerView < handle
                 obj.Callbacks.configure(struct(key,value));
                 obj.Accepted.(key)=h.Value;
                 obj.Config.(key)=value;
+                obj.fitLimits();
                 if strcmp(key,'scan_bw'),obj.defaultLimits('doa');obj.defaultLimits('pattern');end
                 obj.noError();
                 obj.logEvent(sprintf('%s = %s',key,obj.valueText(value)));
@@ -1006,8 +1029,8 @@ classdef BeamformerView < handle
         function spec=pathSpec(~,kind)
             % label, display format, limits, two-port DAC kind
             switch kind
-                case 'ADC',spec={'ADC mixer phase','%.2f°',[-180 180],false};
-                case 'DAC',spec={'DAC mixer phase','%.2f°',[-180 180],true};
+                case 'ADC',spec={'ADC mixer phase','%.2f°',[-179.99 179.99],false};   % ±180.00 refused by the RF data converter
+                case 'DAC',spec={'DAC mixer phase','%.2f°',[-179.99 179.99],true};
                 case 'adcGain',spec={'ADC gain (QMC)','%.2f',[0 1.99],false};
                 case 'adcIq',spec={'ADC I/Q phase (QMC)','%.2f°',[-26.49 26.49],false};
                 case 'adcAtten',spec={'ADC attenuator','%g dB',[0 27],false};
