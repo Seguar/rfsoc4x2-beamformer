@@ -108,6 +108,16 @@ assert(a.valid && numel(a.samples)==4096 && a.analysis.valid && a.analysis.metri
     'Reduced frame must hold one complete OFDM frame: %s',jsonencode(struct('n',numel(a.samples),'state',string(a.analysis.state),'reason',string(a.analysis.reason),'bursts',a.analysis.metricBursts)));
 refused=false;try,app.Session.configure(struct('analyzer','both'));catch e,refused=string(e.identifier)=='origapp:Config';end
 assert(refused,'Native VSA comparison must need the full frame.');
+% Every frame is processed and recorded; the window is redrawn at most every
+% displayPeriodSeconds (0.2 s): the EVM history stays per frame, without false gaps.
+pause(.25);acc0=app.Controller.FramesAccepted;shown0=app.View.FramesShown;
+for k=9:20,enqueue(k,0,true);app.tick();end
+assert(app.Controller.FramesAccepted-acc0==12,'Frames were not all processed.');
+assert(app.View.FramesShown-shown0<12,'Every frame was drawn: no display throttling.');
+h=app.View.HistorySequence;b=app.View.HistoryBreak;
+assert(all(ismember(9:20,h)) && ~any(b(ismember(h,10:20))),'EVM history lost frames or broke between drawn frames.');
+pause(.25);enqueue(21,0,true);app.tick();
+assert(app.View.LastSequence==21,'The newest frame was not drawn after the display period.');
 % Pinned controls stay outside the pages; DSP is the first page.
 assert(strcmp(V.PageButton(1).Text,'DSP') && isequal(V.ch.Parent,V.QuickGrid) && isequal(V.bf.Parent,V.QuickGrid) && ...
     isequal(V.doa.Parent,V.QuickGrid) && isequal(V.ang_num.Parent,V.QuickGrid) && isequal(V.rows.Parent,V.QuickGrid));

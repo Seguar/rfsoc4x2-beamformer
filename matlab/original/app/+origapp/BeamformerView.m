@@ -68,6 +68,7 @@ classdef BeamformerView < handle
         SnapshotDir = ''
         Clock = []
         FrameTimes = []
+        RecordedSequence = NaN  % last frame given to record()
         SpectrumHold = []
         Page = 1
         SeenSequence = NaN
@@ -101,6 +102,10 @@ classdef BeamformerView < handle
             obj.Clock=tic;
             obj.build();
         end
+        function record(obj,s)
+            % Per-frame data without drawing (see recordFrame).
+            obj.recordFrame(s);
+        end
         function show(obj,s)
             if ~obj.isOpen(),return,end
             if obj.Exporting,obj.Deferred=s;return,end
@@ -111,12 +116,9 @@ classdef BeamformerView < handle
             end
             th=obj.Theme;
             seq=obj.field(s,'sequence',NaN);age=obj.field(s,'age',NaN);
+            if ~(seq==obj.RecordedSequence),obj.recordFrame(s);end   % callers that draw every frame
             fresh=~(seq==obj.SeenSequence);obj.SeenSequence=seq;
-            if fresh
-                obj.FramesShown=obj.FramesShown+1;
-                obj.FrameTimes(end+1)=toc(obj.Clock);
-                if numel(obj.FrameTimes)>9,obj.FrameTimes(1)=[];end
-            end
+            if fresh,obj.FramesShown=obj.FramesShown+1;end
             if obj.Held
                 % View-only hold: the six plots stay on the held frame and
                 % say so; acquisition and counters keep running.
@@ -128,17 +130,17 @@ classdef BeamformerView < handle
                 return
             end
             scope=string(obj.field(s,'scope','Array model / UNCALIBRATED'));
-            obj.ScopeLabel.Text=char(scope);obj.ScopeLabel.Tooltip=char(scope);
+            obj.put(obj.ScopeLabel,char(scope));obj.setp(obj.ScopeLabel,'Tooltip',char(scope));
             obj.put(obj.StatusLabel,sprintf('frame %g  ·  age %.2f s',seq,age));
-            obj.StatusLabel.FontColor=th.muted;
+            obj.setp(obj.StatusLabel,'FontColor',th.muted);
             obj.pill('LIVE','ok');
-            obj.Controls.Start.Enable='off';obj.Controls.Start.Text='Running';
+            obj.setp(obj.Controls.Start,'Enable','off');obj.put(obj.Controls.Start,'Running');
             if strlength(obj.LastReason)>0
                 obj.logEvent(sprintf('live again · frame %g',seq));obj.LastReason="";
             end
             obj.LastData=s;obj.LastFs=obj.field(s,'fsHz',obj.field(obj.Config,'fsRfsoc',125e6));
             names=fieldnames(obj.Empty);
-            for k=1:numel(names),obj.Empty.(names{k}).Visible='off';end
+            for k=1:numel(names),obj.setp(obj.Empty.(names{k}),'Visible','off');end
             % --- spatial model views -------------------------------------
             scan=obj.field(s,'scan',[]);
             doa=obj.field(s,'doaSpectrum',[]);pat=obj.field(s,'patternDb',[]);
@@ -147,21 +149,21 @@ classdef BeamformerView < handle
             angles=obj.field(s,'angles',[]);angles=angles(isfinite(angles));
             obj.mark('doa',angles);obj.mark('pattern',angles);
             if isempty(angles) || isempty(doa)
-                obj.Card.doa.note.Text='estimate unavailable';
+                obj.put(obj.Card.doa.note,'estimate unavailable');
                 if isempty(doa) && (logical(obj.field(s,'directOnly',false)) || isempty(angles))
                     obj.emptyState('doa','NO DOA SPECTRUM','no array estimate in this session or frame');
                 elseif isempty(doa)
                     obj.emptyState('doa','NO DOA SPECTRUM','this estimator returns angles only');
                 end
             else
-                obj.Card.doa.note.Text=sprintf('model angle %s°',strjoin(compose('%.1f',angles(:).'),', '));
+                obj.put(obj.Card.doa.note,sprintf('model angle %s°',strjoin(compose('%.1f',angles(:).'),', ')));
             end
             if isempty(pat)
-                obj.Card.pattern.note.Text='single stream · no weights';
+                obj.put(obj.Card.pattern.note,'single stream · no weights');
                 obj.emptyState('pattern','NO PATTERN','direct single-stream session');
             else
                 [~,ix]=max(pat);
-                obj.Card.pattern.note.Text=sprintf('peak at model %.1f°',scan(ix));
+                obj.put(obj.Card.pattern.note,sprintf('peak at model %.1f°',scan(ix)));
             end
             % --- time domain and per-stream histories --------------------
             samples=obj.field(s,'samples',[]);fs=obj.field(s,'fsHz',obj.field(obj.Config,'fsRfsoc',125e6));
@@ -172,7 +174,7 @@ classdef BeamformerView < handle
                 obj.setLine('timeI',[],[]);obj.setLine('timeQ',[],[]);
             end
             ch=obj.field(s,'channels',[]);
-            if fresh,obj.pushChannels(seq,ch);end
+            obj.drawChannels();
             obj.pad();
             obj.showChannels(ch,obj.field(s,'weights',[]));
             obj.timeNote(numel(samples),fs);
@@ -184,7 +186,7 @@ classdef BeamformerView < handle
                 obj.showSpectrum(spec.freqHz(:)/1e6,spec.psdDbfs(:));
             else
                 obj.setLine('spectrum',[],[]);obj.setLine('spectrumHold',[],[]);
-                obj.Card.spectrum.note.Text='unavailable';
+                obj.put(obj.Card.spectrum.note,'unavailable');
             end
             % --- demodulation --------------------------------------------
             if isstruct(analysis),obj.showLevel(analysis,ch);end
@@ -1107,21 +1109,11 @@ classdef BeamformerView < handle
             obj.setLine('payload',real(c.payload),imag(c.payload));
             obj.setLine('header',real(c.header),imag(c.header));
             obj.setLine('pilots',real(c.pilot),imag(c.pilot));
-            obj.Empty.constellation.Visible='off';
+            obj.setp(obj.Empty.constellation,'Visible','off');
             ev=r.evmPercent;db=r.evmDb;
             degraded=logical(obj.field(r,'degraded',false));
             state='ok';if degraded,state='warn';end
-            if isempty(obj.HistorySequence) || seq~=obj.HistorySequence(end)
-                % A rejected or skipped acquisition breaks the history line:
-                % it is never drawn as if frames in between were measured.
-                gap=~isempty(obj.HistorySequence) && (obj.GapPending || seq-obj.HistorySequence(end)~=1);
-                obj.HistorySequence(end+1)=seq;obj.HistoryEvm(end+1)=ev;obj.HistoryDegraded(end+1)=degraded;
-                obj.HistoryBreak(end+1)=gap;
-                if numel(obj.HistorySequence)>300
-                    obj.HistorySequence(1)=[];obj.HistoryEvm(1)=[];obj.HistoryDegraded(1)=[];obj.HistoryBreak(1)=[];
-                end
-            end
-            obj.GapPending=false;
+            obj.appendEvm(seq,r);
             hist=obj.HistoryEvm;
             obj.tile('evm',sprintf('%.2f %%',ev),sprintf('median %.2f · max %.2f · n=%d',median(hist),max(hist),numel(hist)),state);
             obj.tile('evmDb',sprintf('%.1f dB',db),sprintf('header %.2f %% · pilots %.2f %%', ...
@@ -1133,32 +1125,32 @@ classdef BeamformerView < handle
             if numel(yx)~=numel(sy),yx=1:numel(sy);end
             obj.EvmSub=struct('x',sx,'y',sc);obj.EvmSym=struct('x',yx,'y',sy);
             obj.drawEvm();
-            obj.Empty.evm.Visible='off';
+            obj.setp(obj.Empty.evm,'Visible','off');
             switch obj.EvmMode
                 case 'history'
-                    obj.Card.evm.note.Text=obj.count(numel(hist),'frame');
+                    obj.put(obj.Card.evm.note,obj.count(numel(hist),'frame'));
                 case 'subcarrier'
                     [worst,ix]=max(sc);
-                    if isempty(sc),obj.Card.evm.note.Text=sprintf('frame %g · unavailable',seq);
-                    else,obj.Card.evm.note.Text=sprintf('worst %.1f %% at k=%g',worst,sx(ix));end
+                    if isempty(sc),obj.put(obj.Card.evm.note,sprintf('frame %g · unavailable',seq));
+                    else,obj.put(obj.Card.evm.note,sprintf('worst %.1f %% at k=%g',worst,sx(ix)));end
                 case 'symbol'
                     [worst,ix]=max(sy);
-                    if isempty(sy),obj.Card.evm.note.Text=sprintf('frame %g · unavailable',seq);
-                    else,obj.Card.evm.note.Text=sprintf('worst %.1f %% at row %g',worst,yx(ix));end
+                    if isempty(sy),obj.put(obj.Card.evm.note,sprintf('frame %g · unavailable',seq));
+                    else,obj.put(obj.Card.evm.note,sprintf('worst %.1f %% at row %g',worst,yx(ix)));end
             end
-            if isfield(r,'profile'),obj.Controls.Profile.Text=obj.profileText(r.profile);end
+            if isfield(r,'profile'),obj.put(obj.Controls.Profile,obj.profileText(r.profile));end
             qualified=obj.field(r,'qualifiedBursts',NaN);complete=obj.field(r,'metricBursts',NaN);
             secondary=obj.field(r,'qualifiedPayloadEvmPercent',NaN);
             tag='LOCKED';if degraded,tag='DEGRADED';end
-            obj.CoverageLabel.Text=sprintf('%s · %g/%g qualified · clean-only %.2f%%',tag,qualified,complete,secondary);
-            obj.CoverageLabel.FontColor=th.(state);
+            obj.put(obj.CoverageLabel,sprintf('%s · %g/%g qualified · clean-only %.2f%%',tag,qualified,complete,secondary));
+            obj.setp(obj.CoverageLabel,'FontColor',th.(state));
             obj.tile('bursts',sprintf('%g / %g',qualified,complete),sprintf('clean-only %.2f %%',secondary),state);
             cfo=median(obj.field(r,'cfoHz',NaN),'omitnan');
             ppm=obj.field(r,'samplingErrorPpm',NaN);
             obj.tile('cfo',obj.hz(cfo),sprintf('pilot timing drift %+.2f ppm',ppm),'ok');
             snr=median(obj.field(r,'trainingSnrDb',NaN),'omitnan');
             obj.tile('sync',sprintf('%.2f',obj.field(r,'syncPeak',NaN)),sprintf('training SNR %.1f dB',snr),'ok');
-            obj.Card.constellation.note.Text=sprintf('frame %g · %d cells',seq,numel(c.payload));
+            obj.put(obj.Card.constellation.note,sprintf('frame %g · %d cells',seq,numel(c.payload)));
             pb=obj.field(r,'perBurst',[]);cand=obj.field(r,'candidates',[]);
             obj.showBursts(cand,pb);
             if degraded && ~(numel(obj.HistoryDegraded)>1 && obj.HistoryDegraded(end-1))
@@ -1192,7 +1184,7 @@ classdef BeamformerView < handle
                 c=cumsum(lin)/tot;lo=f(find(c>=.005,1));hi=f(find(c>=.995,1));
                 note=sprintf('99 %% power in %.1f MHz',hi-lo);
             end
-            obj.Card.spectrum.note.Text=note;
+            obj.put(obj.Card.spectrum.note,note);
         end
         function maxHold(obj)
             on=obj.Controls.MaxHold.Value;th=obj.Theme;
@@ -1215,8 +1207,41 @@ classdef BeamformerView < handle
                 obj.Marks.band.Visible='off';
             end
         end
-        function pushChannels(obj,seq,ch)
+        function recordFrame(obj,s)
+            % Every processed frame, drawn or not (no graphics): the EVM and
+            % channel histories, their gap marks and the frame rate stay per
+            % frame when the window is redrawn less often than frames arrive.
+            if ~obj.isOpen(),return,end
+            if obj.Held || ~isfield(s,'valid') || ~s.valid
+                obj.GapPending=true;obj.ChannelGap=true;return
+            end
+            seq=obj.field(s,'sequence',NaN);
+            if seq==obj.RecordedSequence,return,end
+            obj.RecordedSequence=seq;
+            obj.FrameTimes(end+1)=toc(obj.Clock);
+            if numel(obj.FrameTimes)>9,obj.FrameTimes(1)=[];end
+            obj.appendChannels(seq,obj.field(s,'channels',[]));
+            r=obj.field(s,'analysis',[]);
+            if isstruct(r) && isfield(r,'valid') && r.valid,obj.appendEvm(seq,r);
+            else,obj.GapPending=true;end
+        end
+        function appendEvm(obj,seq,r)
+            if isempty(obj.HistorySequence) || seq~=obj.HistorySequence(end)
+                % A rejected or skipped acquisition breaks the history line:
+                % it is never drawn as if frames in between were measured.
+                gap=~isempty(obj.HistorySequence) && (obj.GapPending || seq-obj.HistorySequence(end)~=1);
+                obj.HistorySequence(end+1)=seq;obj.HistoryEvm(end+1)=r.evmPercent;
+                obj.HistoryDegraded(end+1)=logical(obj.field(r,'degraded',false));
+                obj.HistoryBreak(end+1)=gap;
+                if numel(obj.HistorySequence)>300
+                    obj.HistorySequence(1)=[];obj.HistoryEvm(1)=[];obj.HistoryDegraded(1)=[];obj.HistoryBreak(1)=[];
+                end
+            end
+            obj.GapPending=false;
+        end
+        function appendChannels(obj,seq,ch)
             if ~isstruct(ch) || ~isfield(ch,'relPhaseDeg') || ~isfinite(seq),return,end
+            if ~isempty(obj.ChannelSequence) && obj.ChannelSequence(end)==seq,return,end
             row=nan(1,4);lev=nan(1,4);n=min(4,numel(ch.relPhaseDeg));
             row(1:n)=ch.relPhaseDeg(1:n);lev(1:n)=ch.levelDbfs(1:n);
             % Same rule as the EVM history: never join across rejected,
@@ -1228,6 +1253,9 @@ classdef BeamformerView < handle
             if numel(obj.ChannelSequence)>300
                 obj.ChannelSequence(1)=[];obj.ChannelPhase(1,:)=[];obj.ChannelLevel(1,:)=[];obj.ChannelBreak(1)=[];
             end
+        end
+        function drawChannels(obj)
+            if isempty(obj.ChannelSequence),return,end
             pos=(1:numel(obj.ChannelSequence))+cumsum(logical(obj.ChannelBreak));
             x=nan(1,pos(end));x(pos)=obj.ChannelSequence;
             colors={obj.Theme.s1,obj.Theme.s2,obj.Theme.s3,obj.Theme.s4};
@@ -1256,11 +1284,12 @@ classdef BeamformerView < handle
                 end
                 fmt={'%.1f','%+.1f','%.3f','%.1f','%+.1f'};
                 for c=1:5
-                    if isfinite(vals{c}),T(k,c+1).Text=sprintf(fmt{c},vals{c});T(k,c+1).FontColor=th.text;
-                    else,T(k,c+1).Text='—';T(k,c+1).FontColor=th.dim;end
-                end
-                if have && k<=numel(ch.peakDbfs) && isfinite(ch.peakDbfs(k)) && ch.peakDbfs(k)>-1
-                    T(k,2).FontColor=th.fault;
+                    if isfinite(vals{c}),text=sprintf(fmt{c},vals{c});color=th.text;
+                    else,text='—';color=th.dim;end
+                    if c==1 && have && k<=numel(ch.peakDbfs) && isfinite(ch.peakDbfs(k)) && ch.peakDbfs(k)>-1
+                        color=th.fault;
+                    end
+                    obj.put(T(k,c+1),text);obj.setp(T(k,c+1),'FontColor',color);
                 end
             end
         end
@@ -1461,11 +1490,11 @@ classdef BeamformerView < handle
             m=obj.Marks.(name);
             for k=1:numel(m)
                 if k<=numel(angles)
-                    m(k).Value=angles(k);m(k).Label=sprintf('model %.1f°',angles(k));
+                    obj.setp(m(k),'Value',angles(k));obj.setp(m(k),'Label',sprintf('model %.1f°',angles(k)));
                     side='right';if mod(k,2)==0,side='left';end
-                    m(k).LabelHorizontalAlignment=side;m(k).Visible='on';
+                    obj.setp(m(k),'LabelHorizontalAlignment',side);obj.setp(m(k),'Visible','on');
                 else
-                    m(k).Visible='off';
+                    obj.setp(m(k),'Visible','off');
                 end
             end
         end
@@ -1478,20 +1507,22 @@ classdef BeamformerView < handle
             th=obj.Theme;t=obj.Kpi.(key);
             obj.put(t.value,value);obj.put(t.sub,sub);
             switch state
-                case 'ok',t.value.FontColor=th.text;t.edge.BackgroundColor=th.ok;
-                case 'warn',t.value.FontColor=th.warn;t.edge.BackgroundColor=th.warn;
-                case 'fault',t.value.FontColor=th.fault;t.edge.BackgroundColor=th.fault;
-                otherwise,t.value.FontColor=th.dim;t.edge.BackgroundColor=th.hair;
+                case 'ok',fc=th.text;bc=th.ok;
+                case 'warn',fc=th.warn;bc=th.warn;
+                case 'fault',fc=th.fault;bc=th.fault;
+                otherwise,fc=th.dim;bc=th.hair;
             end
+            obj.setp(t.value,'FontColor',fc);obj.setp(t.edge,'BackgroundColor',bc);
         end
         function pill(obj,text,state)
-            th=obj.Theme;obj.StatePill.Text=text;
+            th=obj.Theme;obj.put(obj.StatePill,text);
             switch state
-                case 'ok',set(obj.StatePill,'BackgroundColor',th.okBg,'FontColor',th.ok);
-                case 'warn',set(obj.StatePill,'BackgroundColor',th.warnBg,'FontColor',th.warn);
-                case 'fault',set(obj.StatePill,'BackgroundColor',th.faultBg,'FontColor',th.fault);
-                otherwise,set(obj.StatePill,'BackgroundColor',th.input,'FontColor',th.muted);
+                case 'ok',bc=th.okBg;fc=th.ok;
+                case 'warn',bc=th.warnBg;fc=th.warn;
+                case 'fault',bc=th.faultBg;fc=th.fault;
+                otherwise,bc=th.input;fc=th.muted;
             end
+            obj.setp(obj.StatePill,'BackgroundColor',bc);obj.setp(obj.StatePill,'FontColor',fc);
         end
         function showRate(obj)
             rate=NaN;
@@ -1522,14 +1553,14 @@ classdef BeamformerView < handle
         end
         function showVendor(obj,v,seq)
             if ~isstruct(v) || ~isfield(v,'valid') || ~v.valid
-                obj.Controls.Vendor.Text='Native VSA — no current measurement';
-                obj.Controls.Vendor.FontColor=obj.Theme.muted;
+                obj.put(obj.Controls.Vendor,'Native VSA — no current measurement');
+                obj.setp(obj.Controls.Vendor,'FontColor',obj.Theme.muted);
             elseif ~isfield(v,'sequence') || v.sequence~=seq
-                obj.Controls.Vendor.Text='Native VSA — waiting for this frame';
-                obj.Controls.Vendor.FontColor=obj.Theme.muted;
+                obj.put(obj.Controls.Vendor,'Native VSA — waiting for this frame');
+                obj.setp(obj.Controls.Vendor,'FontColor',obj.Theme.muted);
             else
-                obj.Controls.Vendor.Text=sprintf('Native VSA comparison: %.2f%% / %.1f dB',v.evmPercent,20*log10(v.evmPercent/100));
-                obj.Controls.Vendor.FontColor=obj.Theme.ok;
+                obj.put(obj.Controls.Vendor,sprintf('Native VSA comparison: %.2f%% / %.1f dB',v.evmPercent,20*log10(v.evmPercent/100)));
+                obj.setp(obj.Controls.Vendor,'FontColor',obj.Theme.ok);
             end
         end
         function text=profileText(obj,p)
@@ -1700,6 +1731,13 @@ classdef BeamformerView < handle
         function put(h,text)
             % Compare-then-set: each changed label is a round trip to the web view.
             if ~isequal(h.Text,text),h.Text=text;end
+        end
+        function setp(h,name,value)
+            % Compare-then-set for any property (colours are re-sent otherwise).
+            cur=h.(name);
+            if isa(cur,'matlab.lang.OnOffSwitchState'),same=cur==matlab.lang.OnOffSwitchState(value);
+            else,same=isequal(cur,value);end
+            if ~same,h.(name)=value;end
         end
         function value=field(s,name,fallback)
             value=fallback;if isstruct(s) && isfield(s,name),value=s.(name);end

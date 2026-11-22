@@ -66,6 +66,17 @@ py -3 tools/run_original_vsa.py --config <private-config.json> --i-own-board --m
 The launcher needs its private configuration, board access and the `vsa_rfsoc`
 checkout.
 
+## Frame rate
+
+Every frame the board sends is processed (beamforming, DOA, EVM, the board OLED,
+the EVM and channel histories); the window is redrawn at most every
+`displayPeriodSeconds` (0.2 s). Redrawing the MATLAB app window costs about
+100 ms, processing about 35-60 ms, so drawing every frame held the rate at 5-8
+frames/s. Measured with synthetic 4096-sample frames on the build server: 136 ms
+per frame drawing each one, 56 ms median (77 ms mean) with the 0.2 s display
+period. The frames/s tile counts processed frames. The board delivers up to
+19 frames/s at 4096 samples (see BOARD_SERVICE.md, capture read time).
+
 ## Limits
 
 - Windows x64 only, clean layout only. The legacy App Designer layout and the

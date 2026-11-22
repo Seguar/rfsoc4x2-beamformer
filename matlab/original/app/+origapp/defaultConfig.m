@@ -17,6 +17,7 @@ cfg.theme = "dark";              % focused GUI palette: "dark" or "light" (switc
 cfg.visible = false;              % hidden construction by default (headless fixtures)
 cfg.autoStart = false;            % true: start the acquisition timer after construction
 cfg.periodSeconds = 0.1;          % acquisition timer period
+cfg.displayPeriodSeconds = 0.2;   % the window is redrawn at most this often; every frame is processed
 cfg.frameTimeoutSeconds = 1;      % bound for one backend.next call
 cfg.staleSeconds = 2;             % older frames / longer gaps clear DOA and pattern
 cfg.maxConsecutiveErrors = 5;     % then the timer stops and the backend is closed

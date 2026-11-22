@@ -10,6 +10,8 @@ classdef BeamformerApp < handle
         Busy = false
         Closed = false
         RenderKey = ""
+        DrawClock = []          % tic of the app; LastDraw in its seconds
+        LastDraw = -Inf
     end
     methods
         function obj=BeamformerApp(cfg)
@@ -46,9 +48,14 @@ classdef BeamformerApp < handle
             if obj.Busy || obj.Closed,return,end
             obj.Busy=true;g=onCleanup(@()obj.unbusy()); %#ok<NASGU>
             zs=obj.Session.ZeroCal.state;
-            obj.Session.step(@(s)obj.render(s));
+            % Every frame is processed and recorded (EVM, OLED, histories); the
+            % window is redrawn at most every displayPeriodSeconds: drawing,
+            % not processing, set the frame rate (about 100 ms per redraw).
+            obj.Session.step(@(s)obj.frame(s));
             if obj.Session.ZeroCal.state~=zs,obj.refreshControls();end
-            obj.render(obj.Session.snapshot());
+            s=obj.Session.snapshot();
+            if ~s.valid && ~isempty(obj.View) && isvalid(obj.View),obj.View.record(s);end
+            obj.drawIfDue(s,~obj.Controller.IsOpen || obj.Session.ZeroCal.state~=zs);
             if ~obj.Controller.IsOpen && strcmp(obj.AcqTimer.Running,'on'),stop(obj.AcqTimer);end
         end
         function calibrateZero(obj)
@@ -77,6 +84,17 @@ classdef BeamformerApp < handle
         end
     end
     methods (Access=private)
+        function frame(obj,s)
+            if ~isempty(obj.View) && isvalid(obj.View),obj.View.record(s);end
+            obj.drawIfDue(s,false);
+        end
+        function drawIfDue(obj,s,force)
+            if isempty(obj.DrawClock),obj.DrawClock=tic;end
+            t=toc(obj.DrawClock);
+            if force || t-obj.LastDraw>=obj.Session.Config.displayPeriodSeconds
+                obj.render(s);obj.LastDraw=t;
+            end
+        end
         function render(obj,s)
             if obj.Closed || isempty(obj.View) || ~isvalid(obj.View),return,end
             if s.valid
