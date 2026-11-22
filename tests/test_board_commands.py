@@ -1,6 +1,7 @@
 """Hardware-free admission, state and fault tests for the control adapter."""
 import unittest
 from board.board_commands import BoardCommands
+from board.control_service import ControlError
 
 
 class Block:
@@ -213,7 +214,15 @@ class BoardCommandTests(unittest.TestCase):
         self.assertEqual(self.overlay.phases, [12.34, -90.0, 90.0, -90.0])
         self.assertEqual(r['adc_phase'], [12.34, -90.0, 90.0, -90.0])
         self.assertEqual([b.MixerSettings['PhaseOffset'] for b in self.overlay.adc], [12.34, -90.0, 90.0, -90.0])
-        self.assertNotIn('sync_tiles', self.overlay.calls)                 # running NCOs, no re-sync
+        self.assertNotIn('sync_tiles', self.overlay.calls)
+        # +-180.00 deg is refused before the hardware (the converter would fail and stop capture)
+        for bad in ('dphasec 18000/0/0/0', 'dphasec 0/0/-18000/0', 'phasec 0/54000/0/0'):
+            with self.assertRaises(ControlError) as caught:
+                adapter.apply(bad)
+            self.assertEqual(caught.exception.code, 'OutOfRange')
+        self.assertIsNone(adapter.fault)
+        adapter.apply('dphasec 17999/0/-17999/0')
+        self.assertIsNone(adapter.fault)                 # running NCOs, no re-sync
         self.assertEqual(self.overlay.adc[1].QMCSettings['GainCorrectionFactor'], 1.5)
         with self.assertRaises(Exception):
             adapter.apply('again 200/0/0/0')

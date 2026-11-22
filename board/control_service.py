@@ -69,6 +69,11 @@ def parse_commands(line):
             raise ControlError('OutOfRange', 'da must be 0, 1 or 2')
         if name in ('phasec', 'dphasec') and any(abs(x) > 36000 for x in values):
             raise ControlError('OutOfRange', name + ' requires |hundredths of a degree| <= 36000')
+        # The RF data converter refuses a mixer phase of exactly +-180 deg (XRFdc_MixerRangeCheck);
+        # values wrap to [-180, 180), so refuse them here, before any hardware is touched,
+        # instead of failing the driver call, which stops the whole capture (2026-11-22).
+        if name in ('phasec', 'dphasec') and any((x + 18000) % 36000 == 0 for x in values):
+            raise ControlError('OutOfRange', name + ': +-180.00 deg is refused by the converter; use -179.99..179.99')
         if name in ('again', 'dgain') and any(not 0 <= x <= 199 for x in values):
             raise ControlError('OutOfRange', name + ' requires 0..199 (gain 0..1.99)')
         if name in ('aiqphase', 'diqphase') and any(abs(x) > 2649 for x in values):
