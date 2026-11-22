@@ -352,6 +352,13 @@ classdef DemoSession < handle
         function delete(obj),obj.close();end
     end
     methods (Static)
+        function c=mixerPhaseCode(ph)
+            % Hundredths of a degree inside (-180, 180): the RF data converter
+            % refuses exactly +-180.00 (the ADC pairs sit at -90/+90 for the
+            % board's swapped P/N pins, so calibration results can land there).
+            c=round(mod(ph+180,360)*100)-18000;
+            c(c<=-18000)=17999;c(c>=18000)=17999;
+        end
         function y=cropFrame(x,n)
             % Host-side data amount (simulation, or a board service that sends
             % only full frames): n contiguous rows of the frame, starting 256
@@ -428,8 +435,8 @@ classdef DemoSession < handle
             % a mixer phase offset +p turns the stream by -p: add the measured phase;
             % the weakest stream stays at the largest gain, the others come down to it
             g=obj.Paths.adcGain;amp=10.^(level/20);target=min(amp.*1.99./max(g,eps));
-            g=min(1.99,g.*target./amp);ph=obj.Paths.ADC+phase;ph=mod(ph+180,360)-180;
-            obj.command(sprintf('phasec %s#again %s',strjoin(string(round(ph*100)),'/'), ...
+            g=min(1.99,g.*target./amp);ph=obj.Paths.ADC+phase;
+            obj.command(sprintf('phasec %s#again %s',strjoin(string(origapp.DemoSession.mixerPhaseCode(ph)),'/'), ...
                 strjoin(string(round(g*100)),'/')));
             obj.readPaths();z.step=z.step+1;obj.ZeroCal=z;
             next=obj.uncalibrated(obj.Config);obj.Params=obj.parameters(next);obj.Config=next;

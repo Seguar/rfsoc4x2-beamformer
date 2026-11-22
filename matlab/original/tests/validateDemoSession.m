@@ -14,6 +14,8 @@ c.vsaSetupFile=fullfile(referenceRepo,'Settings/ofdm_iq_100_16_4x2.setx');
 c.ofdm=struct('setupSha256',origapp.LegacyVsaBackend.sha256(c.vsaSetupFile), ...
     'referenceMat',referenceMat,'orientation',"IplusjQ",'syncThreshold',.8);
 figures0=numel(findall(groot,'Type','figure'));timers0=numel(timerfindall);
+assert(isequal(origapp.DemoSession.mixerPhaseCode([-180 180 179.999 -90 90 540 12.345]), ...
+    [17999 17999 17999 -9000 9000 17999 1235]),'Mixer phase codes must stay inside (-180, 180).');
 s=origapp.DemoSession(c);s.start();
 enqueue(0,0,true);s.step();a=s.snapshot();
 assert(a.valid,'First frame refused: %s',string(a.reason));
