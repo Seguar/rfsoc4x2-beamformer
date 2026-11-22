@@ -304,7 +304,12 @@ classdef Controller < handle
                 obj.BoundaryFrames = obj.BoundaryFrames + 1;
                 mustStop = false;
                 return
-            elseif string(err.identifier) == "origapp:Expired"
+            elseif any(string(err.identifier) == ["origapp:Expired", "origapp:Stale"])
+                % Too old when processed or received: the window was busy (its
+                % first draws take seconds; a stalled window does the same) while
+                % the next frame, requested ahead, waited. Rejected and counted;
+                % the next request brings a fresh one. Five in a row used to stop
+                % the session (2026-11-22, a window capture on the laptop).
                 obj.ExpiredFrames = obj.ExpiredFrames + 1;
                 mustStop = false;
                 return

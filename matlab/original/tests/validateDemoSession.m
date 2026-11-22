@@ -76,6 +76,12 @@ assert(a.valid,'Steering after refusals: %s',string(a.reason));
 n=numel(shown);errs=s.Controller.TotalErrors;
 showFails=true;enqueue(401,0,true);s.step();a=s.snapshot();showFails=false;
 assert(a.valid && s.Controller.TotalErrors==errs && numel(shown)==n+1,'A display failure affected acquisition.');
+% A busy window makes frames stale (requested ahead, processed late): they are
+% rejected and counted, never a reason to stop the session.
+e0=s.Controller.ExpiredFrames;
+for k=402:409,enqueue(k,3,true);s.step();a=s.snapshot();assert(~a.valid && s.Controller.IsOpen,'Stale frames stopped acquisition.');end
+assert(s.Controller.ExpiredFrames==e0+8 && s.Controller.ConsecutiveErrors==0);
+enqueue(410,0,true);s.step();a=s.snapshot();assert(a.valid,'No recovery after stale frames: %s',string(a.reason));
 s.close();delete(s);assert(closed==1);
 % Full clean frontend uses one figure and one timer, no hidden legacy app.
 closed=0;c.analyzer="integrated";c.allowBoardCommands=true;
