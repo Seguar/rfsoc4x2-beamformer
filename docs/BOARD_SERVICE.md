@@ -104,6 +104,22 @@ when the trigger returns; the wrapper's original wait was 10 ms). Per session:
 `"overlay": "boot"` and `"trigger_dwell_ms": 10` restore the original behaviour;
 the service options `--overlay` and `--trigger-dwell-ms` change the defaults.
 
+## Reduced-window frame offset
+
+A reduced window starts 256 rows before an OFDM frame. Where the frames sit in
+the capture is set by the shared player/capture start and the DAC to ADC
+latency, so it hardly moves: live sessions on 2026-11-22 put it at row 16285 or
+16286 in every frame of four sessions (a few rows of drift at most, which the
+256-row lead covers). The helper therefore finds the offset with the correlation
+search (about 14 ms) only on the first frame, once per second after that, at
+once when the level at the window falls below 0.3 of the level at the last check
+(signal gone or moved), and after a lost lock. In between it reuses the offset
+(`candidate: "fixed"` in the frame summary, about 0.3 ms) and reads only the
+rows up to the end of that window (20736 instead of 44403 for 4096 rows). The
+application still checks every stream against the reference and refuses a
+window that does not match. On the board, DMA image, 4096 rows, client one
+request ahead: 106 frames/s (40 with a search on every frame).
+
 ## Board display (OLED)
 
 The service writes the board's 2x16 character OLED (NHD-0216AW, `/dev/spidev1.0`,

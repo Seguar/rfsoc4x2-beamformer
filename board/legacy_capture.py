@@ -111,6 +111,14 @@ NUDGES = [0] + [d * m for m in range(1, 17) for d in (128, -128)]   # start shif
 # cheap selection (see fast_window). 4096 rows hold one complete OFDM frame.
 ROWS_ALLOWED = (4096, 8192, 16384, WIN)
 FRAME_LEAD = 256                                     # rows sent before the frame start
+# The frame offset in the capture is set by the shared player/capture start and the
+# DAC -> ADC latency; live sessions show it constant to +-1 row (16285/16286 over
+# thousands of frames). Once found, fast_window reuses it and checks it again every
+# VERIFY_EVERY s, or at once when the level at the window falls below SIGNAL_DROP
+# of the level at the last check (signal gone or moved). The lead covers the
+# few-row drift between checks.
+VERIFY_EVERY = 1.0                                   # s
+SIGNAL_DROP = 0.3
 
 
 def _corr_fft():
@@ -388,7 +396,12 @@ def select_window(raw, ref, burst, ref_fft_conj=None, n=WIN):
 _FAST = {}                                         # per-reference cache and the last alignment
 
 
-def fast_window(raw, ref, burst, n, ref_fft_conj=None, state=_FAST):
+def _level(rows, ch, start, n):
+    x = rows[start:start + n:16, 2 * ch:2 * ch + 2].astype(np.float32)
+    return float(np.sqrt(np.mean(x * x) * 2)) if len(x) else 0.0
+
+
+def fast_window(raw, ref, burst, n, ref_fft_conj=None, state=_FAST, verify_every=VERIFY_EVERY, now=None):
     """Reduced window: n < WIN rows of ONE capture that start FRAME_LEAD rows before
     an OFDM frame, so 4096 rows hold one complete frame. Made for display rate.
 
@@ -397,9 +410,24 @@ def fast_window(raw, ref, burst, n, ref_fft_conj=None, state=_FAST):
     contiguous pass. That is assumed here, not searched (select_window searches
     it and costs ~0.25 s); the host checks every stream against the reference
     and refuses a window that does not match. The alignment of the previous
-    capture is tried first (+-8 rows), an FFT search only when it fails."""
+    capture is tried first (+-8 rows), an FFT search only when it fails.
+
+    Between checks (VERIFY_EVERY) the start of the last check is reused without any
+    correlation (candidate 'fixed'): the offset does not move by more than a few rows
+    (see VERIFY_EVERY). Only the signal level at the window is measured."""
     t0 = time.perf_counter()
+    now = time.monotonic() if now is None else now
     rows = raw.reshape(-1, 8)
+    fixed = state.get('fixed')
+    if (fixed and state.get('ref') is ref and fixed['n'] == n and now - fixed['at'] < verify_every):
+        level = _level(rows, fixed['ch'], fixed['start'], n)
+        if level >= SIGNAL_DROP * fixed['level']:
+            return fixed['start'], {
+                'rows': int(n), 'start': fixed['start'], 'candidate': 'fixed', 'kk': fixed['kk'],
+                'det_stream': fixed['ch'], 'level': round(level, 2), 'checked_s_ago': round(now - fixed['at'], 3),
+                'note': 'frame offset of the last check, reused (checked every %g s)' % verify_every,
+                'select_s': time.perf_counter() - t0}
+    state.pop('fixed', None)
     n_loop = rows.shape[0]
     r0 = WRAP_GUARD
     if state.get('ref') is not ref:
@@ -457,6 +485,9 @@ def fast_window(raw, ref, burst, n, ref_fft_conj=None, state=_FAST):
         x = seg(k, start, m)
         nx = np.sqrt(np.vdot(x, x).real) + 1e-30
         locks.append(round(max(lock_at(kw + d, x, start, nx) for d in range(-3, 4)), 4))
+    level = _level(rows, ch, int(start), n)
+    if level > 0:     # 0: rows not read yet (a check on a reduced read whose offset moved): no reuse
+        state['fixed'] = dict(n=n, start=int(start), kk=kw, ch=ch, at=now, level=level)
     info.update(start=int(start), candidate='fast', kk=kw, stream_locks=locks,
                 note='reduced window after the capture start; wrap assumed at the shared start, not searched',
                 select_s=time.perf_counter() - t0)
@@ -652,9 +683,15 @@ def write_dac(overlay, words, selected):
         raise RuntimeError('DAC RAM readback mismatch')
 
 
-def read_rows_needed(n, burst):
+def read_rows_needed(n, burst, state=None, now=None, verify_every=VERIFY_EVERY):
     """Capture rows fast_window can use for an n-row window: the wrap guard, one
-    burst to find the next frame start, the lead and the window, plus margin."""
+    burst to find the next frame start, the lead and the window, plus margin.
+    With a frame offset fast_window will reuse (``state``, no check due), only up
+    to the end of that window, and at least the block a check reads."""
+    fixed = (state or {}).get('fixed')
+    now = time.monotonic() if now is None else now
+    if fixed and fixed['n'] == n and now - fixed['at'] < verify_every:
+        return min(RAM // 8, max(fixed['start'] + n, WRAP_GUARD + BLOCK) + 256)
     return min(RAM // 8, WRAP_GUARD + int(np.ceil(burst)) + FRAME_LEAD + n + 256)
 
 
@@ -1077,7 +1114,8 @@ def main():
                             rows_now = controls.data_words // 8 if controls else WIN
                             require_lock(overlay, manifest, 'frame%d' % sequence)
                             # a reduced window reads only the capture rows it can use
-                            read_rows = (read_rows_needed(rows_now, burst125)
+                            sel_now = time.monotonic()     # one decision for the read and the selection
+                            read_rows = (read_rows_needed(rows_now, burst125, _FAST, sel_now)
                                          if v3 and rows_now != WIN and not a.full_read else None)
                             raw, refreshed, writable, previous_sha = full_capture(overlay, previous_sha, read_rows)
                             mono = time.monotonic_ns()
@@ -1091,7 +1129,7 @@ def main():
                 reduced = v3 and rows_now != WIN
                 if v3:
                     if reduced:
-                        start, sel = fast_window(raw, ref125, burst125, rows_now, ref_fft_conj)
+                        start, sel = fast_window(raw, ref125, burst125, rows_now, ref_fft_conj, now=sel_now)
                         if read_rows is not None and start + rows_now > read_rows:
                             with hardware_lock:      # same capture: no trigger since
                                 read_rest(overlay, raw, read_rows)

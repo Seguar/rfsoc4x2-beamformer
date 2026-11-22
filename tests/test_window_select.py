@@ -173,6 +173,42 @@ class WindowSelectTests(unittest.TestCase):
         payload = encode_wire(body)
         self.assertLess(len(payload), WIRE_BYTES3 + 36 + 8192)
 
+    def test_reduced_window_offset_is_reused_between_checks(self):
+        """After one check the frame offset is reused without correlation until the
+        next check is due; a level drop (signal gone) forces a check at once."""
+        rng = np.random.default_rng(21)
+        raw, idx = capture(self.ref, 5000, self.gains, rng)
+        state = {}
+        s0, i0 = fast_window(raw, self.ref, self.burst, 4096, state=state, now=100.0)
+        self.assertEqual(i0['candidate'], 'fast')
+        raw2, _ = capture(self.ref, 5000, self.gains, rng)            # next capture, same offset
+        s1, i1 = fast_window(raw2, self.ref, self.burst, 4096, state=state, now=100.5)
+        self.assertEqual((s1, i1['candidate']), (s0, 'fixed'))
+        self.assertEqual(i1['kk'], i0['kk'])
+        s2, i2 = fast_window(raw2, self.ref, self.burst, 4096, state=state, now=101.2)
+        self.assertEqual(i2['candidate'], 'fast')                     # check due after 1 s
+        self.assertEqual(s2, s0)
+        blank, _ = capture(self.ref, 5000, self.gains, rng, blank=True)
+        _, i3 = fast_window(blank, self.ref, self.burst, 4096, state=state, now=101.3)
+        self.assertNotEqual(i3['candidate'], 'fixed')                 # level drop: checked, unlocked
+        self.assertNotIn('fixed', state)
+        _, i4 = fast_window(raw2, self.ref, self.burst, 8192, state=state, now=101.4)
+        self.assertEqual(i4['candidate'], 'fast')                     # no reuse after unlock
+        _, i5 = fast_window(raw2, self.ref, self.burst, 4096, state=state, now=101.5)
+        self.assertEqual(i5['candidate'], 'fast')                     # other row count: checked
+
+    def test_reused_offset_reads_fewer_rows(self):
+        from board.legacy_capture import read_rows_needed, WRAP_GUARD, BLOCK
+        rng = np.random.default_rng(22)
+        raw, _ = capture(self.ref, 5000, self.gains, rng)
+        state = {}
+        full = read_rows_needed(4096, self.burst, state, now=0.0)
+        s, _ = fast_window(raw, self.ref, self.burst, 4096, state=state, now=0.0)
+        short = read_rows_needed(4096, self.burst, state, now=0.5)
+        self.assertEqual(short, max(s + 4096, WRAP_GUARD + BLOCK) + 256)
+        self.assertLess(short, full)
+        self.assertEqual(read_rows_needed(4096, self.burst, state, now=1.5), full)    # check due
+
 
 class WindowMetadataTests(unittest.TestCase):
     def test_truncated_summary_retains_control_revision_and_fails_closed(self):
