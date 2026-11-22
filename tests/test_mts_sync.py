@@ -42,6 +42,15 @@ class MtsSyncTests(unittest.TestCase):
             mts_sync.trigger(o)
         self.assertEqual(e,['trigger_off','dacs_off','trigger_on','latch_selected',('dwell',.01),'trigger_off'])
 
+    def test_dwell_bounds(self):
+        o,e=self.overlay()
+        with patch.object(mts_sync.time,'sleep',side_effect=lambda t:e.append(('dwell',t))):
+            mts_sync.trigger(o,.002)
+        self.assertIn(('dwell',.002),e)
+        for bad in (.001,.6):
+            with self.assertRaises(ValueError):
+                mts_sync.trigger(o,bad)
+
     def test_trigger_is_lowered_if_latching_fails(self):
         o,e=self.overlay()
         o.dacs_control=lambda:(_ for _ in ()).throw(RuntimeError('GPIO error'))

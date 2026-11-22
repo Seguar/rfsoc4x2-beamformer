@@ -67,6 +67,21 @@ EXPECTED = {
     '/boot/doa_mts.hwh': '3e0c46dc4a911a0026cfc0cd22a22897acebc561816620f094a2ac5f8b2de471',
     '/boot/data.mat': '3f17e6cccef941d1bac4fefff4439472d8a6e6923b0ef7633e6184448be9eef3',
 }
+# doa_mts_dma overlay (doa_rfsoc branch dma-capture): the boot design plus an AXI CDMA
+# that copies the capture RAM into DDR. Installed beside the helper, never in /boot.
+DMA_DIR = '/opt/rfsoc4x2-beamformer/dma'
+# Board, 2026-11-22, 4096 rows, client one request ahead: boot image 10 ms hold 19.4
+# frames/s, 2 ms 26.2; DMA image 10 ms 30.2, 2 ms 40.3. DMA reads equal MMIO reads
+# (20 of 20 captures), same levels, locks and MTS behaviour as boot, no slips in
+# 1.31 M rows. The RAM is full when a 2 ms synced trigger returns.
+DEFAULT_OVERLAY = 'dma'
+DEFAULT_TRIGGER_DWELL_MS = 2.0
+DMA_EXPECTED = {
+    'doa_mts_dma.bit': '848a92c6e01d11e18c8d10fe7cbbb5b8b212fb5b99363887f4a3e6729623ce11',
+    'doa_mts_dma.hwh': '57a961c7139f5f7b91904ec17fd49ba971fa5b7c05a020c66544c60b1752fe21',
+    'doa_mts_dma.py': '4e89059227526dc7c1706be37034198740f478cfb0125da7751dc1b39a16dee7',
+    'cdma.py': '4e735f6f04b8a74103c8771790a3cfa2d40d95ca34285251170dd86dd3f12914',
+}
 OWNERS = ('board_capture.py', 'legacy_capture.py', 'boot.py', 'ipykernel_launcher')
 # Peers accepted without --allow-cidr: loopback, link-local, private ranges and
 # the carrier-grade NAT range used by overlay networks, plus any network the
@@ -404,6 +419,21 @@ class Service:
             modes[key] = request.get(key, getattr(a, key, False))
             if not isinstance(modes[key], bool):
                 raise Refused('bad_request', key + ' must be true or false.')
+        dwell = request.get('trigger_dwell_ms', getattr(a, 'trigger_dwell_ms', DEFAULT_TRIGGER_DWELL_MS))
+        if not isinstance(dwell, (int, float)) or isinstance(dwell, bool) or not 2 <= dwell <= 500:
+            raise Refused('bad_request', 'trigger_dwell_ms must be 2..500.')
+        overlay = request.get('overlay', getattr(a, 'overlay', DEFAULT_OVERLAY))
+        if overlay not in ('boot', 'dma'):
+            raise Refused('bad_request', 'overlay must be "boot" or "dma".')
+        if overlay == 'dma':
+            dma_dir = Path(getattr(a, 'dma_dir', DMA_DIR))
+            for name, want in DMA_EXPECTED.items():
+                try:
+                    ok = file_sha(str(dma_dir / name)) == want
+                except OSError:
+                    ok = False
+                if not ok:
+                    raise Refused('boot_assets', 'The DMA overlay file %s is missing or differs from the supported one.' % name)
         send(conn, dict(state='starting', step='checking the board', elapsed=0))
         boot_was_running = check_preflight(self.preflight_fn([a.stream_port, a.control_port]))
         keepalive(conn)
@@ -426,7 +456,9 @@ class Service:
                     '--dac-peak', str(dac_peak),
                     *(['--both-dacs', '--dac-a-phase', '%.2f' % dac_a_phase] if dacs == 'AB' else []),
                     '--sampling-freq-unit', 'GHz', '--wire-mode', 'window4',
-                    *(['--full-read'] if modes['full_read'] else [])]
+                    *(['--full-read'] if modes['full_read'] else []),
+                    *(['--overlay', 'dma', '--dma-dir', str(getattr(a, 'dma_dir', DMA_DIR))] if overlay == 'dma' else []),
+                    '--trigger-dwell-ms', '%g' % dwell]
             clock = request.get('capture_clock_mhz', getattr(a, 'capture_clock_mhz', 0))
             if clock:
                 if not isinstance(clock, (int, float)) or isinstance(clock, bool) or not 125 <= clock <= 150:
@@ -584,6 +616,11 @@ def parser():
                    help='DAC_A mixer phase at start with --dacs AB (degrees)')
     p.add_argument('--dac-peak', type=int, default=DEFAULT_DAC_PEAK,
                    help='DAC waveform peak code of every session (100..%d); a client may request another' % DAC_PEAK_MAX)
+    p.add_argument('--overlay', choices=['boot', 'dma'], default=DEFAULT_OVERLAY,
+                   help='FPGA image of every session (dma: doa_mts_dma from --dma-dir); a client may request another')
+    p.add_argument('--dma-dir', default=DMA_DIR)
+    p.add_argument('--trigger-dwell-ms', type=float, default=DEFAULT_TRIGGER_DWELL_MS,
+                   help='synced capture trigger hold of every session, ms (2..500); a client may request another')
     p.add_argument('--full-read', action='store_true',
                    help='read the whole capture RAM also for reduced windows (a client may request otherwise)')
     p.add_argument('--no-oled', action='store_true', help='leave the board OLED alone')

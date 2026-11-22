@@ -27,6 +27,46 @@ class FakeOverlay:
         self.ram[:] = self.rng.integers(-2000, 2000, lc.RAM, dtype='<i2')
 
 
+class FakeDmaOverlay(FakeOverlay):
+    """doa_mts_dma: read_capture(rows) copies the first rows; the guard needs mark_triggered."""
+    def __init__(self):
+        super().__init__()
+        self.marked = 0
+        self.dma_rows = []
+
+    def mark_triggered(self):
+        self.marked += 1
+
+    def read_capture(self, rows=None, out=None):
+        rows = lc.RAM // 8 if rows is None else rows
+        self.dma_rows.append(rows)
+        view = self.ram[:rows * 8].copy()
+        if out is not None:
+            out[:rows * 8] = view
+            return out
+        return view
+
+
+class DmaReadTests(unittest.TestCase):
+    def setUp(self):
+        self._settle, lc.SETTLE = lc.SETTLE, 0
+
+    def tearDown(self):
+        lc.SETTLE = self._settle
+
+    def test_dma_partial_and_full_reads(self):
+        o = FakeDmaOverlay()
+        raw, refreshed, writable, sha = lc.full_capture(o, None, 1000)
+        self.assertTrue(refreshed and writable and o.marked == 1 and o.dma_rows == [1000])
+        self.assertTrue(np.array_equal(raw[:8000], o.ram[:8000]) and np.array_equal(raw[-8:], o.ram[-8:]))
+        self.assertFalse(raw[8000:-8].any())
+        self.assertLess(o.read_words, 100)                 # only the sentinel through MMIO
+        lc.read_rest(o, raw, 1000)
+        self.assertTrue(np.array_equal(raw, o.ram))
+        raw, refreshed, _, _ = lc.full_capture(o, sha)
+        self.assertTrue(refreshed and np.array_equal(raw, o.ram) and o.dma_rows[-1] == lc.RAM // 8)
+
+
 class PartialReadTests(unittest.TestCase):
     def setUp(self):
         self._settle, lc.SETTLE = lc.SETTLE, 0

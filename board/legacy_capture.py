@@ -658,6 +658,9 @@ def read_rows_needed(n, burst):
     return min(RAM // 8, WRAP_GUARD + int(np.ceil(burst)) + FRAME_LEAD + n + 256)
 
 
+TRIGGER_DWELL = 0.010   # s the synced trigger is held (--trigger-dwell-ms)
+
+
 def full_capture(overlay, previous_sha, read_rows=None):
     """Freshness: tail sentinel must be overwritten (if RAM is PS-writable) AND the
     capture must differ from the previous one (ADC noise makes repeats impossible).
@@ -669,11 +672,24 @@ def full_capture(overlay, previous_sha, read_rows=None):
     overlay.adc_capture[RAM-8:RAM] = SENTINEL
     writable = np.array_equal(np.asarray(overlay.adc_capture[RAM-8:RAM]), SENTINEL)
     if overlay.da == 2:
-        synced_trigger(overlay)
+        synced_trigger(overlay, TRIGGER_DWELL)   # returns after the RAM is full
+        if hasattr(overlay, 'mark_triggered'):
+            overlay.mark_triggered()
     else:
         overlay.trigger_capture()
-    time.sleep(SETTLE)
-    if read_rows is None or read_rows * 8 >= RAM:
+        if hasattr(overlay, 'mark_triggered'):
+            overlay.mark_triggered()          # DMA overlay: its copy waits for the capture
+        time.sleep(SETTLE)
+    if hasattr(overlay, 'read_capture'):
+        # DMA overlay (doa_mts_dma): the CDMA copies the rows into DDR (about 1 ms for
+        # all 2 MB instead of about 50-69 ms word by word); the tail through MMIO.
+        rows = RAM // 8 if read_rows is None else min(read_rows, RAM // 8)
+        raw = np.zeros(RAM, dtype='<i2') if rows < RAM // 8 else np.empty(RAM, dtype='<i2')
+        overlay.read_capture(rows=rows, out=raw)
+        tail = np.array(overlay.adc_capture[RAM-8:RAM], dtype='<i2', copy=True)
+        raw[RAM-8:] = tail
+        sha = hashlib.sha256(raw[:rows * 8].tobytes() + tail.tobytes()).hexdigest()
+    elif read_rows is None or read_rows * 8 >= RAM:
         raw = np.array(overlay.adc_capture[:RAM], dtype='<i2', copy=True)
         sha = hashlib.sha256(raw.tobytes()).hexdigest()
         tail = raw[-8:]
@@ -690,6 +706,11 @@ def full_capture(overlay, previous_sha, read_rows=None):
 
 def read_rest(overlay, raw, read_rows):
     """Complete a partial read from the same capture (no new trigger)."""
+    if hasattr(overlay, 'read_capture'):
+        full = overlay.read_capture()
+        raw[read_rows * 8:RAM - 8] = full[read_rows * 8:RAM - 8]
+        raw[RAM - 8:] = overlay.adc_capture[RAM - 8:RAM]
+        return
     raw[read_rows * 8:RAM - 8] = overlay.adc_capture[read_rows * 8:RAM - 8]
     raw[RAM - 8:] = overlay.adc_capture[RAM - 8:RAM]
 
@@ -764,6 +785,7 @@ def parse_schedule(text):
 
 
 def main():
+    global TRIGGER_DWELL
     def interrupted(signum, frame):
         raise SystemExit(f'Capture interrupted by signal {signum}')
     for signum in (signal.SIGTERM, getattr(signal, 'SIGHUP', signal.SIGTERM)):
@@ -789,6 +811,11 @@ def main():
     p.add_argument('--sampling-freq-unit', choices=['GHz'], required=True)
     p.add_argument('--request-timeout', type=float, default=30)
     p.add_argument('--wire-codec', choices=['raw', 'deflate'], default='deflate')
+    p.add_argument('--overlay', choices=['boot', 'dma'], default='boot',
+                   help='boot: /boot/doa_mts.bit; dma: doa_mts_dma.bit (CDMA capture copy) from --dma-dir')
+    p.add_argument('--dma-dir', default='/opt/rfsoc4x2-beamformer/dma')
+    p.add_argument('--trigger-dwell-ms', type=float, default=10.0,
+                   help='synced capture trigger hold, ms (2..500; the RAM fills in 1.05 ms)')
     p.add_argument('--full-read', action='store_true',
                    help='read the whole capture RAM also for reduced windows (slower)')
     p.add_argument('--capture-clock-mhz', type=float, default=0.0,
@@ -861,6 +888,11 @@ def main():
                 'dac_off_verified': False, 'frames': []}
     sys.path.insert(0, '/boot')
     from doa_mts import doaMtsOverlay
+    if a.overlay == 'dma':
+        # doa_mts_dma: the boot design plus an AXI CDMA for the capture RAM (doa_rfsoc
+        # branch dma-capture); its files sit in --dma-dir, never in /boot
+        sys.path.insert(0, a.dma_dir)
+        from doa_mts_dma import doaMtsDmaOverlay
     overlay = listener = client = None
     control_service = controls = None
     hardware_lock = threading.RLock()
@@ -870,7 +902,13 @@ def main():
     sequence = 0
     try:
         owner_check()
-        overlay = doaMtsOverlay('/boot/doa_mts.bit')
+        if a.overlay == 'dma':
+            overlay = doaMtsDmaOverlay(str(Path(a.dma_dir) / 'doa_mts_dma.bit'))
+        else:
+            overlay = doaMtsOverlay('/boot/doa_mts.bit')
+        manifest['overlay'] = a.overlay
+        TRIGGER_DWELL = a.trigger_dwell_ms / 1000
+        manifest['trigger_dwell_ms'] = a.trigger_dwell_ms
         if a.capture_clock_mhz:
             if not 125.0 <= a.capture_clock_mhz <= 150.0:
                 raise ValueError('capture clock must be 125..150 MHz')

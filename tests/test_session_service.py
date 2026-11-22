@@ -79,7 +79,7 @@ class SessionTests(unittest.TestCase):
         self.pre = good()
         a = svc.parser().parse_args(['--root', str(ROOT/'tests'), '--state', self.tmp.name, '--bind', '127.0.0.1',
                                      '--port', '0', '--helper', 'fake_session_helper.py', '--board-name', 'RFSoC4x2',
-                                     '--start-timeout', '10'])
+                                     '--start-timeout', '10', '--overlay', 'boot'])
         def systemctl(*args):
             self.calls.append(args)
         self.oled = RecordingOled()
@@ -247,7 +247,7 @@ class SessionTests(unittest.TestCase):
         for request in [{'max_seconds': 0}, {'max_seconds': 14401}, {'max_seconds': 'x'},
                         {'rf_mhz': 5700}, {'rf_mhz': '5200'}, {'rf_mhz': True},
                         {'dac_peak': 24001}, {'dac_peak': 99}, {'dac_peak': 2400.0}, {'dac_peak': True},
-                        {'dacs': 'A'}, {'dac_a_phase_deg': 180}, {'dac_a_phase_deg': '40'}, {'full_read': 1}]:
+                        {'dacs': 'A'}, {'dac_a_phase_deg': 180}, {'dac_a_phase_deg': '40'}, {'full_read': 1}, {'overlay': 'x'}]:
             c, f = self.start(**request)
             self.assertEqual(self.until(f, 'error')['code'], 'bad_request')
             c.close()
@@ -256,6 +256,25 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(json.loads(f.readline())['code'], 'bad_request')
         c.close()
         self.assertFalse((Path(self.tmp.name)/'runs').exists() and any((Path(self.tmp.name)/'runs').iterdir()))
+
+    def test_defaults_are_dma_and_a_2_ms_trigger_hold(self):
+        a = svc.parser().parse_args([])
+        self.assertEqual((a.overlay, a.trigger_dwell_ms), ('dma', 2.0))
+        c, f = self.start(max_seconds=60)
+        self.until(f, 'ready')
+        c.sendall(b'{"op":"stop"}\n')
+        self.until(f, 'ended')
+        argv = self.manifest()['argv']
+        self.assertEqual(argv[argv.index('--trigger-dwell-ms') + 1], '2')
+        self.assertNotIn('--overlay', argv)           # this test service runs the boot image
+        c.close()
+
+    def test_dma_overlay_needs_its_files(self):
+        c, f = self.start(overlay='dma')            # nothing installed in the test DMA folder
+        m = self.until(f, 'error')
+        self.assertEqual(m['code'], 'boot_assets')
+        self.assertIn('doa_mts_dma', m['message'])
+        c.close()
 
     def test_helper_failure_is_reported(self):
         os.environ['FAKE_HELPER_MODE'] = 'fail'

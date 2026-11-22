@@ -48,7 +48,7 @@ class Selection(unittest.TestCase):
     def run_selection(self, strong):
         o = FakeOverlay(strong)
         orig = lc.synced_trigger
-        lc.synced_trigger = lambda ov: ov.capture()
+        lc.synced_trigger = lambda ov, *_: ov.capture()
         try:
             manifest = {}
             words = np.full(lc.RAM, 1000, '<i2')
@@ -86,7 +86,7 @@ class Headroom(unittest.TestCase):
     def run_check(self, gain):
         o = FakeOverlay(2)
         orig = lc.synced_trigger
-        lc.synced_trigger = lambda ov: ov.capture(gain)
+        lc.synced_trigger = lambda ov, *_: ov.capture(gain)
         try:
             manifest = {}
             try:
@@ -108,7 +108,7 @@ class Headroom(unittest.TestCase):
         o = FakeOverlay(2)
         seen = []
         orig = lc.synced_trigger
-        lc.synced_trigger = lambda ov: (seen.append((ov.dac0_player.any(), ov.dac1_player.any())), ov.capture())
+        lc.synced_trigger = lambda ov, *_: (seen.append((ov.dac0_player.any(), ov.dac1_player.any())), ov.capture())
         try:
             lc.check_adc_headroom(o, np.full(lc.RAM, 1000, '<i2'), (True, True), {})
         finally:

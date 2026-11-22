@@ -55,9 +55,10 @@ def trigger(overlay, dwell=.01):
     common gate first, latch the selected continuous enables while it is high,
     and only then lower the trigger. Sequential GPIO writes cannot create
     different DAC start edges during this interval. The ten-ms dwell follows
-    the 4x2 wrapper's original da=2 capture wait and covers the full ADC RAM.
+    the 4x2 wrapper's original da=2 capture wait and covers the full ADC RAM
+    (131072 rows at 125 MHz = 1.05 ms); 2 ms is the shortest allowed.
     """
-    if not .005 <= dwell <= .5:
+    if not .002 <= dwell <= .5:
         raise ValueError('Capture trigger dwell must cover the complete RAM')
     overlay.trig_cap.off()
     overlay.dacs_off()

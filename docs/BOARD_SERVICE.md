@@ -79,6 +79,31 @@ request with `"full_read": true` (or the service option `--full-read`) restores
 the full read. Capturing the next frame ahead on the board gave nothing more,
 because the application already keeps one request ahead.
 
+## DMA capture image (default)
+
+`doa_mts_dma` is the boot design plus an AXI CDMA that copies the capture RAM
+into PS DDR (doa_rfsoc branch `dma-capture`, Vivado 2025.2; its files go in
+`/opt/rfsoc4x2-beamformer/dma`, never in `/boot`; the service checks their
+SHA-256). Board measurements, 2026-11-22:
+
+| | Boot image | DMA image |
+|---|---|---|
+| Read all 2 MB | 45-49 ms (MMIO) | 1.1-1.2 ms copy, 4.5-6 ms with the Python call |
+| Read 44403 rows (4096 window) | about 23 ms | 0.5 ms copy, 1.3-2 ms call |
+| Frames/s at 4096, trigger hold 10 ms / 2 ms | 19.4 / 26.2 | 30.2 / 40.3 |
+| Same capture read both ways | | identical in 20 of 20 |
+| Slips at 136.36 MHz | 0 in 1.31 M rows | 0 in 1.31 M rows |
+
+Levels, stream locks and the MTS start behaviour are the same with both
+images. With either image, ADC tile 226 (streams 2 and 3) came up about 115 deg
+off against tile 224 in 3 of 20 sessions; a stored 0 deg calibration is valid
+only for sessions that start the same way (open issue).
+
+The synced capture trigger is held 2 ms (the RAM fills in 1.09 ms and is full
+when the trigger returns; the wrapper's original wait was 10 ms). Per session:
+`"overlay": "boot"` and `"trigger_dwell_ms": 10` restore the original behaviour;
+the service options `--overlay` and `--trigger-dwell-ms` change the defaults.
+
 ## Board display (OLED)
 
 The service writes the board's 2x16 character OLED (NHD-0216AW, `/dev/spidev1.0`,
