@@ -42,7 +42,7 @@ Optional name/value pairs:
 - `board ADDRESS` skips the search and uses this address.
 - `dialog off` never opens the address window; the application fails instead.
 - `seconds N` closes the window after N seconds.
-- `rows N` starts with N samples per frame (32768, 16384, 8192 or 4096), as the
+- `rows N` starts with N samples per frame (32768, 16384, 8192 or 4096; default 4096), as the
   Data amount control.
 - `calibrate on` runs Set 0° once the first frame arrives (common-feed calibration).
 - `record <folder>` writes every received window, a frame log and a per-frame

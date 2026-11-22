@@ -87,10 +87,16 @@ compression), so sessions now start at peak 24000; the helper's start-up capture
 session whose ADC peak exceeds −6 dBFS. With the filter, the DAC zone measurement
 at start no longer shows the 7 dB difference (0.1–2.4 dB at the noise floor).
 
-Both DACs into the 0° combiner are not usable yet: every DAC mixer phase update
-(`dphasec`, even to the same value) lands DAC_A at a different phase relative to
-DAC_B, so the sum is either about +6 dB or a full cancellation. Sessions play
-DAC_B only.
+**Both DACs (default since 2026-11-22).** DAC_B and DAC_A play the same waveform into
+a ZN2PD-9G-S+ 0° combiner, then AKF-1252 → ZX60-V63+ amplifier (+20 dB measured at
+5.2 GHz) → patch. With the filter in the chain, DAC_A's phase acts smoothly and
+repeatably: the sum peaks at +40° and cancels near −150°, +5 dB over DAC_B alone,
+the same in 6 sessions and after a board reboot. The board sets that phase in the
+start configuration (`configure_dacs()` with SYSREF, then the wrapper's
+`sync_tiles()`), not with a later `dphasec`. On 2026-11-19, without the filter,
+every `dphasec` had landed DAC_A at a random phase. The +40° belongs to this
+cabling; after changing the DAC cables, sweep it again (`dac_a_phase_deg` in the
+start request, or `--dac-a-phase` of the service). `dacs: "B"` keeps DAC_B only.
 
 ## Limits
 

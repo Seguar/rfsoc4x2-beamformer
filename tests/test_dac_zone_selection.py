@@ -104,6 +104,18 @@ class Headroom(unittest.TestCase):
         self.assertLess(r['peak_dbfs'], lc.ADC_PEAK_LIMIT_DBFS)
         self.assertFalse(o.enabled or o.dac0_player.any() or o.dac1_player.any())
 
+    def test_both_dacs_play_and_are_zeroed_afterwards(self):
+        o = FakeOverlay(2)
+        seen = []
+        orig = lc.synced_trigger
+        lc.synced_trigger = lambda ov: (seen.append((ov.dac0_player.any(), ov.dac1_player.any())), ov.capture())
+        try:
+            lc.check_adc_headroom(o, np.full(lc.RAM, 1000, '<i2'), (True, True), {})
+        finally:
+            lc.synced_trigger = orig
+        self.assertTrue(seen and all(a and b for a, b in seen))
+        self.assertFalse(o.enabled or o.dac0_player.any() or o.dac1_player.any())
+
     def test_near_full_scale_is_refused_and_the_dac_is_off(self):
         o, r, error = self.run_check(400)
         self.assertIn('lower the DAC peak', error)

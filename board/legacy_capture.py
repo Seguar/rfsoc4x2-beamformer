@@ -74,6 +74,11 @@ ZONE_MARGIN_DB = 3.0
 REFERENCE_PEAK = 1200
 DAC_PEAK_MAX = 24000
 ADC_PEAK_LIMIT_DBFS = -6.0
+# --both-dacs: DAC_B and DAC_A play the same waveform into a 0 deg combiner. DAC_A's mixer
+# phase (--dac-a-phase) is part of the start configuration, written by configure_dacs()
+# with the SYSREF event and latched by the wrapper's sync_tiles(), as /boot/doa_mts.py does.
+# Over the air with the AKF-1252 filter, +40 deg added the two coherently (+5 dB over
+# DAC_B alone), the same in 6 sessions and after a reboot (2026-11-22).
 SRC_SHA = '3f17e6cccef941d1bac4fefff4439472d8a6e6923b0ef7633e6184448be9eef3'
 RAM = 1048576
 SENTINEL = np.array([32767, -32768, 32767, -32768, 32767, -32768, 32767, -32768], dtype='<i2')
@@ -736,6 +741,9 @@ def main():
     p.add_argument('--control-port', type=int, default=0, help='separate acknowledged command socket; window4 only')
     p.add_argument('--rf-mhz', type=int, default=DEFAULT_RF_MHZ, choices=sorted(RF_PROFILES))
     p.add_argument('--dac', choices=['0', '1'], default='0')
+    p.add_argument('--both-dacs', action='store_true', help='DAC_B and DAC_A play the same waveform')
+    p.add_argument('--dac-a-phase', type=float, default=0.0,
+                   help='DAC_A mixer phase at start (degrees, -179.99..179.99; with --both-dacs)')
     p.add_argument('--dac-peak', type=int, default=REFERENCE_PEAK,
                    help='DAC waveform peak code, %d..%d (reference is scaled from %d)' % (100, DAC_PEAK_MAX, REFERENCE_PEAK))
     p.add_argument('--sampling-freq-unit', choices=['GHz'], required=True)
@@ -783,13 +791,19 @@ def main():
         raise ValueError('window4 needs the reference ref125 (131072 complex) and burst length')
     if words.dtype != np.dtype('<i2') or words.shape != (RAM,) or np.max(np.abs(words.astype(int))) > 1200:
         raise ValueError('Legacy helper requires 1048576 int16 words with peak <= 1200')
+    if a.both_dacs and a.dac != '0':
+        raise ValueError('--both-dacs plays DAC_B (--dac 0) and DAC_A')
+    if not -179.99 <= a.dac_a_phase <= 179.99:
+        raise ValueError('--dac-a-phase must be -179.99..179.99 (the converter refuses +-180)')
+    dac_mask = (True, True) if a.both_dacs else a.dac
     if not 100 <= a.dac_peak <= DAC_PEAK_MAX:
         raise ValueError('--dac-peak must be 100..%d' % DAC_PEAK_MAX)
     if a.dac_peak != REFERENCE_PEAK:
         words = np.clip(np.rint(words.astype(float) * (a.dac_peak / REFERENCE_PEAK)), -32767, 32767).astype('<i2')
     manifest = {'board': board.decode(), 'rf_mhz': a.rf_mhz, 'dac': a.dac,
                 'dac_connector': {'0': 'DAC_B', '1': 'DAC_A'}[a.dac],
-                'dac_peak': a.dac_peak, 'dac_words_peak': int(np.max(np.abs(words.astype(int)))),
+                'dac_peak': a.dac_peak, 'both_dacs': bool(a.both_dacs),
+                'dac_a_phase_deg': a.dac_a_phase if a.both_dacs else 0.0, 'dac_words_peak': int(np.max(np.abs(words.astype(int)))),
                 'receive_stream0_connector': 'ADC_D', 'fs_assumed_hz': 125e6,
                 'profile': PROFILE, 'schedule': a.schedule, 'frames_planned': total,
                 'continuous': bool(a.continuous), 'max_seconds': a.max_seconds, 'owner_stdin': True,
@@ -845,20 +859,21 @@ def main():
         overlay.d_centre_freq = [a.rf_mhz]*4
         overlay.d_nyquist_zone = [rf['dac_zone']]*4
         manifest.update(adc_nyquist_zone=rf['adc_zone'], dac_nyquist_zone=rf['dac_zone'])
-        overlay.d_phases = [0, 0, 0, 0]
+        overlay.d_phases = [0, 0, a.dac_a_phase if a.both_dacs else 0, 0]   # latched by MTS below
         manifest['sync'] = enable_mts(overlay)
         require_lock(overlay, manifest, 'after_sync')
         if len(overlay.adc_capture) != RAM:
             raise RuntimeError('ADC RAM size differs')
         manifest['adc_ram_words'] = RAM
         overlay.da = 2
-        overlay.dacPower = [int(a.dac == '0'), 0, int(a.dac == '1'), 0]
+        overlay.dacPower = [1, 0, 1, 0] if a.both_dacs else [int(a.dac == '0'), 0, int(a.dac == '1'), 0]
         if a.rf_mhz in SELECT_DAC_ZONE:
-            manifest['dac_nyquist_zone'] = select_dac_zone(overlay, words, a.dac, a.rf_mhz, manifest)
+            manifest['dac_nyquist_zone'] = select_dac_zone(overlay, words, dac_mask, a.rf_mhz, manifest)
             require_lock(overlay, manifest, 'after_dac_zone_selection')
-        check_adc_headroom(overlay, words, a.dac, manifest)
+        check_adc_headroom(overlay, words, dac_mask, manifest)
         rf_state = dict(rf_mhz=a.rf_mhz, adc_nyquist_zone=manifest['adc_nyquist_zone'],
                         dac_nyquist_zone=manifest['dac_nyquist_zone'], dac_peak=a.dac_peak,
+                        dac_power=[int(v) for v in overlay.dacPower], dac_a_phase_deg=manifest['dac_a_phase_deg'],
                         adc_peak_dbfs=manifest['adc_headroom']['peak_dbfs'])
         print('RF profile ' + json.dumps(rf_state), flush=True)
         if a.control_port:
@@ -953,10 +968,10 @@ def main():
             target = words if kind == 'wave' else np.zeros(RAM, dtype='<i2')
             if loaded != kind:
                 with hardware_lock:
-                    enabled = overlay.dacPower[0 if a.dac=='0' else 2]
-                    write_dac(overlay, target if enabled else np.zeros(RAM, dtype='<i2'), a.dac)
+                    # each DAC plays only while its dacPower is on; the other RAM is zero
+                    write_dac(overlay, target, (bool(overlay.dacPower[0]), bool(overlay.dacPower[2])))
                     loaded = kind
-                    overlay.dacs_control()  # enables the selected DAC only (dacPower)
+                    overlay.dacs_control()  # enables the DACs set in dacPower
                 time.sleep(.01)
             for _ in range(value):
                 try:

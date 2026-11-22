@@ -51,6 +51,8 @@ MAX_FRAMES = 200000
 RF_PROFILES = {3000: dict(adc_zone=2, dac_zone=1), 5200: dict(adc_zone=1, dac_zone=2)}
 DEFAULT_RF_MHZ = 5200
 DAC_PEAK_MAX = 24000          # equal to the helper's; it also checks ADC headroom at start
+DEFAULT_DACS = 'AB'              # DAC_B + DAC_A into one 0 deg combiner (over the air, 2026-11-22)
+DEFAULT_DAC_A_PHASE = 40.0       # deg; coherent sum for this cabling, stable over sessions and a reboot
 DEFAULT_DAC_PEAK = 24000         # over the air at 0.2 m: 1200 no lock, 9600 0.92, 24000 0.98 (2026-11-19)
 KEEP_RUNS = 20
 READY_LINE = 'Waiting for legacy client'
@@ -305,6 +307,12 @@ class Service:
         rf_mhz = request.get('rf_mhz', a.rf_mhz)
         if isinstance(rf_mhz, bool) or rf_mhz not in RF_PROFILES:
             raise Refused('bad_request', 'rf_mhz must be one of %s.' % ', '.join(map(str, sorted(RF_PROFILES))))
+        dacs = request.get('dacs', getattr(a, 'dacs', DEFAULT_DACS))
+        if dacs not in ('B', 'AB'):
+            raise Refused('bad_request', 'dacs must be "B" or "AB".')
+        dac_a_phase = request.get('dac_a_phase_deg', getattr(a, 'dac_a_phase', DEFAULT_DAC_A_PHASE))
+        if not isinstance(dac_a_phase, (int, float)) or isinstance(dac_a_phase, bool) or not -179.99 <= dac_a_phase <= 179.99:
+            raise Refused('bad_request', 'dac_a_phase_deg must be -179.99..179.99.')
         dac_peak = request.get('dac_peak', getattr(a, 'dac_peak', DEFAULT_DAC_PEAK))
         if not isinstance(dac_peak, int) or isinstance(dac_peak, bool) or not 100 <= dac_peak <= DAC_PEAK_MAX:
             raise Refused('bad_request', 'dac_peak must be an integer 100..%d.' % DAC_PEAK_MAX)
@@ -328,6 +336,7 @@ class Service:
                     '--stream-bind', local, '--stream-port', str(a.stream_port), '--request-timeout', '120',
                     '--control-port', str(a.control_port), '--dac', '0', '--rf-mhz', str(rf_mhz),
                     '--dac-peak', str(dac_peak),
+                    *(['--both-dacs', '--dac-a-phase', '%.2f' % dac_a_phase] if dacs == 'AB' else []),
                     '--sampling-freq-unit', 'GHz', '--wire-mode', 'window4']
             clock = request.get('capture_clock_mhz', getattr(a, 'capture_clock_mhz', 0))
             if clock:
@@ -339,7 +348,9 @@ class Service:
             ready = threading.Event()
             # the helper reports the zones it really set (5200: DAC zone measured per session)
             rf_state = dict(rf_mhz=rf_mhz, adc_nyquist_zone=RF_PROFILES[rf_mhz]['adc_zone'],
-                            dac_nyquist_zone=RF_PROFILES[rf_mhz]['dac_zone'], dac_peak=dac_peak)
+                            dac_nyquist_zone=RF_PROFILES[rf_mhz]['dac_zone'], dac_peak=dac_peak,
+                            dac_power=[1, 0, 1, 0] if dacs == 'AB' else [1, 0, 0, 0],
+                            dac_a_phase_deg=float(dac_a_phase) if dacs == 'AB' else 0.0)
 
             def log_output():
                 with (run / 'board.log').open('wb') as log:
@@ -476,6 +487,10 @@ def parser():
                    help='PL clock 0 for every session (0: overlay value); a client may request another')
     p.add_argument('--rf-mhz', type=int, default=DEFAULT_RF_MHZ, choices=sorted(RF_PROFILES),
                    help='start frequency of every session (measured profiles only); a client may request another')
+    p.add_argument('--dacs', choices=['B', 'AB'], default=DEFAULT_DACS,
+                   help='DACs that transmit in every session; a client may request another')
+    p.add_argument('--dac-a-phase', type=float, default=DEFAULT_DAC_A_PHASE,
+                   help='DAC_A mixer phase at start with --dacs AB (degrees)')
     p.add_argument('--dac-peak', type=int, default=DEFAULT_DAC_PEAK,
                    help='DAC waveform peak code of every session (100..%d); a client may request another' % DAC_PEAK_MAX)
     p.add_argument('--allow-cidr', action='append', default=[], help='extra client network, e.g. 198.51.100.0/24')

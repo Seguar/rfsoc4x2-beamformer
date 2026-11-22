@@ -164,6 +164,19 @@ class SessionTests(unittest.TestCase):
         argv = self.manifest()['argv']
         self.assertEqual(argv[argv.index('--rf-mhz')+1], '3000')
         self.assertEqual(argv[argv.index('--dac-peak')+1], str(svc.DEFAULT_DAC_PEAK))
+        self.assertIn('--both-dacs', argv)
+        self.assertEqual(argv[argv.index('--dac-a-phase')+1], '40.00')
+        c.close()
+
+    def test_single_dac_request(self):
+        c, f = self.start(max_seconds=60, dacs='B')
+        ready = self.until(f, 'ready', 'error')
+        self.assertEqual((ready['dac_power'], ready['dac_a_phase_deg']), ([1, 0, 0, 0], 0.0))
+        c.sendall(b'{"op":"stop"}\n')
+        self.until(f, 'ended', 'error')
+        argv = self.manifest()['argv']
+        self.assertNotIn('--both-dacs', argv)
+        self.assertNotIn('--dac-a-phase', argv)
         c.close()
 
     def test_requested_dac_peak(self):
@@ -214,7 +227,8 @@ class SessionTests(unittest.TestCase):
         self.pre = good()
         for request in [{'max_seconds': 0}, {'max_seconds': 14401}, {'max_seconds': 'x'},
                         {'rf_mhz': 5700}, {'rf_mhz': '5200'}, {'rf_mhz': True},
-                        {'dac_peak': 24001}, {'dac_peak': 99}, {'dac_peak': 2400.0}, {'dac_peak': True}]:
+                        {'dac_peak': 24001}, {'dac_peak': 99}, {'dac_peak': 2400.0}, {'dac_peak': True},
+                        {'dacs': 'A'}, {'dac_a_phase_deg': 180}, {'dac_a_phase_deg': '40'}]:
             c, f = self.start(**request)
             self.assertEqual(self.until(f, 'error')['code'], 'bad_request')
             c.close()
