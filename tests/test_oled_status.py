@@ -44,7 +44,8 @@ class TextTests(unittest.TestCase):
         self.assertEqual(o.live_text(live, 5200, 'AB', now), ('EVM 3.88%   LIVE', '5200MHz -19dB AB'))
         self.assertEqual(o.live_text(dict(live, evm_percent=None), 5200, 'B', now)[0], 'EVM --      LIVE')
         self.assertEqual(o.live_text(dict(live, evm_percent=float('nan')), 5200, 'B', now)[0], 'EVM --      LIVE')
-        self.assertEqual(o.live_text(live, 5200, 'AB', now + 4)[0], 'no frames')
+        self.assertEqual(o.live_text(live, 5200, 'AB', now + 4)[0], 'EVM 3.88%   LIVE')
+        self.assertEqual(o.live_text(live, 5200, 'AB', now + 6)[0], 'no frames')
         self.assertEqual(o.live_text(dict(live, streaming=False), 5200, 'AB', now)[0], 'PAUSED')
         # retuned by the app: the helper's frequency, not the start profile
         self.assertEqual(o.live_text(dict(live, rf_mhz=3000.0), 5200, 'AB', now)[1], '3000MHz -19dB AB')

@@ -110,7 +110,7 @@ def live_text(status, rf_mhz, dacs, now):
     frames = status.get('frames', 0)
     if not status.get('streaming', True):
         top = 'PAUSED'
-    elif age > 3 or not frames:
+    elif age > 5 or not frames:
         top = 'no frames'
     else:
         evm = status.get('evm_percent')

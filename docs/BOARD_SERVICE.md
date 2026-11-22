@@ -77,7 +77,7 @@ driver `rfsoc4x2.oled` from the PYNQ board package) once per second:
 | starting | `Starting 5200MHz` | `load+sync   12s` |
 | ready, no frame yet | `Ready 5200MHz AB` | `waiting for app` |
 | streaming | `EVM 3.88%   LIVE` (`EVM --` until the app reports one) | `5200MHz -19dB AB`: current RF, ADC peak of the last frame (dBFS), DACs |
-| paused / no frame for 3 s | `PAUSED` / `no frames` | as above |
+| paused / no frame for 5 s | `PAUSED` / `no frames` | as above |
 | ended (20 s) | `Session ended` | `DACs off 1234fr`, or `DAC OFF UNSURE!` |
 | refused or failed (20 s) | `Board error` | the code, e.g. `board_busy` |
 
