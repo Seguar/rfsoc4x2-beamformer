@@ -85,8 +85,12 @@ The helper writes `status.json` (frames, RF, ADC peak, the app's EVM) in the run
 folder at most once per second; the application (v0.6.5 and later) sends its EVM
 with the display-only `evm` command every 2 s over a second control connection,
 so a display failure never stops acquisition. Older applications work unchanged
-and show `EVM --`. Writes run in a background thread (a full write takes about
-0.5 s); without the driver the display stays off. `--no-oled` leaves it alone.
+and show `EVM --`. Writes run in a background thread. A change is written in
+place (cursor to the first changed character, then only those characters: an
+EVM digit change takes 31 ms on the board instead of 466 ms for the driver's
+clear-and-rewrite, and the screen does not blink); a new state, every start
+second and every 15 s are whole-screen writes. Without the driver the display
+stays off. `--no-oled` leaves it alone.
 `boot.py` is stopped during a session; `/boot/doa_mts.py` clears the display
 when the helper loads it, and the next one-second update writes it again.
 

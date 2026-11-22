@@ -2,18 +2,27 @@
 
 The session service owns the display; nothing else writes it while the service runs.
 The vendor driver (rfsoc4x2.oled, PYNQ board package) is loaded on the first write,
-in a background thread: a full two-line write takes about 0.5 s on the board, so
-writes never block a session. Only the newest text is written; an unchanged text is
-not written again. Without the driver or the device (a host test, another board)
+in a background thread, so writes never block a session. The driver waits 10 ms
+after every byte and its string write clears the display first (about 0.47 s for
+two lines, with a blink); a change is therefore written in place: cursor to the
+first changed character, then only the changed characters (an EVM digit change
+takes about 40 ms). A whole-screen write is used for the first text, when the
+caller asks for it (a new state) and every FULL_EVERY seconds, in case another
+program (boot.py, /boot/doa_mts.py on import) wrote or cleared the display. Only
+the newest text is written; an unchanged text is not written again. Without the driver or the device (a host test, another board)
 the display is off and the service runs as before. This module touches no RF
 hardware and is imported without the board package.
 """
 import json
 import math
+import os
 import threading
 import time
 
 WIDTH = 16
+DEVICE = '/dev/spidev1.0'
+FULL_EVERY = 15.0      # s
+LINE_ADDRESS = (0x00, 0x40)   # DDRAM address of each line (US2066, 2-line mode)
 
 
 def fit(line):
@@ -26,13 +35,60 @@ def screen(top, bottom=''):
     return fit(top) + '\n' + fit(bottom)
 
 
+class VendorDisplay:
+    """rfsoc4x2.oled with in-place writes through its own command/data calls."""
+
+    def __init__(self):
+        # The driver's init calls exit(2) when it cannot open the device, which would
+        # end the whole service: check first and raise instead.
+        if not os.access(DEVICE, os.R_OK | os.W_OK):
+            raise OSError('%s is missing or not writable' % DEVICE)
+        import ctypes
+        from rfsoc4x2 import oled   # board package
+        self.display = oled.oled_display()
+        # the package's cffi declarations cannot call the byte functions (u_int8_t);
+        # ctypes on the same library shares the device handle its init opened
+        self.lib = ctypes.CDLL(oled._lib_location)
+        for name in ('send_oled_cmd', 'send_oled_data'):
+            getattr(self.lib, name).argtypes = [ctypes.c_uint8]
+            getattr(self.lib, name).restype = None
+
+    def write(self, text):
+        self.display.write(text)
+
+    def put(self, row, col, text):
+        self.lib.send_oled_cmd(0x80 | (LINE_ADDRESS[row] + col))
+        for c in text:
+            self.lib.send_oled_data(ord(c))
+
+
 def vendor_display():
-    from rfsoc4x2 import oled   # board package; needs root for /dev/spidev1.0
-    return oled.oled_display()
+    return VendorDisplay()
+
+
+def changed_runs(old, new):
+    """(row, col, text) pieces that turn screen ``old`` into ``new``. Changes one
+    character apart are joined: rewriting it costs what a new cursor command costs."""
+    runs = []
+    for row, (a, b) in enumerate(zip(old.split('\n'), new.split('\n'))):
+        diff = [k for k in range(WIDTH) if a[k] != b[k]]
+        start = None
+        for k in diff:
+            if start is None:
+                start = end = k
+            elif k - end <= 2:
+                end = k
+            else:
+                runs.append((row, start, b[start:end + 1]))
+                start = end = k
+        if start is not None:
+            runs.append((row, start, b[start:end + 1]))
+    return runs
 
 
 class Oled:
-    """Latest-text-wins writer. ``factory`` returns an object with write(text)."""
+    """Latest-text-wins writer. ``factory`` returns an object with write(text) and,
+    optionally, put(row, col, text) for in-place writes."""
 
     def __init__(self, factory=vendor_display, enabled=True, log=print):
         self.factory = factory
@@ -40,7 +96,10 @@ class Oled:
         self.log = log
         self.error = ''
         self.written = None
+        self.full_at = -math.inf
+        self.writes = dict(full=0, partial=0)
         self._next = None
+        self._full = False
         self._wake = threading.Condition()
         self._stop = False
         self._thread = None
@@ -48,11 +107,13 @@ class Oled:
             self._thread = threading.Thread(target=self._run, name='oled', daemon=True)
             self._thread.start()
 
-    def show(self, top, bottom=''):
+    def show(self, top, bottom='', full=False):
+        """Queue a text; ``full`` asks for a whole-screen write (a new state)."""
         if not self.enabled:
             return
         with self._wake:
             self._next = screen(top, bottom)
+            self._full = self._full or full
             self._wake.notify()
 
     def close(self, top=None, bottom='', wait=3):
@@ -71,13 +132,23 @@ class Oled:
             with self._wake:
                 while not self._stop and (self._next is None or self._next == self.written):
                     self._wake.wait()
-                text = self._next
+                text, full = self._next, self._full
+                self._full = False
                 if text is None or text == self.written:
                     return
             try:
                 if device is None:
                     device = self.factory()
-                device.write(text)
+                now = time.monotonic()
+                if (full or self.written is None or not hasattr(device, 'put')
+                        or now - self.full_at >= FULL_EVERY):
+                    device.write(text)
+                    self.full_at = now
+                    self.writes['full'] += 1
+                else:
+                    for row, col, piece in changed_runs(self.written, text):
+                        device.put(row, col, piece)
+                    self.writes['partial'] += 1
                 self.written = text
             except Exception as exc:  # no driver, no device, no permission: display off
                 self.error = '%s: %s' % (type(exc).__name__, exc)

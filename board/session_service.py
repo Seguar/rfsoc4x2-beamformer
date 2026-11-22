@@ -284,11 +284,18 @@ class Service:
 
     def display_loop(self):
         tick = 0
+        last_mode = None
         while not self.stopping.is_set():
             try:
                 text = self.display_text(time.time(), tick)
                 if text is not None:
-                    self.oled.show(*text)
+                    # in place within one state (EVM, RF, level change); a new state is a full
+                    # write, and so is every start second (doa_mts.py clears the display on import)
+                    mode = self.view['mode']
+                    self.oled.show(*text, full=mode != last_mode or mode == 'starting')
+                    last_mode = mode
+                else:
+                    last_mode = None
             except Exception as exc:  # the display never stops the service
                 print('OLED text failed: %s: %s' % (type(exc).__name__, exc), flush=True)
             tick += 1

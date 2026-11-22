@@ -1,5 +1,6 @@
 """Hardware-free tests of the board OLED texts and writer (board/oled_status.py)."""
 import json
+import os
 import tempfile
 import threading
 import time
@@ -12,13 +13,33 @@ from board import oled_status as o
 class Device:
     def __init__(self, fail=False, slow=0.0):
         self.texts, self.fail, self.slow = [], fail, slow
-        self.release = threading.Event()
 
     def write(self, text):
         if self.fail:
             raise OSError('Unable to open OLED SPI file')
         time.sleep(self.slow)
         self.texts.append(text)
+
+
+class InPlaceDevice(Device):
+    """Models the display memory: write() clears and writes, put() moves the cursor."""
+    def __init__(self):
+        super().__init__()
+        self.rows = [' ' * 16, ' ' * 16]
+        self.bytes = 0
+
+    def write(self, text):
+        super().write(text)
+        self.rows = text.split('\n')
+        self.bytes += 4 + len(text)          # clear, home, display on, line 2 + characters
+
+    def put(self, row, col, text):
+        line = self.rows[row]
+        self.rows[row] = line[:col] + text + line[col + len(text):]
+        self.bytes += 1 + len(text)
+
+    def shown(self):
+        return '\n'.join(self.rows)
 
 
 def wait_for(cond, seconds=5):
@@ -83,6 +104,53 @@ class WriterTests(unittest.TestCase):
         oled.show('text 4')
         oled.close(wait=5)
         self.assertEqual(device.texts, [o.screen('one'), o.screen('text 4')])
+
+    def test_changes_are_written_in_place(self):
+        device = InPlaceDevice()
+        oled = o.Oled(factory=lambda: device, log=lambda *a, **k: None)
+        texts = [('EVM 3.88%   LIVE', '5200MHz -19dB AB'), ('EVM 3.91%   LIVE', '5200MHz -19dB AB'),
+                 ('EVM 12.40%  LIVE', '5200MHz -20dB AB'), ('EVM --      LIVE', '3000MHz -20dB AB')]
+        for top, bottom in texts:
+            oled.show(top, bottom)
+            self.assertTrue(wait_for(lambda: oled.written == o.screen(top, bottom)))
+            self.assertEqual(device.shown(), o.screen(top, bottom))
+        self.assertEqual(oled.writes, dict(full=1, partial=3))
+        self.assertEqual(len(device.texts), 1)
+        before = device.bytes
+        oled.show('EVM 3.90%   LIVE', '3000MHz -20dB AB')
+        self.assertTrue(wait_for(lambda: oled.written.startswith('EVM 3.90')))
+        self.assertLessEqual(device.bytes - before, 6)       # about 50 ms instead of 0.47 s
+        oled.show('Session ended', 'DACs off 7fr', full=True)
+        self.assertTrue(wait_for(lambda: oled.written.startswith('Session')))
+        self.assertEqual((oled.writes['full'], device.shown()), (2, o.screen('Session ended', 'DACs off 7fr')))
+        oled.close()
+
+    def test_whole_screen_refresh_after_full_every(self):
+        device = InPlaceDevice()
+        oled = o.Oled(factory=lambda: device, log=lambda *a, **k: None)
+        oled.show('a')
+        self.assertTrue(wait_for(lambda: oled.written))
+        oled.full_at -= o.FULL_EVERY
+        oled.show('b')
+        self.assertTrue(wait_for(lambda: oled.written == o.screen('b')))
+        self.assertEqual(oled.writes, dict(full=2, partial=0))
+        oled.close()
+
+    def test_changed_runs(self):
+        old = o.screen('EVM 3.88%   LIVE', '5200MHz -19dB AB')
+        self.assertEqual(o.changed_runs(old, old), [])
+        self.assertEqual(o.changed_runs(old, o.screen('EVM 3.91%   LIVE', '5200MHz -19dB AB')), [(0, 6, '91')])
+        self.assertEqual(o.changed_runs(old, o.screen('EVM 4.88%   LIVE', '5200MHz -19dB AB')), [(0, 4, '4')])
+        # one unchanged character between two changes: one piece
+        self.assertEqual(o.changed_runs(old, o.screen('EVM 4.98%   LIVE', '5200MHz -19dB AB')), [(0, 4, '4.9')])
+        self.assertEqual(o.changed_runs(old, o.screen('XVM 3.88%   LIVX', '5200MHz -20dB AB')),
+                         [(0, 0, 'X'), (0, 15, 'X'), (1, 9, '20')])
+
+    def test_vendor_display_refuses_a_missing_device(self):
+        if os.access(o.DEVICE, os.W_OK):
+            self.skipTest('device present')
+        with self.assertRaises(OSError):
+            o.VendorDisplay()
 
     def test_close_writes_a_last_text(self):
         device = Device()

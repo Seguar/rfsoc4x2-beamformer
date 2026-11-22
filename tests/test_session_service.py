@@ -61,10 +61,12 @@ class PolicyTests(unittest.TestCase):
 class RecordingOled:
     def __init__(self):
         self.shown = []
+        self.full = []
         self.closed = None
 
-    def show(self, top, bottom=''):
+    def show(self, top, bottom='', full=False):
         self.shown.append((top, bottom))
+        self.full.append(full)
 
     def close(self, top=None, bottom='', wait=3):
         self.closed = (top, bottom)
@@ -334,6 +336,7 @@ class SessionTests(unittest.TestCase):
         while not self.oled.shown and time.monotonic() < deadline:
             time.sleep(.05)
         self.assertEqual(self.oled.shown[0], ('RFSoC4x2 BF idle', '192.0.2.10'))
+        self.assertTrue(self.oled.full[0])               # first text of a state: whole screen
         self.service.close(wait=5)
         self.assertEqual(self.oled.closed, ('RFSoC4x2 BF', 'service stopped'))
 
