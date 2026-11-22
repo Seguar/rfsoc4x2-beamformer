@@ -45,7 +45,19 @@ for k=1:c.maxConsecutiveErrors+2
 end
 assert(contains(string(a.reason),"LCMV"),'LCMV refusal not shown: %s',string(a.reason));
 assert(s.Controller.ModeRefusals==c.maxConsecutiveErrors+2 && s.Controller.ConsecutiveErrors==0);
-s.configure(struct('bf','Steering'));enqueue(200,0,true);s.step();a=s.snapshot();
+% Original-app ranges: a source count above what 4 elements resolve, or a scan
+% grid too large to hold, is refused at configure time or per frame, never fatal.
+s.configure(struct('bf','Steering'));
+for n=[4 5]
+    refused=false;try,s.configure(struct('num',n));catch e,refused=contains(e.message,'at most 3 sources');end
+    assert(refused && s.Config.num==1,'Source count %d was not refused.',n);
+    enqueue(300+n,0,true);s.step();a=s.snapshot();
+    assert(s.Controller.IsOpen && a.valid,'After refusing source count %d: %s',n,string(a.reason));
+end
+s.configure(struct('num',1));
+refused=false;try,s.configure(struct('scan_res',1e-4,'scan_bw',360,'avg_factor',1000));catch e,refused=contains(e.message,'too large');end
+assert(refused,'Huge scan grid was not refused.');
+s.configure(struct('bf','Steering'));enqueue(400,0,true);s.step();a=s.snapshot();
 assert(a.valid,'Steering after refusals: %s',string(a.reason));
 s.close();delete(s);assert(closed==1);
 % Full clean frontend uses one figure and one timer, no hidden legacy app.

@@ -681,14 +681,14 @@ classdef BeamformerView < handle
             % Rows 17..20 hold the four phase fields (see phaseKind).
             r=obj.controlGrid(rf,{20,28,22,22,20,28,22,28,22,28,22,22,28,6,20,28,28,28,28,28,28,6,28,44});
             obj.heading(r,1,'ADC');
-            obj.number(r,2,'ADC center','adcMHz',obj.field(obj.Config,'fc',3e9)/1e6,[0 6000],false,'%g MHz');
+            obj.number(r,2,'ADC center','adcMHz',obj.field(obj.Config,'fc',3e9)/1e6,[1 10000],false,'%g MHz');
             obj.checkbox(r,3,'Even Nyquist zone','adcEven',obj.field(obj.Config,'nyquistZone',1)==2,false);
             obj.checkbox(r,4,'Mirror','adcMirror',obj.field(obj.Config,'adcMirror',1)<0,false);
             obj.Controls.adcMirror.Tooltip='Negative ADC mixer frequency: mirrors the received spectrum.';
             obj.heading(r,5,'DAC');
-            obj.number(r,6,'DAC B center','dacMHz',obj.field(obj.Config,'fc_d0',3e9)/1e6,[0 6000],false,'%g MHz');
+            obj.number(r,6,'DAC B center','dacMHz',obj.field(obj.Config,'fc_d0',3e9)/1e6,[-10000 10000],false,'%g MHz');
             obj.checkbox(r,7,'DAC B even Nyquist zone','d0Even',obj.field(obj.Config,'nyquistZone_d0',1)==2,false);
-            obj.number(r,8,'DAC A center','dac1MHz',obj.field(obj.Config,'fc_d1',3e9)/1e6,[0 6000],false,'%g MHz');
+            obj.number(r,8,'DAC A center','dac1MHz',obj.field(obj.Config,'fc_d1',3e9)/1e6,[-10000 10000],false,'%g MHz');
             obj.checkbox(r,9,'DAC A even Nyquist zone','d1Even',obj.field(obj.Config,'nyquistZone_d1',1)==2,false);
             for n=["adcMHz","dacMHz","dac1MHz","adcEven","adcMirror","d0Even","d1Even"]
                 obj.Controls.(n).ValueChangedFcn=@(~,~)obj.dirty();
@@ -713,7 +713,7 @@ classdef BeamformerView < handle
             obj.Controls.PhaseKind.ItemsData={'ADC','DAC'};obj.Controls.PhaseKind.Value='DAC';
             obj.Controls.PhaseKind.ValueChangedFcn=@(~,~)obj.phaseKind();
             for k=1:4
-                obj.number(r,16+k,sprintf('Channel %d',k),sprintf('phase%d',k),obj.PhaseValues.DAC(k),[-180 180],false,'%g°');
+                obj.number(r,16+k,sprintf('Channel %d',k),sprintf('phase%d',k),obj.PhaseValues.DAC(k),[-179 179],false,'%g°');
                 obj.Controls.(sprintf('phase%d',k)).ValueChangedFcn=@(~,~)obj.dirty();
                 obj.Controls.(sprintf('phase%d',k)).RoundFractionalValues='on';
             end
@@ -775,11 +775,11 @@ classdef BeamformerView < handle
             if ~obj.has('zero'),obj.Controls.Zero.Enable='off';obj.Controls.ZeroState.Text='needs board control';end
             d=obj.controlGrid(dsp,{20,28,28,28,28,28,22,24,24,24,24});
             obj.heading(d,1,'RECEIVE PROCESSING');
-            obj.number(d,2,'Source count','num',obj.field(obj.Config,'num',1),[1 3],true,'%g');
-            obj.number(d,3,'Scan width','scan_bw',obj.field(obj.Config,'scan_bw',120),[1 180],true,'%g°');
-            obj.number(d,4,'Scan step','scan_res',obj.field(obj.Config,'scan_res',1),[.1 10],true,'%g°');
-            obj.number(d,5,'Average frames','avg_factor',obj.field(obj.Config,'avg_factor',10),[1 100],true,'%g');
-            obj.number(d,6,'Signal bandwidth','bwMHz',obj.field(obj.Config,'bw',100e6)/1e6,[1 125],false,'%g MHz');
+            obj.number(d,2,'Source count','num',obj.field(obj.Config,'num',1),[1 5],true,'%g');
+            obj.number(d,3,'Scan width','scan_bw',obj.field(obj.Config,'scan_bw',120),[2 360],true,'%g°');
+            obj.number(d,4,'Scan step','scan_res',obj.field(obj.Config,'scan_res',1),[1e-4 Inf],true,'%g°');
+            obj.number(d,5,'Average frames','avg_factor',obj.field(obj.Config,'avg_factor',10),[1 Inf],true,'%g');
+            obj.number(d,6,'Signal bandwidth','bwMHz',obj.field(obj.Config,'bw',100e6)/1e6,[1 500],false,'%g MHz');
             obj.Accepted.bw=obj.Controls.bwMHz.Value;
             obj.Controls.bwMHz.ValueChangedFcn=@(h,~)obj.bandwidth(h);
             obj.heading(d,7,'IQ / PHASE CORRECTION');
@@ -797,8 +797,10 @@ classdef BeamformerView < handle
             % --- Algorithms -------------------------------------------------
             a=obj.controlGrid(advanced,{20,28,28,28,28,28,28,6,22,28,28,44});
             obj.heading(a,1,'BEAMFORMER PARAMETERS');
-            spec={'diag','Diagonal loading',[0 1e6],'%g';'alpha','Uncertainty',[0 100],'%g';'gamma','Robust loading γ',[0 100],'%g'; ...
-                'iter','Iterations',[1 1000],'%g';'mis_ang','Mismatch angle',[0 90],'%g°';'alg_scan_res','Algorithm step',[.1 10],'%g°'};
+            % Ranges of the original App Designer controls (VSA_rfsoc_refactor_exported);
+            % the session still refuses values an algorithm cannot use, with the reason.
+            spec={'diag','Diagonal loading',[0 Inf],'%g';'alpha','Uncertainty',[0 Inf],'%g';'gamma','Robust loading γ',[0 Inf],'%g'; ...
+                'iter','Iterations',[1 Inf],'%g';'mis_ang','Mismatch angle',[0.1 20],'%g°';'alg_scan_res','Algorithm step',[0.001 10],'%g°'};
             for k=1:size(spec,1),obj.number(a,k+1,spec{k,2},spec{k,1},obj.field(obj.Config,spec{k,1},1),spec{k,3},true,spec{k,4});end
             obj.heading(a,9,'IQ FILTER PARAMETERS');
             obj.number(a,10,'Filter length','sizeL',obj.field(obj.Config,'sizeL',4),[1 50],true,'%g');
