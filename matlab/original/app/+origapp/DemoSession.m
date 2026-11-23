@@ -283,12 +283,12 @@ classdef DemoSession < handle
                 end
                 if obj.Config.directOnly
                     buffer=frame.samples(:,obj.Config.ch)/2^16;
-                    out=[]; angles=[];ds=[];pat=[];weights=[];
+                    out=[]; angles=[];anglePow=[];ds=[];pat=[];weights=[];
                 else
                     p=obj.Params;p.iqFilter=obj.IqFilter;
                     out=origapp.processLegacyFrame(frame.samples,p);
                     assert(all(isfinite(out.weights)),'origapp:NoSignal','No finite beamforming weights.');
-                    obj.IqFilter=out.iqFilter;buffer=out.vsaBuffer;angles=out.estimated_angle;weights=out.weights;
+                    obj.IqFilter=out.iqFilter;buffer=out.vsaBuffer;angles=out.estimated_angle;anglePow=out.anglePowerDb;weights=out.weights;
                     if out.spectrumAvailable
                         [ds,obj.SpectrumAverage]=avgData(out.yspec(:),obj.SpectrumAverage);
                         ds=ds/max(ds);
@@ -303,7 +303,8 @@ classdef DemoSession < handle
                 displaySamples=buffer;if string(obj.Config.ofdm.orientation)=="IplusjQ",displaySamples=conj(buffer);end
                 obj.Last=struct('valid',true,'reason',"",'sequence',frame.sequence,'timestamp',frame.timestamp, ...
                     'age',origapp.Controller.nowSeconds()-frame.timestamp,'scope',string(obj.Config.arrayLabel)+", UNCALIBRATED", ...
-                    'scan',obj.Params.scan_axis,'doaSpectrum',ds,'patternDb',pat,'angles',angles, ...
+                    'scan',obj.Params.scan_axis,'doaSpectrum',ds,'patternDb',pat,'angles',angles,'anglePowerDb',anglePow, ...
+                    'beamformer',string(obj.Config.bf), ...
                     'samples',displaySamples,'weights',weights,'analysis',r,'spectrum',r.spectrum,'vendor',[], ...
                     'fsHz',obj.Config.fsRfsoc,'directOnly',obj.Config.directOnly, ...
                     'channels',origapp.DemoSession.channelDiagnostics(frame));
@@ -311,7 +312,10 @@ classdef DemoSession < handle
                 elseif obj.ZeroCal.state=="done",obj.Last.scope=string(obj.Config.arrayLabel)+", 0° SET ON THE COMMON FEED";end
                 obj.Status="acquiring";
                 if ~isempty(render),render(obj.snapshot());end
-                obj.Controller.showEvm(r.evmPercent);   % board OLED (rate-limited, never an error)
+                % board OLED (rate-limited, never an error): EVM and the main DOA,
+                % the direction the beam points at (first angle after the priority)
+                main=NaN;if ~isempty(angles),main=angles(1);end
+                obj.Controller.showEvm(r.evmPercent,main);
                 if any(string(obj.Config.analyzer)==["vsa","both"])
                     weights=[];if ~isempty(out),weights=out.weights;end
                     info=struct('kind',kind,'sequence',frame.sequence,'channel',obj.Config.ch,'weights',weights);

@@ -337,7 +337,7 @@ class SessionTests(unittest.TestCase):
                 time.sleep(.05)
         finally:
             os.environ.pop('FAKE_HELPER_STATUS')
-        self.assertEqual(self.service.display_text(time.time(), 0), ('EVM 3.88%   LIVE', '5200MHz -19dB AB'))
+        self.assertEqual(self.service.display_text(time.time(), 0), ('EVM 3.88%   LIVE', 'DOA-42.0 5200 AB'))
         # frames stop arriving: the screen says so instead of an old EVM
         self.assertEqual(self.service.display_text(time.time() + 10, 0)[0], 'no frames')
         c.sendall(b'{"op":"stop"}\n')

@@ -3,7 +3,7 @@ function report=validateDemoSession(referenceMat,referenceRepo,outDir)
 if ~isfolder(outDir),mkdir(outDir);end
 addpath(fullfile(referenceRepo,'Functions'));
 d=load(referenceMat);x=d.ref125(1:32768);rng(20261116);
-q={};closed=0;sends={};vendorBuffers={};shown={};showFails=false;
+q={};closed=0;sends={};vendorBuffers={};shown={};shownAngle={};showFails=false;
 backend=struct('open',@()[],'close',@closeBackend,'next',@nextFrame, ...
     'availableChannels',@()true(1,4),'send',@send,'vsaSend',@sendVsa,'showEvm',@showEvm, ...
     'vsaStatus',@()struct('valid',true,'evmPercent',9,'sequence',2));
@@ -34,6 +34,7 @@ assert(numel(a.samples)==32768 && numel(a.spectrum.freqHz)>0 && isempty(sends));
 assert(numel(findall(groot,'Type','figure'))==figures0,'Headless session constructed a GUI.');
 % The board OLED gets the EVM of each analysed frame; a display failure is never a frame error.
 assert(numel(shown)==1 && isequaln(shown{1},a.analysis.evmPercent),'EVM was not passed to the board display.');
+assert(isequaln(shownAngle{1},a.angles(1)),'Main DOA was not passed to the board display.');
 s.configure(struct('avg_factor',2));a=s.snapshot();assert(s.Config.avg_factor==2 && ~a.valid);
 old=s.Config.doa;refused=false;
 try,s.configure(struct('doa','MVDRman'));catch e,refused=string(e.identifier)=='origapp:Calibration';end
@@ -165,8 +166,8 @@ disp('DEMO_SESSION_COMPLETE');
     function closeBackend(),closed=closed+1;end
     function send(line),sends{end+1}=line;end
     function sendVsa(z),vendorBuffers{end+1}=z;end
-    function showEvm(v)
-        shown{end+1}=v;
+    function showEvm(v,angle)
+        shown{end+1}=v;shownAngle{end+1}=angle;
         if showFails,error('test:display','display failed');end
     end
 end

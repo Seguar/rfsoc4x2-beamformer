@@ -149,8 +149,11 @@ classdef BeamformerView < handle
             doa=obj.field(s,'doaSpectrum',[]);pat=obj.field(s,'patternDb',[]);
             obj.setLine('doa',scan,doa);
             obj.setLine('pattern',scan,pat);
-            angles=obj.field(s,'angles',[]);angles=angles(isfinite(angles));
-            obj.mark('doa',angles);obj.mark('pattern',angles);
+            angles=obj.field(s,'angles',[]);pw=obj.field(s,'anglePowerDb',[]);
+            if numel(pw)~=numel(angles),pw=nan(size(angles));end
+            keep=isfinite(angles);angles=angles(keep);pw=pw(keep);
+            roles=obj.directionRoles(angles,pw,string(obj.field(s,'beamformer',"")));
+            obj.mark('doa',angles,roles);obj.mark('pattern',angles,roles);
             if isempty(angles) || isempty(doa)
                 obj.put(obj.Card.doa.note,'estimate unavailable');
                 if isempty(doa) && (logical(obj.field(s,'directOnly',false)) || isempty(angles))
@@ -159,14 +162,20 @@ classdef BeamformerView < handle
                     obj.emptyState('doa','NO DOA SPECTRUM','this estimator returns angles only');
                 end
             else
-                obj.put(obj.Card.doa.note,sprintf('model angle %s°',strjoin(compose('%.1f',angles(:).'),', ')));
+                obj.put(obj.Card.doa.note,strjoin(roles.text,' · '));
             end
             if isempty(pat)
                 obj.put(obj.Card.pattern.note,'single stream · no weights');
                 obj.emptyState('pattern','NO PATTERN','direct single-stream session');
-            else
+            elseif isempty(angles)
                 [~,ix]=max(pat);
                 obj.put(obj.Card.pattern.note,sprintf('peak at model %.1f°',scan(ix)));
+            else
+                % response of the beam toward each direction: the difference is
+                % how much the other signal is rejected relative to the beam
+                g=arrayfun(@(a)pat(find(abs(scan-a)==min(abs(scan-a)),1)),angles);g(g==0)=0;   % no '-0 dB'
+                parts=compose('%s %.1f°: %.0f dB',string(roles.name(:)),angles(:),g(:));
+                obj.put(obj.Card.pattern.note,char(strjoin(parts,' · ')));
             end
             % --- time domain and per-stream histories --------------------
             samples=obj.field(s,'samples',[]);fs=obj.field(s,'fsHz',obj.field(obj.Config,'fsRfsoc',125e6));
@@ -1537,16 +1546,37 @@ classdef BeamformerView < handle
                     if strcmp(h.Enable,'on'),h.Value=~h.Value;obj.valueAction('pause',h,logical(h.Value));end
             end
         end
-        function mark(obj,name,angles)
-            m=obj.Marks.(name);
+        function mark(obj,name,angles,roles)
+            % Direction markers: the first is where the beam points (solid, ok
+            % colour); others are dashed in the warning colour, labelled with their
+            % strength relative to the strongest direction.
+            if nargin<4,roles=obj.directionRoles(angles,nan(size(angles)),"");end
+            m=obj.Marks.(name);th=obj.Theme;
             for k=1:numel(m)
                 if k<=numel(angles)
-                    obj.setp(m(k),'Value',angles(k));obj.setp(m(k),'Label',sprintf('model %.1f°',angles(k)));
+                    obj.setp(m(k),'Value',angles(k));obj.setp(m(k),'Label',roles.text{k});
+                    if k==1,c=th.ok;st='-';lw=1.6;else,c=th.warn;st='--';lw=1.2;end
+                    obj.setp(m(k),'Color',c);obj.setp(m(k),'LineStyle',st);obj.setp(m(k),'LineWidth',lw);
                     side='right';if mod(k,2)==0,side='left';end
                     obj.setp(m(k),'LabelHorizontalAlignment',side);obj.setp(m(k),'Visible','on');
                 else
                     obj.setp(m(k),'Visible','off');
                 end
+            end
+        end
+        function r=directionRoles(~,angles,powerDb,bf)
+            % Names and labels per direction, in the processing order (first =
+            % where the beam points, chosen by Signal priority). Strength comes from
+            % the steered band power of each direction, as the priority uses.
+            n=numel(angles);r=struct('name',{cell(1,n)},'text',{cell(1,n)});
+            strong=NaN;if n>=2 && all(isfinite(powerDb)),[~,strong]=max(powerDb);end
+            for k=1:n
+                if k==1,nm='beam';elseif bf=="LCMV",nm='null';else,nm='other';end
+                t=sprintf('%s %.1f°',nm,angles(k));
+                if isfinite(strong)
+                    if k==strong,t=[t ' strong'];else,t=sprintf('%s weak %+.0f dB',t,powerDb(k)-powerDb(strong));end
+                end
+                r.name{k}=nm;r.text{k}=t;
             end
         end
         function emptyState(obj,name,headline,reason)

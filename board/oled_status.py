@@ -176,7 +176,8 @@ def waiting_text(rf_mhz, dacs):
 
 
 def live_text(status, rf_mhz, dacs, now):
-    """Streaming: EVM reported by the app (if any), RF, ADC peak and the DACs on."""
+    """Streaming: EVM and main (wanted) DOA reported by the app (if any), RF and the
+    DACs on. The DOA took the place of the ADC peak level (user, 2026-11-23)."""
     age = now - status.get('time', 0)
     frames = status.get('frames', 0)
     if not status.get('streaming', True):
@@ -188,11 +189,11 @@ def live_text(status, rf_mhz, dacs, now):
         top = 'EVM %.2f%%' % evm if isinstance(evm, (int, float)) and math.isfinite(evm) else 'EVM --'
         top = top.ljust(12) + 'LIVE'
     rf = status.get('rf_mhz', rf_mhz)
-    peak = status.get('adc_peak_dbfs')
-    level = '%+.0fdB' % peak if isinstance(peak, (int, float)) and math.isfinite(peak) else '--dB'
-    bottom = '%dMHz %s %s' % (round(rf), level, dacs)
-    if len(bottom) > WIDTH:                     # e.g. -6000 MHz or -100 dB
-        bottom = '%dM %s %s' % (round(rf), level, dacs)
+    doa = status.get('doa_deg')
+    known = isinstance(doa, (int, float)) and math.isfinite(doa) and status.get('streaming', True) and top != 'no frames'
+    bottom = 'DOA%+.1f %d %s' % (doa, round(rf), dacs) if known else 'DOA -- %d %s' % (round(rf), dacs)
+    if len(bottom) > WIDTH:                     # e.g. -6000 MHz or -100.0 deg
+        bottom = 'DOA%+.0f %d %s' % (doa, round(rf), dacs) if known else 'DOA -- %d' % round(rf)
     return top, bottom
 
 

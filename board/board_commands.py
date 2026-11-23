@@ -38,6 +38,7 @@ class BoardCommands:
         self.dac_iq = {0: 0.0, 2: 0.0}
         self.dac_vop = {0: WRAPPER_VOP_UA, 2: WRAPPER_VOP_UA}
         self.evm_percent = None                 # display only: last EVM the app reported
+        self.doa_deg = None                     # display only: last main (wanted) DOA the app reported
 
     def check(self):
         if self.fault:
@@ -141,7 +142,7 @@ class BoardCommands:
                     raise ValueError('Only DAC index 0 (DAC_B) and 2 (DAC_A) exist' if self.both_dacs
                                      else 'Only the session-selected DAC can be enabled')
         self.check()
-        changed = any(name not in ('status', 'evm') and (name, values) != ('dataChan', [self.data_words])
+        changed = any(name not in ('status', 'evm', 'doa') and (name, values) != ('dataChan', [self.data_words])
                       for name, values in cmds)
         try:
             for name, values in cmds:
@@ -149,6 +150,9 @@ class BoardCommands:
                     continue
                 if name == 'evm':
                     self.evm_percent = None if values[0] < 0 else values[0] / 100
+                    continue
+                if name == 'doa':
+                    self.doa_deg = None if values[0] == 99999 else values[0] / 100
                     continue
                 if name == 'dataChan':
                     self.data_words = values[0]

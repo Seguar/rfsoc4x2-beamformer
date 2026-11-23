@@ -761,7 +761,8 @@ def write_live_status(path, overlay, controls, frames, wire):
             frames=frames, rf_mhz=float(overlay.centre_freq),
             adc_peak_dbfs=round(20*np.log10(max(peak, 1)/32768), 1),
             streaming=bool(controls.streaming) if controls is not None else True,
-            evm_percent=controls.evm_percent if controls is not None else None))
+            evm_percent=controls.evm_percent if controls is not None else None,
+            doa_deg=controls.doa_deg if controls is not None else None))
     except Exception as exc:
         print('status.json not written: %s: %s' % (type(exc).__name__, exc), flush=True)
 
@@ -1034,7 +1035,7 @@ def main():
                                  # connector names per the RFSoC 4x2 manual rev A5 / PYNQ base design
                                  'channel_connectors': ['ADC_D', 'ADC_C', 'ADC_B', 'ADC_A'],
                                  'dac_connectors': {'0': 'DAC_B', '2': 'DAC_A'},
-                                 'display_controls': ['evm'] if a.control_port else [],
+                                 'display_controls': ['evm', 'doa'] if a.control_port else [],
                                  'path_controls': ['phasec', 'dphasec', 'again', 'dgain', 'aiqphase', 'diqphase',
                                                    'adsa', 'dvop'] if a.control_port else [],
                                  'lane_convention': 'board lanes I,Q per stream; host builds I - 1j*Q (tcpDataRec)',

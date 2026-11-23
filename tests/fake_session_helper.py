@@ -22,7 +22,7 @@ if os.environ.get('FAKE_HELPER_STATUS'):
     # like the real helper once frames flow: live status for the OLED
     with open(os.path.join(os.path.dirname(out), 'status.json'), 'w') as f:
         json.dump(dict(time=time.time(), frames=12, rf_mhz=float(rf), adc_peak_dbfs=-19.4, streaming=True,
-                       evm_percent=3.88), f)
+                       evm_percent=3.88, doa_deg=-42.0), f)
 while os.read(0, 4096):
     pass
 with open(out, 'w') as f:

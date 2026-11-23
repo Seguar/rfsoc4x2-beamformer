@@ -121,7 +121,11 @@ class BoardCommandTests(unittest.TestCase):
         self.assertIsNone(self.adapter.evm_percent)
         # in a batch with a real change only that change counts
         self.assertEqual(self.adapter.apply('evm 500#da 1')['revision'], 1)
-        for line in ['evm -2', 'evm 100001', 'evm 1/2', 'evm']:
+        # the main DOA is display only too
+        self.assertEqual((self.adapter.apply('doa -4200#evm 388')['revision'], self.adapter.doa_deg), (1, -42.0))
+        self.adapter.apply('doa 99999')
+        self.assertIsNone(self.adapter.doa_deg)
+        for line in ['evm -2', 'evm 100001', 'evm 1/2', 'evm', 'doa 18001', 'doa', 'doa 1/2']:
             with self.subTest(command=line), self.assertRaises(ValueError):
                 self.adapter.apply(line)
         self.assertIsNone(self.adapter.fault)

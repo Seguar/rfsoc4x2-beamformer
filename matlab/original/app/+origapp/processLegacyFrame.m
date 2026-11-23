@@ -25,7 +25,7 @@ function out = processLegacyFrame(rawData, p)
 %   p.manualMvdrFormula "45e726b" (default) | "head" (m_mvdr power-weighted manifold)
 % out.iqFilter returns the updated adaptive filter state.
 
-out = struct('yspec',[],'estimated_angle',[],'bfSig',[],'weights',[], ...
+out = struct('yspec',[],'estimated_angle',[],'anglePowerDb',[],'bfSig',[],'weights',[], ...
     'rawData',[],'vsaBuffer',[],'spectrumAvailable',false,'engine',string(p.bfEngine), ...
     'iqFilter',[],'corrections',strings(1,0));
 assert(size(rawData,2)==4, 'origapp:Frame', 'Need N-by-4 data.');
@@ -118,8 +118,10 @@ for i = 1:npc
     powbp(i,:) = bandpower(rawSumM, p.fsRfsoc, [-p.bw/2 p.bw/2]);
 end
 [~, idx] = sort(powbp, 'ascend');
+anglePower = powbp(:, 1).';          % steered band power per direction (display)
 if idx(p.ang_num) == 1
     estimated_angle = flip(estimated_angle);
+    anglePower = flip(anglePower);
 end
 
 %% c1: calibrated phase/power correction (original 45e726b semantics)
@@ -186,6 +188,9 @@ buff(cutInds) = bfSig/2^16;   % original VSA normalisation
 
 out.yspec = yspec;
 out.estimated_angle = estimated_angle;
+% Per direction, same order (first = where the beam points): steered band
+% power in dB, for the strong/weak labels on the DOA and pattern plots.
+out.anglePowerDb = 10*log10(max(anglePower, realmin));
 out.bfSig = bfSig;
 out.weights = weights;
 out.rawData = rawData;

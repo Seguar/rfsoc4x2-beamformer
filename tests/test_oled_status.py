@@ -55,21 +55,25 @@ class TextTests(unittest.TestCase):
         for top, bottom in [o.idle_text([], 0), o.starting_text(5200, 123.4), o.waiting_text(3000, 'B'),
                             o.ended_text(dict(dac_off_commanded=True, frames=123456)),
                             o.live_text(dict(time=1, frames=1, evm_percent=99.99, rf_mhz=-6000.0,
-                                             adc_peak_dbfs=-100.0), 5200, 'AB', 1)]:
+                                             adc_peak_dbfs=-100.0, doa_deg=-179.99), 5200, 'AB', 1),
+                            o.live_text(dict(time=1, frames=1, rf_mhz=-6000.0), 5200, 'AB', 1)]:
             self.assertLessEqual(len(top), 16, top)
             self.assertLessEqual(len(bottom), 16, bottom)
 
     def test_live_texts(self):
         now = 1000.0
         live = dict(time=now, frames=5, evm_percent=3.88, rf_mhz=5200.0, adc_peak_dbfs=-19.4)
-        self.assertEqual(o.live_text(live, 5200, 'AB', now), ('EVM 3.88%   LIVE', '5200MHz -19dB AB'))
+        self.assertEqual(o.live_text(live, 5200, 'AB', now), ('EVM 3.88%   LIVE', 'DOA -- 5200 AB'))
+        self.assertEqual(o.live_text(dict(live, doa_deg=-42.0), 5200, 'AB', now)[1], 'DOA-42.0 5200 AB')
+        self.assertEqual(o.live_text(dict(live, doa_deg=3.04), 5200, 'B', now)[1], 'DOA+3.0 5200 B')
+        self.assertEqual(o.live_text(dict(live, doa_deg=-42.0), 5200, 'AB', now + 6)[1], 'DOA -- 5200 AB')
         self.assertEqual(o.live_text(dict(live, evm_percent=None), 5200, 'B', now)[0], 'EVM --      LIVE')
         self.assertEqual(o.live_text(dict(live, evm_percent=float('nan')), 5200, 'B', now)[0], 'EVM --      LIVE')
         self.assertEqual(o.live_text(live, 5200, 'AB', now + 4)[0], 'EVM 3.88%   LIVE')
         self.assertEqual(o.live_text(live, 5200, 'AB', now + 6)[0], 'no frames')
         self.assertEqual(o.live_text(dict(live, streaming=False), 5200, 'AB', now)[0], 'PAUSED')
         # retuned by the app: the helper's frequency, not the start profile
-        self.assertEqual(o.live_text(dict(live, rf_mhz=3000.0), 5200, 'AB', now)[1], '3000MHz -19dB AB')
+        self.assertEqual(o.live_text(dict(live, rf_mhz=3000.0, doa_deg=0.0), 5200, 'AB', now)[1], 'DOA+0.0 3000 AB')
 
     def test_end_texts(self):
         self.assertEqual(o.ended_text(dict(reason='client_stop', dac_off_commanded=True, frames=7)),

@@ -213,11 +213,18 @@ classdef Controller < handle
             end
         end
 
-        function showEvm(obj, evmPercent)
-            % Optional backend op: the app's EVM on the board display. Never an error.
+        function showEvm(obj, evmPercent, angleDeg)
+            % Optional backend op: the app's EVM and main DOA on the board display.
+            % Never an error. A backend op taking one argument gets the EVM only.
+            if nargin < 3, angleDeg = NaN; end
             if ~obj.IsOpen || ~obj.hasBackend() || ~origapp.Controller.hasOp(obj.Backend, "showEvm"), return, end
             try
-                obj.Backend.showEvm(evmPercent);
+                b = obj.Backend;
+                if isstruct(b) && nargin(b.showEvm) == 1
+                    b.showEvm(evmPercent);
+                else
+                    b.showEvm(evmPercent, angleDeg);
+                end
             catch
             end
         end

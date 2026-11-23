@@ -175,11 +175,13 @@ classdef LegacyVsaBackend < handle
             c=struct('commands',names,'txArrayElements',0,'uploadDac',false,'display',display);
         end
 
-        function showEvm(obj,evmPercent)
-            % Board OLED only: the EVM in the app goes to the board at most every
-            % 2 s over its own control connection. evm changes no converter and no
-            % settings revision; any failure turns the display updates off for the
-            % session and never touches the IQ stream or the settings connection.
+        function showEvm(obj,evmPercent,angleDeg)
+            % Board OLED only: the EVM and the main (wanted) DOA in the app go to the
+            % board at most every 2 s over its own control connection. evm/doa change
+            % no converter and no settings revision; any failure turns the display
+            % updates off for the session and never touches the IQ stream or the
+            % settings connection. A helper without "doa" gets the EVM only.
+            if nargin<3, angleDeg=NaN; end
             if obj.DisplayOff || obj.Closed || obj.WireMode~="window4", return, end
             t=obj.now();
             if t-obj.DisplayAt<2, return, end
@@ -187,11 +189,17 @@ classdef LegacyVsaBackend < handle
             if ~any(obj.capabilities().display=="evm"), obj.DisplayOff=true; return, end
             code=-1;
             if isscalar(evmPercent) && isfinite(evmPercent), code=round(min(max(evmPercent,0),1000)*100);end
+            line=sprintf('evm %d',code);
+            if any(obj.capabilities().display=="doa")
+                doa=99999;
+                if isscalar(angleDeg) && isfinite(angleDeg), doa=round(min(max(angleDeg,-180),180)*100);end
+                line=sprintf('%s#doa %d',line,doa);
+            end
             try
                 if isempty(obj.Display)
                     obj.Display=origapp.BoardControl(obj.Config.host,obj.Config.controlPort,2);
                 end
-                obj.Display.send(sprintf('evm %d',code));
+                obj.Display.send(line);
             catch
                 obj.DisplayOff=true;
                 if ~isempty(obj.Display), delete(obj.Display); obj.Display=[]; end

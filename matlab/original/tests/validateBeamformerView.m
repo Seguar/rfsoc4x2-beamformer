@@ -49,7 +49,17 @@ h31=snapshot(31).health;h31.accepted=77;v.showHealth(h31);assert(contains(v.Kpi.
 % Per-stream monitor: level, phase against the first stream and applied weight.
 assert(strcmp(v.Monitor.cell(2,3).Text,'+90.0') && strcmp(v.Monitor.cell(1,5).Text,'0.0'));
 assert(size(v.ChannelPhase,1)==30 && v.ChannelPhase(end,3)==-45);
-assert(strcmp(v.Marks.doa(1).Visible,'on') && v.Marks.doa(1).Value==20 && contains(v.Marks.doa(1).Label,'model'));
+assert(strcmp(v.Marks.doa(1).Visible,'on') && v.Marks.doa(1).Value==20 && contains(v.Marks.doa(1).Label,'beam 20.0'));
+% Two directions: the beam's is solid in the ok colour, the other dashed in the
+% warning colour, each with its strength; LCMV names the other one "null".
+s2=snapshot(30);s2.angles=[20 -35];s2.anglePowerDb=[-16 -10];s2.beamformer="LCMV";v.show(s2);
+th=origapp.BeamformerView.palette(v.ThemeName);
+assert(strcmp(v.Marks.doa(1).Label,'beam 20.0° weak -6 dB') && strcmp(v.Marks.doa(2).Label,'null -35.0° strong') && ...
+    isequal(v.Marks.doa(1).Color,th.ok) && isequal(v.Marks.pattern(2).Color,th.warn) && ...
+    strcmp(v.Marks.pattern(2).LineStyle,'--'),'Direction roles not shown: %s | %s',v.Marks.doa(1).Label,v.Marks.doa(2).Label);
+assert(contains(v.Card.doa.note.Text,'beam 20.0°') && contains(v.Card.pattern.note.Text,'beam 20.0°: 0 dB') && ...
+    contains(v.Card.pattern.note.Text,'null -35.0°: -55 dB'),'Direction notes: %s | %s',v.Card.doa.note.Text,v.Card.pattern.note.Text);
+v.show(snapshot(30));
 assert(any(isfinite(v.Lines.burstOk.XData)) && any(isfinite(v.Lines.burstBad.XData)));
 assert(contains(v.CoverageLabel.Text,'DEGRADED') && contains(v.CoverageLabel.Text,'clean-only'));
 assert(numel(v.Lines.timeI.XData)<=1024 && numel(v.Lines.timeQ.XData)<=1024);
