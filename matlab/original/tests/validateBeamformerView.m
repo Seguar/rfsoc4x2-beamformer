@@ -5,7 +5,8 @@ function report=validateBeamformerView(outDir)
 if nargin<1,outDir=tempname;end
 if ~isfolder(outDir),mkdir(outDir);end
 figures0=numel(findall(groot,'Type','figure'));timers0=numel(timerfindall);
-cfg=origapp.defaultConfig();cfg.visible=false;cfg.directOnly=false;cfg.analyzer='integrated';
+assert(origapp.defaultConfig().theme=="light",'The default theme must be light.');
+cfg=origapp.defaultConfig();cfg.visible=false;cfg.directOnly=false;cfg.analyzer='integrated';cfg.theme="dark";
 cfg.fc=3e9;cfg.fc_d0=3e9;cfg.fc_d1=3e9;cfg.fcAnt=3e9;cfg.dacPow=[1 0 0 0];
 calls={};reject=false;
 cb=struct('start',@()mark('start',[]),'pause',@(v)mark('pause',v), ...
@@ -219,8 +220,8 @@ nlog=numel(v.EventLog);
 frames={snapshot(34),snapshot(35),snapshot(36)};save(fullfile(outDir,'fixture.mat'),'frames'); %#ok<NASGU>
 close(v.Figure);assert(strcmp(calls{end}.name,'close') && ~v.isOpen());delete(v);
 assert(numel(findall(groot,'Type','figure'))==figures0 && numel(timerfindall)==timers0,'View leaked resources.');
-% A session can also start in the light theme.
-cfg.theme="light";v=origapp.BeamformerView(cfg,struct());
+% A session started with the default configuration uses the light theme.
+cfg.theme=origapp.defaultConfig().theme;v=origapp.BeamformerView(cfg,struct());
 assert(strcmp(v.ThemeName,'light') && isequal(v.Figure.Color,origapp.BeamformerView.palette('light').bg));
 delete(v);cfg.theme="dark";
 % A direct-only session must not offer unmeasured streams or Combined.

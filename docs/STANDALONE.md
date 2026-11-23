@@ -48,7 +48,7 @@ Optional name/value pairs:
 - `record <folder>` writes every received window, a frame log and a per-frame
   demodulation log there (diagnostics; keep them out of the repository).
 - `snapshot DIR` saves one snapshot (PNG and MAT) under `DIR/snapshots` before closing.
-- `theme dark|light` selects the start-up theme.
+- `theme dark|light` selects the start-up theme (light by default).
 - `interferer DB` (demo only) adds a simulated interferer at −50° model angle,
   `DB` below the wanted source, for example `interferer -15`. The session's
   single-source DOA estimate can then lock to either source, so it is off by default.

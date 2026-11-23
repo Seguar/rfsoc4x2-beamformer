@@ -1,6 +1,7 @@
 # Focused MATLAB interface
 
-The default launcher layout is one resizable dark window: a header with the
+The default launcher layout is one resizable window, in the light theme unless
+`theme dark` is given (the theme button or F7 switches it live): a header with the
 acquisition state, a row of readout tiles, six measured views and a control
 sidebar. The six views are DOA spectrum, receive pattern, baseband spectrum,
 time domain, constellation and payload EVM. All panels use the same admitted

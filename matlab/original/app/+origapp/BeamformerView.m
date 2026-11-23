@@ -93,7 +93,7 @@ classdef BeamformerView < handle
         function obj=BeamformerView(cfg,callbacks)
             if nargin<2,callbacks=struct();end
             obj.Config=cfg;obj.Callbacks=callbacks;
-            name=char(lower(string(obj.field(cfg,'theme','dark'))));
+            name=char(lower(string(obj.field(cfg,'theme','light'))));
             if ~any(strcmp(name,{'dark','light'})),name='dark';end
             obj.ThemeName=name;obj.Theme=obj.palette(name);
             if isfield(cfg,'dphase'),obj.PhaseValues.DAC=reshape(cfg.dphase,1,[]);end
