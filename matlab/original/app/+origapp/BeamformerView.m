@@ -152,7 +152,8 @@ classdef BeamformerView < handle
             angles=obj.field(s,'angles',[]);pw=obj.field(s,'anglePowerDb',[]);
             if numel(pw)~=numel(angles),pw=nan(size(angles));end
             keep=isfinite(angles);angles=angles(keep);pw=pw(keep);
-            roles=obj.directionRoles(angles,pw,string(obj.field(s,'beamformer',"")));
+            sy=obj.field(s,'angleSync',[]);if numel(sy)~=numel(keep),sy=nan(size(keep));end;sy=sy(keep);
+            roles=obj.directionRoles(angles,pw,string(obj.field(s,'beamformer',"")),sy,logical(obj.field(s,'tracked',false)));
             obj.mark('doa',angles,roles);obj.mark('pattern',angles,roles);
             if isempty(angles) || isempty(doa)
                 obj.put(obj.Card.doa.note,'estimate unavailable');
@@ -754,8 +755,11 @@ classdef BeamformerView < handle
             obj.Controls.ch.Value=selected;
             obj.Controls.ch.ValueChangedFcn=@(h,~)obj.configure('ch',h.Value,h);
             obj.Accepted.ch=obj.Controls.ch.Value;
-            obj.Controls.ang_num=uidropdown(q,'Items',{'Strongest','Weaker'},'ItemsData',{1,2}, ...
-                'Value',obj.field(obj.Config,'ang_num',1),'BackgroundColor',th.input,'FontColor',th.text,'FontSize',11);
+            obj.Controls.ang_num=uidropdown(q,'Items',{'OFDM (tracked)','Strongest','Weaker'},'ItemsData',{3,1,2}, ...
+                'Value',obj.field(obj.Config,'ang_num',1),'BackgroundColor',th.input,'FontColor',th.text,'FontSize',11, ...
+                'Tooltip',['Which direction the beam points at. OFDM (tracked): the direction whose signal carries ' ...
+                'the OFDM preamble, whatever its power; without a clear one the beam stays on the last ' ...
+                'identified direction. Strongest / Weaker: by steered band power.']);
             obj.Controls.ang_num.Layout.Row=2;obj.Controls.ang_num.Layout.Column=2;
             obj.label(q,2,'Signal priority');
             obj.Accepted.ang_num=obj.Controls.ang_num.Value;
@@ -1566,15 +1570,21 @@ classdef BeamformerView < handle
                 end
             end
         end
-        function r=directionRoles(~,angles,powerDb,bf)
+        function r=directionRoles(~,angles,powerDb,bf,sync,tracked)
             % Names and labels per direction, in the processing order (first =
             % where the beam points, chosen by Signal priority). Strength comes from
-            % the steered band power of each direction, as the priority uses.
+            % the steered band power of each direction, as the priority uses; with
+            % priority OFDM (tracked) each also shows its OFDM preamble correlation,
+            % and "(tracked)" when the beam held the last identified direction.
+            if nargin<5,sync=nan(size(angles));end
+            if nargin<6,tracked=false;end
             n=numel(angles);r=struct('name',{cell(1,n)},'text',{cell(1,n)});
             strong=NaN;if n>=2 && all(isfinite(powerDb)),[~,strong]=max(powerDb);end
             for k=1:n
                 if k==1,nm='beam';elseif bf=="LCMV",nm='null';else,nm='other';end
                 t=sprintf('%s %.1f°',nm,angles(k));
+                if k<=numel(sync) && isfinite(sync(k)),t=sprintf('%s OFDM %.2f',t,sync(k));end
+                if k==1 && tracked,t=[t ' (tracked)'];end
                 if isfinite(strong)
                     if k==strong,t=[t ' strong'];else,t=sprintf('%s weak %+.0f dB',t,powerDb(k)-powerDb(strong));end
                 end

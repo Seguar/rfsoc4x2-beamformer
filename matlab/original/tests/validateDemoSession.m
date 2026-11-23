@@ -69,6 +69,23 @@ for id=["origapp:Priority","origapp:NoDoa","rfsoc:Constraints","rfsoc:Solver"]
     end
 end
 assert(s.Controller.ModeRefusals==r0+4*(c.maxConsecutiveErrors+2) && s.Controller.ConsecutiveErrors==0);
+% Signal priority OFDM (tracked): the beam goes to the direction carrying the OFDM
+% preamble even when a CW jammer elsewhere is 10 dB stronger, and stays on the
+% last identified direction while the preamble is missing.
+ulaT=phased.ULA('NumElements',4,'ElementSpacing',physconst('LightSpeed')/c.fcAnt/2);
+svW=origapp.steeringVector(ulaT,c.fc,20);svJ=origapp.steeringVector(ulaT,c.fc,-35);
+s.configure(struct('bf','Steering','num',2,'doa','MUSIC','ang_num',3));
+for k=1:4
+    two(200+k,true);s.step();a=s.snapshot();
+    assert(a.valid,'Two-source frame refused: %s',string(a.reason));
+end
+assert(abs(a.angles(1)-20)<=2 && abs(a.angles(2)+35)<=2,'OFDM direction not chosen: %s',mat2str(a.angles));
+assert(a.angleSync(1)>a.angleSync(2)+0.08 && a.anglePowerDb(2)>a.anglePowerDb(1)+5 && ~a.tracked, ...
+    'Identification: sync %s, power %s',mat2str(a.angleSync,3),mat2str(a.anglePowerDb,3));
+two(210,false);s.step();a=s.snapshot();
+assert(a.valid && a.tracked && abs(a.angles(1)-20)<=3,'Lost OFDM: beam left the tracked direction: %s',mat2str(a.angles));
+two(211,true);s.step();a=s.snapshot();assert(~a.tracked && abs(a.angles(1)-20)<=2,'Re-identification failed.');
+s.configure(struct('num',1,'doa','MVDR','ang_num',1));
 % Original-app ranges: a source count above what 4 elements resolve, or a scan
 % grid too large to hold, is refused at configure time or per frame, never fatal.
 s.configure(struct('bf','Steering'));
@@ -162,6 +179,14 @@ disp('DEMO_SESSION_COMPLETE');
         z=repmat(conj(x)*2^15*.03/max(abs(x)),1,4)+2*(randn(numel(x),4)+1j*randn(numel(x),4));
         q{end+1}=struct('samples',z,'sequence',seq,'timestamp',age,'availableChannels',true(1,4), ...
             'signalChannels',repmat(logical(signal),1,4),'boundaryFree',true);
+    end
+    function two(seq,withOfdm)
+        % OFDM at 20 deg and a CW jammer at -35 deg, 10 dB stronger (common orientation conj(x))
+        w=conj(x)*2^15*.03/max(abs(x));if ~withOfdm,w=0*w;end
+        jm=sqrt(10*mean(abs(conj(x)*2^15*.03/max(abs(x))).^2))*exp(1j*2*pi*0.13*(0:numel(x)-1).');
+        z=w*svW.'+jm*svJ.'+2*(randn(numel(x),4)+1j*randn(numel(x),4));
+        q{end+1}=struct('samples',z,'sequence',seq,'timestamp',0,'availableChannels',true(1,4), ...
+            'signalChannels',true(1,4),'boundaryFree',true);
     end
     function closeBackend(),closed=closed+1;end
     function send(line),sends{end+1}=line;end

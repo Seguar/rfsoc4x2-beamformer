@@ -27,6 +27,7 @@ classdef DemoSession < handle
     end
     properties (Access=private)
         Params
+        WantedAngle = NaN       % last confidently identified OFDM direction (Signal priority 3)
         PatternAverage = []
         SpectrumAverage = []
         Closed = false
@@ -99,6 +100,7 @@ classdef DemoSession < handle
             % no longer holds (the stored phase offsets and gains are re-applied)
             if obj.ZeroCal.state~="none",obj.ZeroCal.state="changed";end
             obj.readPaths();
+            obj.WantedAngle=NaN;   % model angles move: track again from the next confident frame
             obj.invalidate("RF settings applied; calibration cleared");
         end
         function k=pathKinds(obj)
@@ -138,6 +140,7 @@ classdef DemoSession < handle
             obj.Config=next;obj.Params=p;obj.IqFilter=zeros(next.sizeL,4);
             obj.readPaths();
             if kind=="ADC" || kind=="adcGain",obj.ZeroCal.state="changed";end
+            obj.WantedAngle=NaN;   % model angles move: track again from the next confident frame
             obj.invalidate("converter setting applied; awaiting a fresh frame");
         end
         function calibrateZero(obj)
@@ -204,7 +207,7 @@ classdef DemoSession < handle
                 "RVL","RAB PC","DL MVDR","DL ITER MVDR","QCB"]),'origapp:Config','Unknown beamformer.');
             assert(~next.IQcomp || next.sizeL==obj.Config.sizeL,'origapp:Calibration', ...
                 'Disable static IQ before changing filter length; learn the new filter first.');
-            assert(any(next.ang_num==[1 2]) && next.ang_num<=next.num,'origapp:Config', ...
+            assert(any(next.ang_num==[1 2 3]) && (next.ang_num==3 || next.ang_num<=next.num),'origapp:Config', ...
                 'Weaker-source priority requires at least two detected sources.');
             assert(next.diag>=0 && next.gamma>=0 && next.alpha>=0 && next.alg_scan_res>0 && ...
                 next.iter>=1 && next.iter==fix(next.iter),'origapp:Config','Invalid algorithm parameters.');
@@ -285,8 +288,9 @@ classdef DemoSession < handle
                     buffer=frame.samples(:,obj.Config.ch)/2^16;
                     out=[]; angles=[];anglePow=[];ds=[];pat=[];weights=[];
                 else
-                    p=obj.Params;p.iqFilter=obj.IqFilter;
+                    p=obj.Params;p.iqFilter=obj.IqFilter;p.trackAngle=obj.WantedAngle;
                     out=origapp.processLegacyFrame(frame.samples,p);
+                    if out.wantedConfident,obj.WantedAngle=out.estimated_angle(1);end
                     assert(all(isfinite(out.weights)),'origapp:NoSignal','No finite beamforming weights.');
                     obj.IqFilter=out.iqFilter;buffer=out.vsaBuffer;angles=out.estimated_angle;anglePow=out.anglePowerDb;weights=out.weights;
                     if out.spectrumAvailable
@@ -304,6 +308,7 @@ classdef DemoSession < handle
                 obj.Last=struct('valid',true,'reason',"",'sequence',frame.sequence,'timestamp',frame.timestamp, ...
                     'age',origapp.Controller.nowSeconds()-frame.timestamp,'scope',string(obj.Config.arrayLabel)+", UNCALIBRATED", ...
                     'scan',obj.Params.scan_axis,'doaSpectrum',ds,'patternDb',pat,'angles',angles,'anglePowerDb',anglePow, ...
+                    'angleSync',angleSyncOf(out),'tracked',~isempty(out) && obj.Config.ang_num==3 && ~out.wantedConfident, ...
                     'beamformer',string(obj.Config.bf), ...
                     'samples',displaySamples,'weights',weights,'analysis',r,'spectrum',r.spectrum,'vendor',[], ...
                     'fsHz',obj.Config.fsRfsoc,'directOnly',obj.Config.directOnly, ...
@@ -433,6 +438,7 @@ classdef DemoSession < handle
             if z.step==z.steps
                 z.state="done";z.residualDeg=phase;z.levelDb=level-level(1);z.time=datetime('now');
                 z.phases=obj.Paths.ADC;z.gains=obj.Paths.adcGain;obj.ZeroCal=z;
+                obj.WantedAngle=NaN;   % model angles move: track again
                 obj.invalidate(sprintf("0 deg calibration done: residual %.2f deg, %.2f dB", ...
                     max(abs(phase)),max(abs(z.levelDb))));
                 return
@@ -474,6 +480,10 @@ classdef DemoSession < handle
         end
         function p=parameters(obj,cfg)
             p=cfg;p.c=physconst('LightSpeed');
+            % Signal priority 3 identifies the wanted direction by the OFDM preamble
+            % (the analyzer's own template and buffer orientation).
+            p.preamble=obj.Analyzer.Profile.preambleTemplate;
+            p.ofdmConj=string(cfg.ofdm.orientation)=="IplusjQ";
             if ~isempty(obj.Params) && cfg.fcAnt==obj.Params.fcAnt && cfg.num_elements==obj.Params.num_elements
                 p.ula=obj.Params.ula;
             elseif string(cfg.elementModel)=="patch"
@@ -509,4 +519,9 @@ classdef DemoSession < handle
             if startsWith(string(cfg.doa),"MVDRman"),cfg.doa='MVDR';end
         end
     end
+end
+
+function s=angleSyncOf(out)
+% OFDM preamble correlation per direction ([] when the frame was not beamformed).
+s=[];if isstruct(out) && isfield(out,'angleSync'),s=out.angleSync;end
 end

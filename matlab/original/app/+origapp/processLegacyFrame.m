@@ -25,7 +25,7 @@ function out = processLegacyFrame(rawData, p)
 %   p.manualMvdrFormula "45e726b" (default) | "head" (m_mvdr power-weighted manifold)
 % out.iqFilter returns the updated adaptive filter state.
 
-out = struct('yspec',[],'estimated_angle',[],'anglePowerDb',[],'bfSig',[],'weights',[], ...
+out = struct('yspec',[],'estimated_angle',[],'anglePowerDb',[],'angleSync',[],'wantedConfident',false,'bfSig',[],'weights',[], ...
     'rawData',[],'vsaBuffer',[],'spectrumAvailable',false,'engine',string(p.bfEngine), ...
     'iqFilter',[],'corrections',strings(1,0));
 assert(size(rawData,2)==4, 'origapp:Frame', 'Need N-by-4 data.');
@@ -109,19 +109,56 @@ if npc > 2
     estimated_angle = estimated_angle(1:2);
     npc = 2;
 end
-assert(p.ang_num <= npc, 'origapp:Priority', ...
+assert(p.ang_num == 3 || p.ang_num <= npc, 'origapp:Priority', ...
     'Signal priority %d requested but only %d direction(s) found.', p.ang_num, npc);
 powbp = zeros(1, npc);
+steered = zeros(size(rawData,1), npc);
 for i = 1:npc
     % as steerBf (conj(sv).' per column), with the steering object kept between frames
     rawSumM = sum(rawData .* origapp.steeringVector(p.ula, p.fc, estimated_angle(i))', 2);
+    steered(:,i) = rawSumM;
     powbp(i,:) = bandpower(rawSumM, p.fsRfsoc, [-p.bw/2 p.bw/2]);
 end
-[~, idx] = sort(powbp, 'ascend');
 anglePower = powbp(:, 1).';          % steered band power per direction (display)
-if idx(p.ang_num) == 1
-    estimated_angle = flip(estimated_angle);
-    anglePower = flip(anglePower);
+angleSync = nan(1, npc);             % OFDM preamble correlation per direction (priority 3)
+out.wantedConfident = false;
+if p.ang_num == 3
+    % Wanted = the direction whose steered signal carries the OFDM preamble,
+    % whatever its power (a CW jammer may be the stronger one). Without a clear
+    % winner (preamble lost, both alike) the beam stays on the direction nearest
+    % the last confident choice (p.trackAngle) instead of jumping.
+    for i = 1:npc
+        y = steered(:,i); if p.ofdmConj, y = conj(y); end
+        if numel(y) >= numel(p.preamble), angleSync(i) = max(origapp.ofdmSyncMetric(y, p.preamble, 1)); end
+    end
+    [best, ib] = max(angleSync);
+    others = angleSync([1:ib-1 ib+1:npc]);
+    out.wantedConfident = isfinite(best) && best >= p.wantedSync && ...
+        (isempty(others) || best - max(others) >= p.wantedMargin);
+    if ~out.wantedConfident && isfinite(p.trackAngle)
+        [gap, ib] = min(abs(estimated_angle - p.trackAngle));
+        if gap > p.trackGate
+            % no detected direction near the tracked one (preamble gone, DOA on
+            % the jammer and noise): hold the beam on the tracked angle; the
+            % strongest detected direction is the other one (LCMV nulls it)
+            [~, js] = max(anglePower);
+            y = sum(rawData .* origapp.steeringVector(p.ula, p.fc, p.trackAngle)', 2);
+            estimated_angle = [p.trackAngle, estimated_angle(js)];
+            anglePower = [bandpower(y, p.fsRfsoc, [-p.bw/2 p.bw/2]), anglePower(js)];
+            angleSync = [NaN, angleSync(js)];
+            npc = 2; ib = 1;
+        end
+    elseif ~out.wantedConfident
+        [~, ib] = max(anglePower);              % nothing to track yet: strongest
+    end
+    order = [ib, setdiff(1:npc, ib)];
+    estimated_angle = estimated_angle(order); anglePower = anglePower(order); angleSync = angleSync(order);
+else
+    [~, idx] = sort(powbp, 'ascend');
+    if idx(p.ang_num) == 1
+        estimated_angle = flip(estimated_angle);
+        anglePower = flip(anglePower);
+    end
 end
 
 %% c1: calibrated phase/power correction (original 45e726b semantics)
@@ -191,6 +228,7 @@ out.estimated_angle = estimated_angle;
 % Per direction, same order (first = where the beam points): steered band
 % power in dB, for the strong/weak labels on the DOA and pattern plots.
 out.anglePowerDb = 10*log10(max(anglePower, realmin));
+out.angleSync = angleSync;
 out.bfSig = bfSig;
 out.weights = weights;
 out.rawData = rawData;
@@ -266,7 +304,8 @@ end
 function p = withDefaults(p)
 % VSA_rfsoc_new fields are optional so existing callers keep 45e726b behaviour.
 d = struct('iqAdaptive', false, 'iqStatic', false, 'iqFilter', zeros(4,4), 'iqMu', 1e-16, ...
-    'coupComp', false, 'phComp', false, 'manualMvdrFormula', "45e726b");
+    'coupComp', false, 'phComp', false, 'manualMvdrFormula', "45e726b", ...
+    'preamble', [], 'ofdmConj', false, 'wantedSync', 0.5, 'wantedMargin', 0.08, 'trackAngle', NaN, 'trackGate', 5);
 f = fieldnames(d);
 for k = 1:numel(f)
     if ~isfield(p, f{k}), p.(f{k}) = d.(f{k}); end
@@ -275,4 +314,6 @@ p.manualMvdrFormula = string(p.manualMvdrFormula);
 assert(any(p.manualMvdrFormula == ["45e726b","head"]), 'origapp:Config', ...
     'manualMvdrFormula must be "45e726b" or "head".');
 if ~isfield(p.calibration, 'couplingMatrix'), p.calibration.couplingMatrix = []; end
+assert(p.ang_num ~= 3 || ~isempty(p.preamble), 'origapp:Config', ...
+    'Signal priority "OFDM (tracked)" needs the OFDM preamble (p.preamble).');
 end
