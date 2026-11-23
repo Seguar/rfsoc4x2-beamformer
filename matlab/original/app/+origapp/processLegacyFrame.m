@@ -111,6 +111,19 @@ if npc > 2
 end
 assert(p.ang_num == 3 || p.ang_num <= npc, 'origapp:Priority', ...
     'Signal priority %d requested but only %d direction(s) found.', p.ang_num, npc);
+if p.ang_num == 2
+    % "Weaker" needs a real second source. With one source and Source count 2
+    % the estimators still return a second direction on the source's own
+    % sidelobe (4 elements: about -14 dB at 37 deg off). A second source shows
+    % as a second covariance eigenvalue above the noise ones; one OTA OFDM
+    % source alone measured 1.7-2.1 dB, a CW 20 dB below it 4.4 dB.
+    ev = sort(real(eig((Rx+Rx')/2)), 'descend');
+    second = 10*log10(ev(2)/max(mean(ev(3:end)), realmin));
+    assert(second >= p.secondSourceDb, 'origapp:Priority', ...
+        ['Signal priority "Weaker": only one source present (second covariance eigenvalue ' ...
+        '%.1f dB above noise, needs %.1f dB); the second direction is a sidelobe of the first.'], ...
+        second, p.secondSourceDb);
+end
 powbp = zeros(1, npc);
 steered = zeros(size(rawData,1), npc);
 for i = 1:npc
@@ -197,7 +210,8 @@ if string(p.bf) == "OFDM pilot MVDR"
     if p.ofdmConj, template=conj(template); end
     weights=origapp.ofdmPilotWeights(rawData,template,p.symbolRows,p.burstRows);
 elseif p.bfEngine == "reviewed"
-    weights = reviewedWeights(rawData, estimated_angle, p);
+    [weights, manifold] = reviewedWeights(rawData, estimated_angle, p);
+    if manifold == "preamble", out.corrections(end+1) = "preambleManifold"; end
 else
     weights = originalWeights(rawData, estimated_angle, npc, p);
 end
@@ -282,9 +296,20 @@ weights = reshape(weights, 1, []);
 assert(numel(weights)==4, 'origapp:Weights', 'Beamformer returned %d weights.', numel(weights));
 end
 
-function weights = reviewedWeights(rawData, estimated_angle, p)
+function [weights, manifold] = reviewedWeights(rawData, estimated_angle, p)
 % Reviewed +rfsoc core. Convention: y = X*conj(w); the original applies
 % y = X*w.', so the original-convention weights are conj(w).'.
+%
+% Wanted manifold: the adaptive algorithms keep a unit response to it and
+% minimise everything else, so a model steering vector that differs from the
+% real array (uncalibrated OTA array: per-ADC phases tens of degrees and gains
+% several dB apart) makes them cancel a strong wanted signal: on real 4.85 GHz
+% frames MVDR, DMR, RAB PC and DL ITER MVDR never locked. When the beam
+% direction carries the OFDM preamble, the measured signature from the
+% preamble (training samples only) replaces the model vector. It must agree
+% with the model at the beam angle (|cos| >= p.manifoldMatch), so a beam on
+% another source (Strongest = a jammer) keeps the model vector.
+manifold = "model";
 rc = p.reviewed;
 if isstruct(rc) && isempty(fieldnames(rc)), rc=rfsoc.defaultConfig(); end
 assert(isstruct(rc) && isfield(rc,'algorithm'), 'origapp:Config', ...
@@ -301,7 +326,21 @@ if rc.algorithm == "LCMV"
     assert(numel(estimated_angle) >= 2, 'origapp:Constraints', 'LCMV needs a second direction.');
     rc.nullAnglesDeg = estimated_angle(2);
 end
-[~, w] = rfsoc.beamform(rawData, rc);
+a = [];
+if p.preambleManifold && ~isempty(p.preamble) && ~any(rc.algorithm == ["Without","Steering","QCB"])
+    template = p.preamble; if p.ofdmConj, template = conj(template); end
+    s = origapp.ofdmSignature(rawData, template, p.burstRows);
+    if ~isempty(s.starts)
+        model = origapp.steeringVector(p.ula, p.fc, estimated_angle(1));
+        model = model(:);
+        match = abs(model'*s.a.')/max(norm(model), realmin);  % s.a is unit norm (row)
+        if match >= p.manifoldMatch
+            a = s.a.'*norm(model);                              % model scale for norm-based limits
+            manifold = "preamble";
+        end
+    end
+end
+[~, w] = rfsoc.beamform(rawData, rc, a);
 weights = conj(w(:)).';
 end
 
@@ -309,7 +348,8 @@ function p = withDefaults(p)
 % VSA_rfsoc_new fields are optional so existing callers keep 45e726b behaviour.
 d = struct('iqAdaptive', false, 'iqStatic', false, 'iqFilter', zeros(4,4), 'iqMu', 1e-16, ...
     'coupComp', false, 'phComp', false, 'manualMvdrFormula', "45e726b", ...
-    'preamble', [], 'ofdmConj', false, 'wantedSync', 0.5, 'wantedMargin', 0.08, 'trackAngle', NaN, 'trackGate', 5);
+    'preamble', [], 'ofdmConj', false, 'wantedSync', 0.5, 'wantedMargin', 0.08, 'trackAngle', NaN, 'trackGate', 5, ...
+    'symbolRows', 100, 'burstRows', 3000, 'preambleManifold', true, 'manifoldMatch', 0.7, 'secondSourceDb', 3);
 f = fieldnames(d);
 for k = 1:numel(f)
     if ~isfield(p, f{k}), p.(f{k}) = d.(f{k}); end

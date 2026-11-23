@@ -74,6 +74,49 @@ of the wanted signal at the four ADCs using the known OFDM preamble. It estimate
 the noise and interference covariance from short gaps beside synchronized bursts.
 The same complex weights apply to the complete frame, including its payload.
 A frame with insufficient gap samples or no synchronized preamble is refused.
+The preamble is found with a spatially adaptive correlation (the best receive
+beam at each position), so a jammer stronger than the wanted signal no longer
+hides it.
+
+## Adaptive beamformers on an uncalibrated array
+
+MVDR, DMR, PC, PC_corr, LCMV, RVL, RAB PC, DL MVDR and DL ITER MVDR keep a unit
+response to a wanted array signature and suppress everything else. With the
+model steering vector of an uncalibrated over-the-air array (per-ADC phases tens
+of degrees and gains several dB apart), they cancelled the strong wanted signal:
+MVDR, DMR, RAB PC and DL ITER MVDR never locked on real 4.85 GHz frames. When the
+beam direction carries the OFDM preamble, these modes now use the signature
+measured on the preamble (training samples only), if it agrees with the model at
+the beam angle (|cos| >= 0.7). A beam on another source (Strongest on a jammer)
+keeps the model vector. Steering, Without and QCB are unchanged.
+
+Replay of 40 real frames (dmasync image, 4.85 GHz OTA, one OFDM source near 0°)
+with an injected CW, median EVM of locked frames, 2026-11-23:
+
+| Beamformer | One source | CW +10 dB at −42° | CW −10 dB at −42° | CW +10 dB at +30° |
+|---|---|---|---|---|
+| Steering | 7.1 % | 50.0 % | 10.2 % | 23.0 % |
+| OFDM pilot MVDR | 6.8 % | 6.9 % (was refused) | 6.9 % | 6.8 % (was refused) |
+| LCMV | needs a second direction | 6.9 % (was 8.2) | 7.1 % (was 27.7) | 6.8 % (was 9.6) |
+| DL MVDR | 7.1 % (was 40.7) | 7.4 % (was 11.0) | 7.4 % (was 39.2) | 7.2 % (was 11.3) |
+| DL ITER MVDR | 6.9 % (never locked) | 7.4 % | 7.3 % | 7.2 % |
+| MVDR | 13.6 % (never locked) | 11.6 % | 11.8 % | 11.6 % |
+
+Unloaded MVDR and DMR stay near 12 %: the wideband over-the-air signal is not
+exactly one narrowband signature, and without loading they suppress part of it.
+Use DL MVDR, LCMV or OFDM pilot MVDR against a jammer.
+
+## Signal priority
+
+**Strongest** and **Weaker** rank the detected directions by the band power of a
+beam steered to each (Source count 2). **Weaker** needs a real second source: with
+one source the estimators still return a second direction on its own sidelobe
+(about −14 dB), so a frame whose second covariance eigenvalue is less than 3 dB
+above the noise ones is refused ("only one source present"). One OFDM source alone
+measured 1.7-2.1 dB; a CW 20 dB below it 4.4 dB. **OFDM (tracked)** picks the
+direction carrying the OFDM preamble whatever its power. Beamscan cannot resolve a
+weak source near a strong one (its second direction can be a sidelobe even with a
+real jammer); use MUSIC or MVDR for the DOA with two sources.
 
 ## Frame rate
 

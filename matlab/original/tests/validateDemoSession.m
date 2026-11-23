@@ -93,6 +93,27 @@ assert(a.angleSync(1)>a.angleSync(2)+0.08 && a.anglePowerDb(2)>a.anglePowerDb(1)
 two(210,false);s.step();a=s.snapshot();
 assert(a.valid && a.tracked && abs(a.angles(1)-20)<=3,'Lost OFDM: beam left the tracked direction: %s',mat2str(a.angles));
 two(211,true);s.step();a=s.snapshot();assert(~a.tracked && abs(a.angles(1)-20)<=2,'Re-identification failed.');
+% Signal priority Strongest / Weaker on the same scene: the jammer is 10 dB stronger.
+s.configure(struct('ang_num',1));two(212,true);s.step();a=s.snapshot();
+assert(a.valid && abs(a.angles(1)+35)<=2 && a.anglePowerDb(1)>a.anglePowerDb(2),'Strongest did not pick the jammer: %s',mat2str(a.angles));
+s.configure(struct('ang_num',2));two(213,true);s.step();a=s.snapshot();
+assert(a.valid && abs(a.angles(1)-20)<=2 && a.anglePowerDb(1)<a.anglePowerDb(2),'Weaker did not pick the OFDM source: %s',mat2str(a.angles));
+% Weaker with one real source: the second direction is that source's sidelobe; refused.
+enqueue(214,0,true);s.step();a=s.snapshot();
+assert(~a.valid && contains(string(a.reason),"only one source"),'Weaker accepted a sidelobe: %s',string(a.reason));
+% Adaptive beamformers on an uncalibrated array: the wanted signature differs from
+% the model (gains and phases measured on the OTA array, 2026-11-23) and a CW 10 dB
+% stronger comes from -35 deg. With the model vector MVDR cancelled the wanted
+% signal and the pilot MVDR could not find the preamble; both must lock.
+mis=[1 1.66 1.78 1.55].*exp(1j*deg2rad([0 21 11 -7]));
+seqMis=220;
+for bf=["OFDM pilot MVDR","MVDR","LCMV","DMR"]
+    s.configure(struct('bf',char(bf),'num',2,'doa','MUSIC','ang_num',3));
+    for k=1:2, seqMis=seqMis+1;two(seqMis,true,mis);s.step();a=s.snapshot(); end
+    why=string(a.reason);if a.valid,why=string(a.analysis.reason);end
+    assert(a.valid && a.analysis.valid && abs(a.angles(1)-20)<=4,'%s on a mismatched array with a jammer: %s',bf,why);
+end
+s.configure(struct('bf','Steering','ang_num',3));
 s.configure(struct('num',1,'doa','MVDR','ang_num',1));
 % Original-app ranges: a source count above what 4 elements resolve, or a scan
 % grid too large to hold, is refused at configure time or per frame, never fatal.
@@ -188,11 +209,13 @@ disp('DEMO_SESSION_COMPLETE');
         q{end+1}=struct('samples',z,'sequence',seq,'timestamp',age,'availableChannels',true(1,4), ...
             'signalChannels',repmat(logical(signal),1,4),'boundaryFree',true);
     end
-    function two(seq,withOfdm)
-        % OFDM at 20 deg and a CW jammer at -35 deg, 10 dB stronger (common orientation conj(x))
+    function two(seq,withOfdm,mismatch)
+        % OFDM at 20 deg and a CW jammer at -35 deg, 10 dB stronger (common orientation conj(x));
+        % mismatch (1-by-4) scales the OFDM signature per element (uncalibrated array)
+        if nargin<3, mismatch=ones(1,4); end
         w=conj(x)*2^15*.03/max(abs(x));if ~withOfdm,w=0*w;end
         jm=sqrt(10*mean(abs(conj(x)*2^15*.03/max(abs(x))).^2))*exp(1j*2*pi*0.13*(0:numel(x)-1).');
-        z=w*svW.'+jm*svJ.'+2*(randn(numel(x),4)+1j*randn(numel(x),4));
+        z=w*(svW.'.*mismatch)+jm*svJ.'+2*(randn(numel(x),4)+1j*randn(numel(x),4));
         q{end+1}=struct('samples',z,'sequence',seq,'timestamp',0,'availableChannels',true(1,4), ...
             'signalChannels',true(1,4),'boundaryFree',true);
     end
