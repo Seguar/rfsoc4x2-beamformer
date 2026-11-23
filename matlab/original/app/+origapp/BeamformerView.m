@@ -167,12 +167,9 @@ classdef BeamformerView < handle
             end
             % --- time domain and per-stream histories --------------------
             samples=obj.field(s,'samples',[]);fs=obj.field(s,'fsHz',obj.field(obj.Config,'fsRfsoc',125e6));
-            if ~isempty(samples)
-                [t,yi,yq]=obj.envelope(samples(:),fs);
-                obj.setLine('timeI',t,yi);obj.setLine('timeQ',t,yq);
-            else
-                obj.setLine('timeI',[],[]);obj.setLine('timeQ',[],[]);
-            end
+            % Only the visible view of the time card is sent to the window:
+            % every changed line costs render time even when it is hidden.
+            if strcmp(obj.TimeMode,'iq'),obj.drawTime(samples,fs);end
             ch=obj.field(s,'channels',[]);
             obj.drawChannels();
             obj.pad();
@@ -1254,8 +1251,17 @@ classdef BeamformerView < handle
                 obj.ChannelSequence(1)=[];obj.ChannelPhase(1,:)=[];obj.ChannelLevel(1,:)=[];obj.ChannelBreak(1)=[];
             end
         end
+        function drawTime(obj,samples,fs)
+            if ~isempty(samples)
+                [t,yi,yq]=obj.envelope(samples(:),fs);
+                obj.setLine('timeI',t,yi);obj.setLine('timeQ',t,yq);
+            else
+                obj.setLine('timeI',[],[]);obj.setLine('timeQ',[],[]);
+            end
+        end
         function drawChannels(obj)
-            if isempty(obj.ChannelSequence),return,end
+            % The eight history lines are drawn only while their view is shown.
+            if isempty(obj.ChannelSequence) || strcmp(obj.TimeMode,'iq'),return,end
             pos=(1:numel(obj.ChannelSequence))+cumsum(logical(obj.ChannelBreak));
             x=nan(1,pos(end));x(pos)=obj.ChannelSequence;
             colors={obj.Theme.s1,obj.Theme.s2,obj.Theme.s3,obj.Theme.s4};
@@ -1309,6 +1315,10 @@ classdef BeamformerView < handle
             end
             obj.keys();
             if ~iq,obj.Empty.time.Visible='off';end
+            if iq && isstruct(obj.LastData)
+                obj.drawTime(obj.field(obj.LastData,'samples',[]),obj.field(obj.LastData,'fsHz',obj.field(obj.Config,'fsRfsoc',125e6)));
+            end
+            obj.drawChannels();
             obj.pad();obj.defaultLimits('time');
             n=0;fs=NaN;
             if isstruct(obj.LastData)
@@ -1743,9 +1753,10 @@ classdef BeamformerView < handle
             value=fallback;if isstruct(s) && isfield(s,name),value=s.(name);end
         end
         function [t,yi,yq]=envelope(x,fs)
-            % Min/max per display bin: at most 2048 drawn points per trace
-            % and no burst peak is lost to stride decimation.
-            n=numel(x);nb=1024;
+            % Min/max per display bin: at most 1024 drawn points per trace
+            % (more than the card's pixel width) and no burst peak is lost
+            % to stride decimation.
+            n=numel(x);nb=512;
             if n<=2*nb
                 t=(0:n-1).'/fs*1e6;yi=real(x);yq=imag(x);return
             end

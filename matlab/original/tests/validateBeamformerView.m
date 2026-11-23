@@ -51,7 +51,7 @@ assert(size(v.ChannelPhase,1)==30 && v.ChannelPhase(end,3)==-45);
 assert(strcmp(v.Marks.doa(1).Visible,'on') && v.Marks.doa(1).Value==20 && contains(v.Marks.doa(1).Label,'model'));
 assert(any(isfinite(v.Lines.burstOk.XData)) && any(isfinite(v.Lines.burstBad.XData)));
 assert(contains(v.CoverageLabel.Text,'DEGRADED') && contains(v.CoverageLabel.Text,'clean-only'));
-assert(numel(v.Lines.timeI.XData)<=2048 && numel(v.Lines.timeQ.XData)<=2048);
+assert(numel(v.Lines.timeI.XData)<=1024 && numel(v.Lines.timeQ.XData)<=1024);
 assert(any(isfinite(v.Lines.payload.XData)) && any(isfinite(v.Lines.spectrum.YData)));
 % User zoom persists until the explicit Fit plots action.
 v.Ax.spectrum.XLim=[-10 10];v.show(snapshot(31));
@@ -176,7 +176,10 @@ h=v.Controls.Pause;h.Value=false;h.ValueChangedFcn(h,struct());assert(strcmp(h.T
 v.show(snapshot(33));v.Figure.Name='SYNTHETIC GUI FIXTURE — NOT HARDWARE';
 % The history line is broken across rejected acquisitions, never joined.
 assert(v.HistorySequence(end)==33 && v.HistoryBreak(end) && any(isnan(v.Lines.evmHistory.YData)));
+% (the stream-history lines are drawn while their view is shown)
+h=v.Controls.TimeMode;h.Value='phase';h.ValueChangedFcn(h,struct());
 assert(v.ChannelBreak(end) && any(isnan(v.Lines.chPhase(2).YData)),'Stream history joined across a rejection.');
+h.Value='iq';h.ValueChangedFcn(h,struct());assert(any(isfinite(v.Lines.timeI.YData)),'I/Q view not restored.');
 assert(any(contains(v.EventLog,'bf = MVDR')) && any(contains(v.EventLog,'REFUSED')) && ...
     any(contains(v.EventLog,'RF applied')));
 % Requested snapshot: MAT with the displayed frame, PNG when the host can render.
