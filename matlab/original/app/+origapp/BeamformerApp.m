@@ -112,30 +112,49 @@ classdef BeamformerApp < handle
         function unbusy(obj)
             if isvalid(obj),obj.Busy=false;end
         end
+        function g=hold(obj)
+            % A settings change must not be interleaved with frame processing:
+            % replacing the DOA System object (or a board command round trip)
+            % lets MATLAB run the acquisition timer mid-change, which then saw
+            % half-applied parameters (2026-11-23, 'Unrecognized field name
+            % "bfEngine"'). The timer skips its tick while this is held.
+            was=obj.Busy;obj.Busy=true;g=onCleanup(@()obj.restoreBusy(was));
+        end
+        function restoreBusy(obj,was)
+            if isvalid(obj),obj.Busy=was;end
+        end
         function calibration(obj)
             [f,d]=uigetfile('*.mat','Load steering, power or IQ calibration');
             if isequal(f,0),return,end
+            g=obj.hold(); %#ok<NASGU>
             obj.Session.loadCalibration(fullfile(d,f));obj.refreshControls();obj.render(obj.Session.snapshot());
         end
         function pause(obj,on)
+            g=obj.hold(); %#ok<NASGU>
             obj.Session.pause(on);obj.render(obj.Session.snapshot());
         end
         function dac(obj,on)
+            g=obj.hold(); %#ok<NASGU>
             obj.Session.setDac(on);obj.render(obj.Session.snapshot());
         end
         function sync(obj,mode)
+            g=obj.hold(); %#ok<NASGU>
             obj.Session.setSync(mode);obj.render(obj.Session.snapshot());
         end
         function zero(obj)
+            g=obj.hold(); %#ok<NASGU>
             obj.Session.calibrateZero();obj.refreshControls();obj.render(obj.Session.snapshot());
         end
         function rf(obj,value)
+            g=obj.hold(); %#ok<NASGU>
             obj.Session.applyRf(value);obj.refreshControls();obj.render(obj.Session.snapshot());
         end
         function phase(obj,value)
+            g=obj.hold(); %#ok<NASGU>
             obj.Session.applyPhase(value);obj.refreshControls();obj.render(obj.Session.snapshot());
         end
         function configure(obj,value)
+            g=obj.hold(); %#ok<NASGU>
             obj.Session.configure(value);obj.refreshControls();obj.render(obj.Session.snapshot());
         end
         function refreshControls(obj)

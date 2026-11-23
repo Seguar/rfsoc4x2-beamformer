@@ -338,11 +338,15 @@ classdef Controller < handle
                 mustStop = false;
                 return
             end
-            if any(string(err.identifier) == ["origapp:Constraints", "origapp:Pending"])
+            if any(string(err.identifier) == ["origapp:Constraints", "origapp:Pending", ...
+                    "origapp:Priority", "origapp:NoDoa"])
                 % The selected beamformer/estimator refuses this scene (LCMV with a
-                % single source) or is not implemented (PC_corr). The frame is
-                % rejected with that reason on screen; the session must survive a
-                % mode choice, so this never counts toward stopping acquisition.
+                % single source), is not implemented (PC_corr), finds no direction,
+                % or finds fewer directions than the signal priority asks for
+                % (priority 2 with one source: five in a row stopped the laptop
+                % session on 2026-11-23). The frame is rejected with that reason
+                % on screen; the session must survive a mode choice and a scene
+                % change, so this never counts toward stopping acquisition.
                 obj.ModeRefusals = obj.ModeRefusals + 1;
                 mustStop = false;
                 return
