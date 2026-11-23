@@ -74,13 +74,26 @@ DMA_DIR = '/opt/rfsoc4x2-beamformer/dma'
 # frames/s, 2 ms 26.2; DMA image 10 ms 30.2, 2 ms 40.3. DMA reads equal MMIO reads
 # (20 of 20 captures), same levels, locks and MTS behaviour as boot, no slips in
 # 1.31 M rows. The RAM is full when a 2 ms synced trigger returns.
-DEFAULT_OVERLAY = 'dma'
+# dmasync since 2026-11-23: board A/B, 4.85 GHz OTA, both DACs, 1500 frames each: one-cycle DAC
+# start skew in 44 frames (2.9 %) with dma, 0 with dmasync; EVM p99 9.76 % -> 7.77 %, max 10.9 % -> 8.3 %.
+DEFAULT_OVERLAY = 'dmasync'
 DEFAULT_TRIGGER_DWELL_MS = 2.0
 DMA_EXPECTED = {
     'doa_mts_dma.bit': '848a92c6e01d11e18c8d10fe7cbbb5b8b212fb5b99363887f4a3e6729623ce11',
     'doa_mts_dma.hwh': '57a961c7139f5f7b91904ec17fd49ba971fa5b7c05a020c66544c60b1752fe21',
     'doa_mts_dma.py': '4e89059227526dc7c1706be37034198740f478cfb0125da7751dc1b39a16dee7',
     'cdma.py': '4e735f6f04b8a74103c8771790a3cfa2d40d95ca34285251170dd86dd3f12914',
+}
+# doa_mts_dma with dac_start_sync (doa_rfsoc branch dma-capture, build variant dmasync): the
+# capture trigger is synchronised once into the RF fabric clock for both DAC players. Without it
+# one DAC started one fabric cycle (8 ns) late in ~4 % of captures, and the two equal DAC copies
+# summed with a centre notch (OTA EVM 7.6 % -> 10 %). Same file names, own folder.
+DMASYNC_DIR = '/opt/rfsoc4x2-beamformer/dma-sync'
+DMASYNC_EXPECTED = {
+    'doa_mts_dma.bit': '7cb97d7d3c1547e077e8977bbab55bd14fd5b99ca9904197e00a1d007f31516b',
+    'doa_mts_dma.hwh': '47a770ea16b1a11102036dd1c754823f31729772a5f06bdf5a89db4172c2ab27',
+    'doa_mts_dma.py': DMA_EXPECTED['doa_mts_dma.py'],
+    'cdma.py': DMA_EXPECTED['cdma.py'],
 }
 OWNERS = ('board_capture.py', 'legacy_capture.py', 'boot.py', 'ipykernel_launcher')
 # Peers accepted without --allow-cidr: loopback, link-local, private ranges and
@@ -423,11 +436,15 @@ class Service:
         if not isinstance(dwell, (int, float)) or isinstance(dwell, bool) or not 2 <= dwell <= 500:
             raise Refused('bad_request', 'trigger_dwell_ms must be 2..500.')
         overlay = request.get('overlay', getattr(a, 'overlay', DEFAULT_OVERLAY))
-        if overlay not in ('boot', 'dma'):
-            raise Refused('bad_request', 'overlay must be "boot" or "dma".')
-        if overlay == 'dma':
-            dma_dir = Path(getattr(a, 'dma_dir', DMA_DIR))
-            for name, want in DMA_EXPECTED.items():
+        if overlay not in ('boot', 'dma', 'dmasync'):
+            raise Refused('bad_request', 'overlay must be "boot", "dma" or "dmasync".')
+        dma_dir = None
+        if overlay in ('dma', 'dmasync'):
+            if overlay == 'dma':
+                dma_dir, expected = Path(getattr(a, 'dma_dir', DMA_DIR)), DMA_EXPECTED
+            else:
+                dma_dir, expected = Path(getattr(a, 'dmasync_dir', DMASYNC_DIR)), DMASYNC_EXPECTED
+            for name, want in expected.items():
                 try:
                     ok = file_sha(str(dma_dir / name)) == want
                 except OSError:
@@ -457,7 +474,7 @@ class Service:
                     *(['--both-dacs', '--dac-a-phase', '%.2f' % dac_a_phase] if dacs == 'AB' else []),
                     '--sampling-freq-unit', 'GHz', '--wire-mode', 'window4',
                     *(['--full-read'] if modes['full_read'] else []),
-                    *(['--overlay', 'dma', '--dma-dir', str(getattr(a, 'dma_dir', DMA_DIR))] if overlay == 'dma' else []),
+                    *(['--overlay', overlay, '--dma-dir', str(dma_dir)] if dma_dir else []),
                     '--trigger-dwell-ms', '%g' % dwell]
             clock = request.get('capture_clock_mhz', getattr(a, 'capture_clock_mhz', 0))
             if clock:
@@ -616,9 +633,11 @@ def parser():
                    help='DAC_A mixer phase at start with --dacs AB (degrees)')
     p.add_argument('--dac-peak', type=int, default=DEFAULT_DAC_PEAK,
                    help='DAC waveform peak code of every session (100..%d); a client may request another' % DAC_PEAK_MAX)
-    p.add_argument('--overlay', choices=['boot', 'dma'], default=DEFAULT_OVERLAY,
-                   help='FPGA image of every session (dma: doa_mts_dma from --dma-dir); a client may request another')
+    p.add_argument('--overlay', choices=['boot', 'dma', 'dmasync'], default=DEFAULT_OVERLAY,
+                   help='FPGA image of every session (dma: doa_mts_dma from --dma-dir; dmasync: the same with '
+                        'synchronised DAC starts, from --dmasync-dir); a client may request another')
     p.add_argument('--dma-dir', default=DMA_DIR)
+    p.add_argument('--dmasync-dir', default=DMASYNC_DIR)
     p.add_argument('--trigger-dwell-ms', type=float, default=DEFAULT_TRIGGER_DWELL_MS,
                    help='synced capture trigger hold of every session, ms (2..500); a client may request another')
     p.add_argument('--full-read', action='store_true',

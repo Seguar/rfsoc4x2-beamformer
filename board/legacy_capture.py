@@ -849,8 +849,9 @@ def main():
     p.add_argument('--sampling-freq-unit', choices=['GHz'], required=True)
     p.add_argument('--request-timeout', type=float, default=30)
     p.add_argument('--wire-codec', choices=['raw', 'deflate'], default='deflate')
-    p.add_argument('--overlay', choices=['boot', 'dma'], default='boot',
-                   help='boot: /boot/doa_mts.bit; dma: doa_mts_dma.bit (CDMA capture copy) from --dma-dir')
+    p.add_argument('--overlay', choices=['boot', 'dma', 'dmasync'], default='boot',
+                   help='boot: /boot/doa_mts.bit; dma: doa_mts_dma.bit (CDMA capture copy) from --dma-dir; '
+                        'dmasync: the same files built with synchronised DAC starts (pass their --dma-dir)')
     p.add_argument('--dma-dir', default='/opt/rfsoc4x2-beamformer/dma')
     p.add_argument('--trigger-dwell-ms', type=float, default=10.0,
                    help='synced capture trigger hold, ms (2..500; the RAM fills in 1.05 ms)')
@@ -926,7 +927,7 @@ def main():
                 'dac_off_verified': False, 'frames': []}
     sys.path.insert(0, '/boot')
     from doa_mts import doaMtsOverlay
-    if a.overlay == 'dma':
+    if a.overlay in ('dma', 'dmasync'):
         # doa_mts_dma: the boot design plus an AXI CDMA for the capture RAM (doa_rfsoc
         # branch dma-capture); its files sit in --dma-dir, never in /boot
         sys.path.insert(0, a.dma_dir)
@@ -940,7 +941,7 @@ def main():
     sequence = 0
     try:
         owner_check()
-        if a.overlay == 'dma':
+        if a.overlay in ('dma', 'dmasync'):
             overlay = doaMtsDmaOverlay(str(Path(a.dma_dir) / 'doa_mts_dma.bit'))
         else:
             overlay = doaMtsOverlay('/boot/doa_mts.bit')

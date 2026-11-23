@@ -79,7 +79,7 @@ request with `"full_read": true` (or the service option `--full-read`) restores
 the full read. Capturing the next frame ahead on the board gave nothing more,
 because the application already keeps one request ahead.
 
-## DMA capture image (default)
+## DMA capture image
 
 `doa_mts_dma` is the boot design plus an AXI CDMA that copies the capture RAM
 into PS DDR (doa_rfsoc branch `dma-capture`, Vivado 2025.2; its files go in
@@ -103,6 +103,36 @@ The synced capture trigger is held 2 ms (the RAM fills in 1.09 ms and is full
 when the trigger returns; the wrapper's original wait was 10 ms). Per session:
 `"overlay": "boot"` and `"trigger_dwell_ms": 10` restore the original behaviour;
 the service options `--overlay` and `--trigger-dwell-ms` change the defaults.
+
+## Synchronised DAC starts (`dmasync`, default since 2026-11-23)
+
+In the boot and DMA images the capture trigger, synchronised only to the PS clock
+`pl_clk0`, was ORed with each DAC's GPIO enable and fed straight into the two DAC
+waveform players, which run on the asynchronous RF fabric clock. Each player
+sampled the edge on its own, so in a few per cent of captures one DAC started one
+fabric cycle (8 ns, 4 DAC samples) after the other. With both DACs on, the two equal
+copies then summed with a notch at the band centre on all four ADCs: whole frames
+at about 10 % EVM instead of 7.6 % (OTA, 4.85 GHz). Vivado's CDC report showed the
+crossing as 40 unknown endpoints.
+
+`dmasync` is the DMA image plus `dac_start_sync` (doa_rfsoc branch `dma-capture`,
+`PL/dma/src/dac_start_sync.v`, build variant `dmasync`): the trigger is synchronised
+once into the RF fabric clock and both player enables are registered from that one
+bit. Same file names as `dma`, installed in `/opt/rfsoc4x2-beamformer/dma-sync`
+(SHA-256 checked). Timing met (WNS +0.175 ns, WHS +0.010 ns); the crossing now has
+4 unknown endpoints (pre-existing), the new synchronisers are safe.
+
+Board A/B, 2026-11-23, same settings (4.85 GHz OTA, both DACs, DAC A 40 deg, peak
+24000, 4096 rows, client on the board), 1500 consecutive frames each:
+
+| | `dma` | `dmasync` |
+|---|---|---|
+| Frames in the skewed-start state | 44 (2.9 %) | 0 |
+| EVM median / p99 / max | 7.38 / 9.76 / 10.90 % | 6.83 / 7.77 / 8.26 % |
+| Frames above 8.5 % EVM | 54 | 0 |
+| Frames/s | 100.5 | 100.6 |
+
+`"overlay": "dma"` or `"boot"` per session still selects the older images.
 
 ## Reduced-window frame offset
 

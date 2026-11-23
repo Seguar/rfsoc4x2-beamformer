@@ -257,9 +257,9 @@ class SessionTests(unittest.TestCase):
         c.close()
         self.assertFalse((Path(self.tmp.name)/'runs').exists() and any((Path(self.tmp.name)/'runs').iterdir()))
 
-    def test_defaults_are_dma_and_a_2_ms_trigger_hold(self):
+    def test_defaults_are_dmasync_and_a_2_ms_trigger_hold(self):
         a = svc.parser().parse_args([])
-        self.assertEqual((a.overlay, a.trigger_dwell_ms), ('dma', 2.0))
+        self.assertEqual((a.overlay, a.trigger_dwell_ms), ('dmasync', 2.0))
         c, f = self.start(max_seconds=60)
         self.until(f, 'ready')
         c.sendall(b'{"op":"stop"}\n')
@@ -275,6 +275,18 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(m['code'], 'boot_assets')
         self.assertIn('doa_mts_dma', m['message'])
         c.close()
+
+    def test_dmasync_overlay_needs_its_files(self):
+        c, f = self.start(overlay='dmasync')        # nothing installed in the test dma-sync folder
+        m = self.until(f, 'error')
+        self.assertEqual(m['code'], 'boot_assets')
+        self.assertIn('doa_mts_dma', m['message'])
+        c.close()
+
+    def test_dmasync_passes_its_own_folder_to_the_helper(self):
+        a = svc.parser().parse_args(['--overlay', 'dmasync'])
+        self.assertEqual((a.overlay, a.dmasync_dir), ('dmasync', svc.DMASYNC_DIR))
+        self.assertNotEqual(svc.DMASYNC_DIR, svc.DMA_DIR)
 
     def test_helper_failure_is_reported(self):
         os.environ['FAKE_HELPER_MODE'] = 'fail'
