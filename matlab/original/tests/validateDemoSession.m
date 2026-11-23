@@ -125,7 +125,7 @@ assert(a.valid && numel(a.samples)==4096 && a.analysis.valid && a.analysis.metri
 refused=false;try,app.Session.configure(struct('analyzer','both'));catch e,refused=string(e.identifier)=='origapp:Config';end
 assert(refused,'Native VSA comparison must need the full frame.');
 % Every frame is processed and recorded; the window is redrawn at most every
-% displayPeriodSeconds (0.2 s): the EVM history stays per frame, without false gaps.
+% displayPeriodSeconds (0.1 s): the EVM history stays per frame, without false gaps.
 pause(.25);acc0=app.Controller.FramesAccepted;shown0=app.View.FramesShown;
 for k=9:20,enqueue(k,0,true);app.tick();end
 assert(app.Controller.FramesAccepted-acc0==12,'Frames were not all processed.');

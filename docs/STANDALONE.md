@@ -70,12 +70,30 @@ checkout.
 
 Every frame the board sends is processed (beamforming, DOA, EVM, the board OLED,
 the EVM and channel histories); the window is redrawn at most every
-`displayPeriodSeconds` (0.2 s). Redrawing the MATLAB app window costs about
-100 ms, processing about 35-60 ms, so drawing every frame held the rate at 5-8
-frames/s. Measured with synthetic 4096-sample frames on the build server: 136 ms
-per frame drawing each one, 56 ms median (77 ms mean) with the 0.2 s display
-period. The frames/s tile counts processed frames. The board delivers up to
-19 frames/s at 4096 samples (see BOARD_SERVICE.md, capture read time).
+`displayPeriodSeconds` (0.1 s, so up to 10 redraws per second). The frames/s
+tile counts processed frames.
+
+A redraw is rendering time in MATLAB's app window, not app code. Measured with
+synthetic 4096-sample frames on the laptop (R2026a, 175 % display): about 17 ms
+processing and 7 ms of view code per frame, then about 60 ms of rendering per
+redraw. A third of that rendering was MATLAB recomputing automatic axis limits:
+on average one axis limit changed on every other redraw. The view now sets the
+time, spectrum and EVM limits itself and changes them only when the data leaves
+them or uses less than half of them (once in 50 redraws). A limit you zoom or pan
+stays until **Fit plots**.
+
+| Synthetic frames | Render per redraw (median) | Frames/s, redraw every 0.1 s | Frames/s, redraw every 0.2 s |
+|---|---|---|---|
+| Laptop, automatic limits (v0.6.7) | 61 ms | 29 | 43 |
+| Laptop, all limits fixed (experiment) | 40 ms | 42 | 52 |
+| Build server, automatic limits, 2 runs | 72 and 76 ms | 17, 18 | 19, 24 |
+| Build server, limits held by the view, 2 runs | 50 and 54 ms | 17, 18 | 24, 26 |
+
+The build server processes frames more slowly, so its frame rates are lower and
+noisier. With the limits held, ten redraws per second cost about what five did
+before; the redraw interval is now 0.1 s. The live rate is lower than these
+numbers: frames also have to arrive and be decoded. Hiding the axes toolbars or
+turning off zoom and pan saved under 4 ms per redraw and is not done.
 
 ## Limits
 

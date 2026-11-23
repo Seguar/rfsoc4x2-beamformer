@@ -50,7 +50,7 @@ classdef BeamformerApp < handle
             zs=obj.Session.ZeroCal.state;
             % Every frame is processed and recorded (EVM, OLED, histories); the
             % window is redrawn at most every displayPeriodSeconds: drawing,
-            % not processing, set the frame rate (about 100 ms per redraw).
+            % not processing, set the frame rate (about 50 ms per redraw).
             obj.Session.step(@(s)obj.frame(s));
             if obj.Session.ZeroCal.state~=zs,obj.refreshControls();end
             s=obj.Session.snapshot();

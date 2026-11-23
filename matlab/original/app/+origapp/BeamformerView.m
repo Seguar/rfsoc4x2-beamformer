@@ -619,7 +619,7 @@ classdef BeamformerView < handle
                 'BackgroundColor',th.input,'FontColor',th.text,'ValueChangedFcn',@(~,~)obj.evmMode(), ...
                 'Tooltip','Frame history of the primary EVM, or the current frame resolved by subcarrier or payload symbol');
             obj.Card.evm.head.ColumnWidth{3}=170;
-            for n=["doa","pattern","evm"],obj.defaultLimits(char(n));end
+            for n=["doa","pattern","spectrum","evm"],obj.defaultLimits(char(n));end
         end
         function h=key(obj,ax,align)
             % Persistent coloured series key (cheaper than a legend), kept in
