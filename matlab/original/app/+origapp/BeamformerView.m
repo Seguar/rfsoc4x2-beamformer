@@ -53,6 +53,9 @@ classdef BeamformerView < handle
     properties (Access=private)
         Config
         Callbacks
+        % Axis limits the view sets itself instead of MATLAB's automatic
+        % limits (see holdLimits): per axes, x/y = managed, lx/ly = last set.
+        Managed = struct()
         Panels = []
         Accepted = struct()
         % converter path settings by kind (DemoSession.PathKinds); DAC kinds use
@@ -202,6 +205,7 @@ classdef BeamformerView < handle
             obj.showVendor(obj.field(s,'vendor',[]),seq);
             obj.showRate();
             obj.LastSequence=seq;
+            obj.holdLimits();
             drawnow limitrate nocallbacks
         end
         function clear(obj,reason)
@@ -1362,12 +1366,49 @@ classdef BeamformerView < handle
         end
         function defaultLimits(obj,name)
             ax=obj.Ax.(name);ax.XLimMode='auto';ax.YLimMode='auto';
-            half=obj.field(obj.Config,'scan_bw',NaN)/2;
+            half=obj.field(obj.Config,'scan_bw',NaN)/2;base=NaN;
             switch name
                 case 'doa',ax.YLim=[0 1.05];if isfinite(half) && half>0,ax.XLim=[-half half];end
                 case 'pattern',ax.YLim=[-60 0];if isfinite(half) && half>0,ax.XLim=[-half half];end
-                case 'evm',if strcmp(obj.EvmUnit,'percent'),ax.YLim=[0 Inf];end
+                case 'evm',if strcmp(obj.EvmUnit,'percent'),base=0;end
                 case 'constellation',ax.XLim=[-1.45 1.45];ax.YLim=[-1.45 1.45];
+            end
+            % Dimensions left automatic are managed by holdLimits from now on
+            % (again after a user zoom only through Fit plots).
+            obj.Managed.(name)=struct('x',strcmp(ax.XLimMode,'auto'),'y',strcmp(ax.YLimMode,'auto'), ...
+                'lx',[],'ly',[],'base',base);
+            obj.holdLimits(name);
+        end
+        function holdLimits(obj,names)
+            % MATLAB's automatic limits are recomputed and re-sent on every
+            % redraw (about 20 ms of a 60 ms render). The view sets the limits
+            % itself and changes them only when the data leaves them or uses
+            % less than half of them. A limit that differs from the one last
+            % set was zoomed or panned by the user and is left alone.
+            if nargin<2,names=fieldnames(obj.Managed);else,names=cellstr(names);end
+            for k=1:numel(names)
+                name=names{k};if ~isfield(obj.Managed,name),continue,end
+                m=obj.Managed.(name);ax=obj.Ax.(name);
+                h=findobj(ax,'-property','YData','Visible','on');
+                for d='xy'
+                    if ~m.(d),continue,end
+                    D=upper(d);cur=ax.([D 'Lim']);last=m.(['l' d]);
+                    if (isempty(last) && strcmp(ax.([D 'LimMode']),'manual')) || (~isempty(last) && ~isequal(cur,last))
+                        m.(d)=false;continue
+                    end
+                    v=get(h,[D 'Data']);if ~iscell(v),v={v};end
+                    v=cellfun(@(a)double(a(:)),v,'UniformOutput',false);v=vertcat(v{:});v=v(isfinite(v));if isempty(v),continue,end
+                    lo=min(v);hi=max(v);fl=NaN;if d=='y',fl=m.base;end
+                    if isfinite(fl),lo=min(lo,fl);end
+                    span=hi-lo;if span<=0,span=max(abs(hi),1)*.1;end
+                    margin=0;slack=.15;if d=='y',margin=.04;slack=.1;end
+                    want=[lo-margin*span hi+margin*span];if isfinite(fl),want(1)=fl;end
+                    if isempty(last) || want(1)<cur(1) || want(2)>cur(2) || diff(want)<.5*diff(cur)
+                        new=[want(1)-slack*span want(2)+slack*span];if isfinite(fl),new(1)=fl;end
+                        ax.([D 'Lim'])=new;m.(['l' d])=ax.([D 'Lim']);
+                    end
+                end
+                obj.Managed.(name)=m;
             end
         end
         function pad(obj)

@@ -58,6 +58,16 @@ v.Ax.spectrum.XLim=[-10 10];v.show(snapshot(31));
 assert(isequal(v.Ax.spectrum.XLim,[-10 10]));
 set(v.Lines.payload,'XData',[0 2.2],'YData',[0 -2.2]);v.fitPlots();
 assert(v.Ax.constellation.XLim(2)>2.2 && v.Ax.constellation.YLim(1)<-2.2);
+% Automatic limits are held by the view (no re-layout on every redraw): a
+% similar frame keeps them, a stronger one widens them, a user zoom stays.
+v.fitPlots();v.show(snapshot(31));L=v.Ax.time.YLim;
+assert(strcmp(v.Ax.time.YLimMode,'manual') && strcmp(v.Ax.spectrum.XLimMode,'manual') && ...
+    strcmp(v.Ax.evm.YLimMode,'manual') && v.Ax.evm.YLim(1)==0,'Limits not held by the view.');
+s2=snapshot(31);s3=snapshot(32);s2.samples=s3.samples;v.show(s2);
+assert(isequal(v.Ax.time.YLim,L),'A similar frame moved the held limits.');
+s2.samples=4*s2.samples;v.show(s2);assert(v.Ax.time.YLim(2)>2*L(2),'A stronger frame did not widen the limits.');
+v.Ax.time.YLim=[-1 1];v.show(snapshot(31));assert(isequal(v.Ax.time.YLim,[-1 1]),'User zoom overwritten.');
+v.fitPlots();v.show(snapshot(31));assert(isequal(v.Ax.time.YLim,L),'Fit plots did not restore the held limits.');
 % Plot modes reuse the same six axes with persistent objects only.
 n2=numel(findall(v.Figure));
 h=v.Controls.EvmMode;h.Value='subcarrier';h.ValueChangedFcn(h,struct());
