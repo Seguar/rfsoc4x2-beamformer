@@ -62,12 +62,12 @@ assert(s.Controller.ModeRefusals==c.maxConsecutiveErrors+2 && s.Controller.Conse
 % Fewer directions than the signal priority asks for, or none, is a scene
 % refusal too (five in a row stopped a laptop session on 2026-11-23).
 r0=s.Controller.ModeRefusals;
-for id=["origapp:Priority","origapp:NoDoa"]
+for id=["origapp:Priority","origapp:NoDoa","rfsoc:Constraints","rfsoc:Solver"]
     for k=1:c.maxConsecutiveErrors+2
         assert(~s.Controller.recordFailure(MException(id,'scene refusal')),'%s stopped acquisition.',id);
     end
 end
-assert(s.Controller.ModeRefusals==r0+2*(c.maxConsecutiveErrors+2) && s.Controller.ConsecutiveErrors==0);
+assert(s.Controller.ModeRefusals==r0+4*(c.maxConsecutiveErrors+2) && s.Controller.ConsecutiveErrors==0);
 % Original-app ranges: a source count above what 4 elements resolve, or a scan
 % grid too large to hold, is refused at configure time or per frame, never fatal.
 s.configure(struct('bf','Steering'));

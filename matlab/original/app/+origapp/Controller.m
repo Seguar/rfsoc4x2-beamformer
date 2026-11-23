@@ -339,14 +339,17 @@ classdef Controller < handle
                 return
             end
             if any(string(err.identifier) == ["origapp:Constraints", "origapp:Pending", ...
-                    "origapp:Priority", "origapp:NoDoa"])
+                    "origapp:Priority", "origapp:NoDoa"]) || startsWith(string(err.identifier), "rfsoc:")
                 % The selected beamformer/estimator refuses this scene (LCMV with a
                 % single source), is not implemented (PC_corr), finds no direction,
                 % or finds fewer directions than the signal priority asks for
                 % (priority 2 with one source: five in a row stopped the laptop
                 % session on 2026-11-23). The frame is rejected with that reason
                 % on screen; the session must survive a mode choice and a scene
-                % change, so this never counts toward stopping acquisition.
+                % change, so this never counts toward stopping acquisition. The
+                % reviewed engine (+rfsoc) refuses per frame the same way (LCMV
+                % constraints not independent, RAB/QCB infeasible or not solved,
+                % zero wanted response): its rfsoc:* errors are refusals too.
                 obj.ModeRefusals = obj.ModeRefusals + 1;
                 mustStop = false;
                 return
