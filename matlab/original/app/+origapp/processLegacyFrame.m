@@ -192,7 +192,11 @@ if p.phComp
 end
 
 %% Beamforming
-if p.bfEngine == "reviewed"
+if string(p.bf) == "OFDM pilot MVDR"
+    template=p.preamble;
+    if p.ofdmConj, template=conj(template); end
+    weights=origapp.ofdmPilotWeights(rawData,template,p.symbolRows,p.burstRows);
+elseif p.bfEngine == "reviewed"
     weights = reviewedWeights(rawData, estimated_angle, p);
 else
     weights = originalWeights(rawData, estimated_angle, npc, p);

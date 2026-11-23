@@ -215,7 +215,7 @@ classdef DemoSession < handle
             next=obj.Config;
             for n=names.',next.(n)=delta.(n);end
             next=origapp.resolveConfig(next);
-            assert(any(string(next.bf)==["Without","Steering","MVDR","DMR","PC","PC_corr","LCMV", ...
+            assert(any(string(next.bf)==["Without","Steering","OFDM pilot MVDR","MVDR","DMR","PC","PC_corr","LCMV", ...
                 "RVL","RAB PC","DL MVDR","DL ITER MVDR","QCB"]),'origapp:Config','Unknown beamformer.');
             assert(~next.IQcomp || next.sizeL==obj.Config.sizeL,'origapp:Calibration', ...
                 'Disable static IQ before changing filter length; learn the new filter first.');
@@ -507,9 +507,15 @@ classdef DemoSession < handle
         end
         function p=parameters(obj,cfg)
             p=cfg;p.c=physconst('LightSpeed');
+            if string(cfg.bf)=="OFDM pilot MVDR"
+                assert(cfg.ang_num==3 && cfg.ch==5 && ~cfg.directOnly,'origapp:Config', ...
+                    'OFDM pilot MVDR needs Combined beam and OFDM (tracked).');
+            end
             % Signal priority 3 identifies the wanted direction by the OFDM preamble
             % (the analyzer's own template and buffer orientation).
             p.preamble=obj.Analyzer.Profile.preambleTemplate;
+            p.symbolRows=obj.Analyzer.Profile.symLen;
+            p.burstRows=p.symbolRows*obj.Analyzer.Profile.burstSymbols;
             p.ofdmConj=string(cfg.ofdm.orientation)=="IplusjQ";
             if ~isempty(obj.Params) && cfg.fcAnt==obj.Params.fcAnt && cfg.num_elements==obj.Params.num_elements
                 p.ula=obj.Params.ula;

@@ -774,7 +774,7 @@ classdef BeamformerView < handle
             obj.label(q,2,'Signal priority');
             obj.Accepted.ang_num=obj.Controls.ang_num.Value;
             obj.Controls.ang_num.ValueChangedFcn=@(h,~)obj.configure('ang_num',h.Value,h);
-            bfs={'Without','Steering','MVDR','DMR','PC','PC_corr','LCMV','RVL','RAB PC','DL MVDR','DL ITER MVDR','QCB'};
+            bfs={'Without','Steering','OFDM pilot MVDR','MVDR','DMR','PC','PC_corr','LCMV','RVL','RAB PC','DL MVDR','DL ITER MVDR','QCB'};
             obj.dropdown(q,3,'Beamformer','bf',bfs,char(obj.field(obj.Config,'bf','Steering')),true);
             doa={'MVDR','MUSIC','Beamscan','MUSICR','ESPRITE','ESPRITEBS','WSFR','MVDRman','MVDRman_corr'};
             obj.dropdown(q,4,'DOA estimator','doa',doa,char(obj.field(obj.Config,'doa','MVDR')),true);

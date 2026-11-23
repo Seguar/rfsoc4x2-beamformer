@@ -66,6 +66,15 @@ py -3 tools/run_original_vsa.py --config <private-config.json> --i-own-board --m
 The launcher needs its private configuration, board access and the `vsa_rfsoc`
 checkout.
 
+## OFDM pilot MVDR
+
+For a four-channel capture, select **Combined beam**, **OFDM (tracked)** and
+**OFDM pilot MVDR**. This receive mode measures the relative amplitude and phase
+of the wanted signal at the four ADCs using the known OFDM preamble. It estimates
+the noise and interference covariance from short gaps beside synchronized bursts.
+The same complex weights apply to the complete frame, including its payload.
+A frame with insufficient gap samples or no synchronized preamble is refused.
+
 ## Frame rate
 
 Every frame the board sends is processed (beamforming, DOA, EVM, the board OLED,

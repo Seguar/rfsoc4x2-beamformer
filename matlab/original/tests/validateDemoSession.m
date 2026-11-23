@@ -35,18 +35,26 @@ assert(numel(findall(groot,'Type','figure'))==figures0,'Headless session constru
 % The board OLED gets the EVM of each analysed frame; a display failure is never a frame error.
 assert(numel(shown)==1 && isequaln(shown{1},a.analysis.evmPercent),'EVM was not passed to the board display.');
 assert(isequaln(shownAngle{1},a.angles(1)),'Main DOA was not passed to the board display.');
+s.configure(struct('bf','OFDM pilot MVDR','ang_num',3));
+enqueue(1,0,true);s.step();pilot=s.snapshot();
+assert(pilot.valid && pilot.analysis.valid && all(isfinite(pilot.weights)), ...
+    'Pilot-trained MVDR did not recover the reference.');
+refused=false;
+try,s.configure(struct('ang_num',1));catch e,refused=strcmp(e.identifier,'origapp:Config');end
+assert(refused && s.Config.ang_num==3,'Pilot weights must track the OFDM source.');
+s.configure(struct('bf','Steering','ang_num',1));
 s.configure(struct('avg_factor',2));a=s.snapshot();assert(s.Config.avg_factor==2 && ~a.valid);
 old=s.Config.doa;refused=false;
 try,s.configure(struct('doa','MVDRman'));catch e,refused=string(e.identifier)=='origapp:Calibration';end
 assert(refused && strcmp(s.Config.doa,old));
 refused=false;try,s.configure(struct('IQcomp',true));catch e,refused=string(e.identifier)=='origapp:Calibration';end
 assert(refused);
-s.configure(struct('analyzer','both'));enqueue(1,0,true);s.step();a=s.snapshot();
+s.configure(struct('analyzer','both'));enqueue(2,0,true);s.step();a=s.snapshot();
 assert(a.valid && numel(vendorBuffers)==1 && isequal(conj(vendorBuffers{1}),a.samples), ...
     'Vendor and integrated display must use the same physical buffer.');
-enqueue(2,3,true);s.step();a=s.snapshot();assert(~a.valid && s.Controller.TotalErrors==1);
-enqueue(3,0,true);s.step();a=s.snapshot();assert(a.valid);
-enqueue(4,0,false);s.step();a=s.snapshot();assert(~a.valid && s.Controller.NoSignalFrames==1);
+enqueue(3,3,true);s.step();a=s.snapshot();assert(~a.valid && s.Controller.TotalErrors==1);
+enqueue(4,0,true);s.step();a=s.snapshot();assert(a.valid);
+enqueue(5,0,false);s.step();a=s.snapshot();assert(~a.valid && s.Controller.NoSignalFrames==1);
 s.configure(struct('bf','DL MVDR','diag',1e-6,'analyzer','integrated'));
 enqueue(6,0,true);same=q{1};s.step();a=s.snapshot();assert(a.valid);w1=a.weights;
 s.configure(struct('diag',1e6));same.sequence=7;q={same};s.step();a=s.snapshot();assert(a.valid);
