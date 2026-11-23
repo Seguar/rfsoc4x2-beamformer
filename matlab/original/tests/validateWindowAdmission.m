@@ -24,6 +24,14 @@ assert(origapp.LegacyVsaBackend.validWindowSummary(struct('candidate','after-wra
 for s={struct(),struct('candidate','fallback'),struct('candidate','none'),struct('candidate',[])}
     assert(~origapp.LegacyVsaBackend.validWindowSummary(s{1}),'Invalid selector summary accepted.');
 end
+% Reduced windows: the reduced selector's searched ("fast") and reused ("fixed")
+% offsets are accepted, the full selector's names and fallbacks are not.
+assert(origapp.LegacyVsaBackend.validWindowSummary(struct('candidate','fast'),true) && ...
+    origapp.LegacyVsaBackend.validWindowSummary(struct('candidate','fixed'),true),'Reduced window refused.');
+for s={struct('candidate','after-wrap'),struct('candidate','fallback'),struct()}
+    assert(~origapp.LegacyVsaBackend.validWindowSummary(s{1},true),'Invalid reduced summary accepted.');
+end
+assert(~origapp.LegacyVsaBackend.validWindowSummary(struct('candidate','fixed')),'Reduced name accepted for a full window.');
 records=splitlines(strtrim(fileread(fullfile(cfg.outputDir,'errors.jsonl'))));
 assert(numel(records)==3,'Every Controller failure must be persisted.');
 entry=jsondecode(records{3});

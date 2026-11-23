@@ -675,13 +675,15 @@ classdef LegacyVsaBackend < handle
     methods (Static)
         function ok = validWindowSummary(info, reduced)
             % Fail closed on a selector fallback, missing or malformed JSON.
-            % A reduced window must come from the reduced selector, a full one
-            % from the wrap-searching selector.
+            % A reduced window must come from the reduced selector ("fast": offset
+            % searched; "fixed": the offset of the last search, reused between
+            % checks), a full one from the wrap-searching selector. Either way
+            % the host checks the window against the reference itself.
             if nargin < 2, reduced = false; end
             ok = isstruct(info) && isscalar(info) && isfield(info,'candidate');
             if ~ok, return; end
             c = string(info.candidate);
-            names = ["before-wrap","after-wrap","nowrap","clear"]; if reduced, names = "fast"; end
+            names = ["before-wrap","after-wrap","nowrap","clear"]; if reduced, names = ["fast","fixed"]; end
             ok = isscalar(c) && ~ismissing(c) && any(c == names);
         end
         function h = sha256(path)
