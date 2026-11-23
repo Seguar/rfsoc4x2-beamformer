@@ -23,6 +23,10 @@ classdef Controller < handle
         LastError = ""
         ControlRevision = 0
     end
+    properties (Access = private)
+        LogLast = struct()          % per error identifier: time of the last errors.jsonl line
+        LogSkipped = struct()       % per error identifier: failures not written since then
+    end
 
     methods
         function obj = Controller(cfg)
@@ -282,15 +286,27 @@ classdef Controller < handle
             end
             obj.TotalErrors = obj.TotalErrors + 1;
             obj.LastError = string(err.identifier) + ": " + string(err.message);
-            % Append each failure before later successes/rejections replace LastError.
-            % Sequence is the last frame received by Controller, not an assertion
-            % that a transport failure produced a new frame.
-            if strlength(string(obj.Config.outputDir)) > 0
+            % Append failures before later successes/rejections replace LastError:
+            % at most one line per error identifier per second (rejections can
+            % come at the frame rate, 18/s on the laptop = 125 MB/h). A written
+            % line counts the same-identifier failures left out since the last
+            % one; the counters below still count every frame. Sequence is the
+            % last frame received by Controller, not an assertion that a
+            % transport failure produced a new frame.
+            key = matlab.lang.makeValidName(char(string(err.identifier)));
+            t = obj.nowSeconds();
+            due = ~isfield(obj.LogLast, key) || t - obj.LogLast.(key) >= 1;
+            if ~due
+                obj.LogSkipped.(key) = obj.LogSkipped.(key) + 1;
+            elseif strlength(string(obj.Config.outputDir)) > 0
+                skipped = 0; if isfield(obj.LogSkipped, key), skipped = obj.LogSkipped.(key); end
+                obj.LogLast.(key) = t; obj.LogSkipped.(key) = 0;
                 try
                     if ~isfolder(obj.Config.outputDir), mkdir(obj.Config.outputDir); end
-                    entry=struct('timestamp',obj.nowSeconds(), 'lastReceivedSequence',obj.LastSequence, ...
+                    entry=struct('timestamp',t, 'lastReceivedSequence',obj.LastSequence, ...
                         'lastFrameTimestamp',obj.LastFrameTime, 'identifier',string(err.identifier), ...
-                        'message',string(err.message), 'stack',err.stack, 'totalErrors',obj.TotalErrors);
+                        'message',string(err.message), 'stack',err.stack, 'totalErrors',obj.TotalErrors, ...
+                        'notWrittenSincePrevious',skipped);
                     fid=fopen(fullfile(obj.Config.outputDir,'errors.jsonl'),'a');
                     assert(fid>=0,'origapp:ErrorLog','Cannot open errors.jsonl.');
                     logGuard=onCleanup(@()fclose(fid));

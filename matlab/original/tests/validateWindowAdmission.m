@@ -33,10 +33,20 @@ for s={struct('candidate','after-wrap'),struct('candidate','fallback'),struct()}
 end
 assert(~origapp.LegacyVsaBackend.validWindowSummary(struct('candidate','fixed')),'Reduced name accepted for a full window.');
 records=splitlines(strtrim(fileread(fullfile(cfg.outputDir,'errors.jsonl'))));
-assert(numel(records)==3,'Every Controller failure must be persisted.');
+assert(numel(records)==3,'Each failure type must be persisted.');
 entry=jsondecode(records{3});
 assert(string(entry.identifier)=="origapp:Expired" && entry.lastReceivedSequence==3 && ...
     isfield(entry,'stack') && isfield(entry,'timestamp'),'Error diagnostics incomplete.');
+% A burst of the same rejection writes one line per second, not one per frame;
+% the counter still counts every frame and the next line says how many were left out.
+b0=c.BoundaryFrames;
+for k=1:20,c.recordFailure(MException('origapp:Boundary','wrap'));end
+assert(c.BoundaryFrames==b0+20,'Rejections not all counted.');
+records=splitlines(strtrim(fileread(fullfile(cfg.outputDir,'errors.jsonl'))));
+assert(numel(records)<=5,'A burst of rejections wrote one line per frame (%d lines).',numel(records));
+pause(1.05);c.recordFailure(MException('origapp:Boundary','wrap'));
+records=splitlines(strtrim(fileread(fullfile(cfg.outputDir,'errors.jsonl'))));last=jsondecode(records{end});
+assert(string(last.identifier)=="origapp:Boundary" && last.notWrittenSincePrevious>=19,'Left-out count missing.');
 disp('WINDOW_ADMISSION_PASS');
     function f=nextFrame(~)
         i=i+1;
