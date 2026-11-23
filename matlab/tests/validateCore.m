@@ -53,6 +53,18 @@ assert(isotropic.rootResidual<1e-10,'Isotropic root residual too large.');
 bad=cfg; bad.spacingM=NaN; rejected=false;
 try, rfsoc.steering(bad,0); catch, rejected=true; end
 assert(rejected,'Unmeasured geometry produced a physical angle.');
+% LCMV with a strong wanted signal whose true signature is off the model
+% steering vector (uncalibrated array, 5 deg rms phase error): the loading keeps
+% the wanted signal; unloaded it was cancelled (live laptop, 2026-11-23).
+rng(23); cfg.algorithm="LCMV"; cfg.nullAnglesDeg=-35;
+aTrue=a.*exp(1j*deg2rad(5*randn(4,1)));
+xm=10*s*aTrue.'+10*j*jammer.'+0.1*(randn(n,4)+1j*randn(n,4));
+[~,w]=rfsoc.beamform(xm,cfg,a);
+gain=abs(w'*aTrue);sinr=20*log10(10*gain/norm([10*abs(w'*jammer) 0.1*norm(w)]));
+assert(gain>0.7 && sinr>15,'Loaded LCMV cancelled the wanted signal (gain %.2f, SINR %.1f dB).',gain,sinr);
+assert(abs(w'*jammer)<1e-7,'Loaded LCMV lost its null constraint.');
+cfg.loading=0;[~,w0]=rfsoc.beamform(xm,cfg,a);cfg.loading=rfsoc.defaultConfig().loading;
+assert(abs(w0'*aTrue)<gain,'Loading did not protect the wanted signal.');
 cfg.algorithm="LCMV"; cfg.nullAnglesDeg=cfg.angleDeg; rejected=false;
 try, rfsoc.beamform(x,cfg,a); catch, rejected=true; end
 assert(rejected,'Dependent LCMV constraints accepted.');
