@@ -143,19 +143,26 @@ classdef DemoSession < handle
             obj.WantedAngle=NaN;   % model angles move: track again from the next confident frame
             obj.invalidate("converter setting applied; awaiting a fresh frame");
         end
-        function calibrateZero(obj)
+        function calibrateZero(obj,source)
             % Common-feed 0 deg calibration: every ADC receives the same splitter
             % output, so after this the four streams agree in phase and level and
             % the array model reads the loopback signal at 0 deg. Measures each
             % stream against ADC_D over a few frames, then writes ADC mixer phase
             % offsets (on the running NCOs) and QMC gains; twice, then checks.
+            % source "ofdm": the whole band of the OFDM (needs its lock on every
+            % ADC); "cw": the strongest spectral line only (an MXG CW tone), exact
+            % at that frequency, where a null on that tone must be deep; it works
+            % with the OFDM on as well.
+            if nargin<2 || isempty(source),source="ofdm";end
+            source=lower(string(source));
+            assert(any(source==["ofdm","cw"]),'origapp:Control','Calibration source must be "ofdm" or "cw".');
             assert(obj.Controller.IsOpen,'origapp:Control','Start acquisition before calibrating.');
             c=obj.Controller.capabilities().commands;
             assert(all(ismember(["phasec","again"],c)),'origapp:Control', ...
                 'This board helper cannot set fine ADC phases and gains; reinstall the board service.');
             assert(isfield(obj.Paths,'ADC') && isfield(obj.Paths,'adcGain'),'origapp:Control','Board path state unknown.');
             obj.ZeroCal=struct('state',"running",'step',1,'steps',3,'acc',zeros(4,4),'frames',0, ...
-                'startPhase',obj.Paths.ADC,'startGain',obj.Paths.adcGain);
+                'startPhase',obj.Paths.ADC,'startGain',obj.Paths.adcGain,'source',source,'toneHz',NaN);
             obj.invalidate("calibrating 0 deg: measuring");
         end
         function setDac(obj,on)
@@ -184,6 +191,11 @@ classdef DemoSession < handle
             obj.invalidate("SYNC mode applied");
         end
         function configure(obj,delta)
+            if isfield(delta,'plotMirror')
+                % display only (plots and board OLED): no reset, no new frame needed
+                obj.Config.plotMirror=logical(delta.plotMirror);delta=rmfield(delta,'plotMirror');
+                if isempty(fieldnames(delta)),return,end
+            end
             allowed=["ch","bf","doa","num","ang_num","scan_bw","scan_res","avg_factor","diag", ...
                 "alpha","gamma","iter","mis_ang","alg_scan_res","bw","adIQcomp","IQcomp","sizeL", ...
                 "stepMU","phComp","analyzer"];
@@ -320,6 +332,7 @@ classdef DemoSession < handle
                 % board OLED (rate-limited, never an error): EVM and the main DOA,
                 % the direction the beam points at (first angle after the priority)
                 main=NaN;if ~isempty(angles),main=angles(1);end
+                if logical(obj.Config.plotMirror),main=-main;end   % as the plots show it
                 obj.Controller.showEvm(r.evmPercent,main);
                 if any(string(obj.Config.analyzer)==["vsa","both"])
                     weights=[];if ~isempty(out),weights=out.weights;end
@@ -423,12 +436,26 @@ classdef DemoSession < handle
         end
         function zeroStep(obj,frame)
             z=obj.ZeroCal;x=double(frame.samples);
-            if isfield(frame,'signalChannels') && ~all(frame.signalChannels)
-                obj.invalidate("calibrating 0 deg: no signal on every ADC; waiting");return
+            if isfield(z,'source') && z.source=="cw"
+                % strongest spectral line common to all streams (windowed FFT bin);
+                % it must stand >= 20 dB above each stream's median bin
+                n=size(x,1);X=fft(x.*hann(n,'periodic'),[],1);P=abs(X).^2;
+                [~,kb]=max(sum(P,2));
+                if any(P(kb,:)<100*median(P,1))
+                    obj.invalidate("calibrating 0 deg on CW: no tone 20 dB above the floor on every ADC; waiting");return
+                end
+                a=X(kb,:);f=(kb-1)/n;if f>=.5,f=f-1;end
+                z.toneHz=f*obj.Config.fsRfsoc;
+                z.acc(1,:)=z.acc(1,:)+abs(a).^2;
+                z.acc(2,:)=z.acc(2,:)+conj(a(1))*a;
+            else
+                if isfield(frame,'signalChannels') && ~all(frame.signalChannels)
+                    obj.invalidate("calibrating 0 deg: no signal on every ADC; waiting");return
+                end
+                % per stream: power and cross term against ADC_D (same as the board check)
+                z.acc(1,:)=z.acc(1,:)+mean(abs(x).^2,1);
+                z.acc(2,:)=z.acc(2,:)+(x(:,1)'*x)/size(x,1);
             end
-            % per stream: power and cross term against ADC_D (same as the board check)
-            z.acc(1,:)=z.acc(1,:)+mean(abs(x).^2,1);
-            z.acc(2,:)=z.acc(2,:)+(x(:,1)'*x)/size(x,1);
             z.frames=z.frames+1;
             if z.frames<6
                 obj.ZeroCal=z;obj.invalidate(sprintf("calibrating 0 deg: step %d/%d, frame %d/6",z.step,z.steps,z.frames));return

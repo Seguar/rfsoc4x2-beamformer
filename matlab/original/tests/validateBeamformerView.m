@@ -60,6 +60,13 @@ assert(strcmp(v.Marks.doa(1).Label,'beam 20.0° weak -6 dB') && strcmp(v.Marks.d
 assert(contains(v.Card.doa.note.Text,'beam 20.0°') && contains(v.Card.pattern.note.Text,'beam 20.0°: 0 dB') && ...
     contains(v.Card.pattern.note.Text,'null -35.0°: -55 dB'),'Direction notes: %s | %s',v.Card.doa.note.Text,v.Card.pattern.note.Text);
 v.show(snapshot(30));
+% Mirror (display only): both spatial plots and their markers flip sign, and back.
+h=v.Controls.Mirror;h.Value=true;h.ValueChangedFcn(h,struct());
+assert(v.Marks.doa(1).Value==-20 && contains(v.Marks.doa(1).Label,'beam -20.0') && v.Lines.doa.XData(1)==60 && ...
+    v.Marks.pattern(1).Value==-20 && strcmp(calls{end}.name,'configure') && calls{end}.value.plotMirror, ...
+    'Mirror: marker %g, label %s',v.Marks.doa(1).Value,v.Marks.doa(1).Label);
+h.Value=false;h.ValueChangedFcn(h,struct());
+assert(v.Marks.doa(1).Value==20 && v.Lines.doa.XData(1)==-60,'Mirror off did not restore.');
 assert(any(isfinite(v.Lines.burstOk.XData)) && any(isfinite(v.Lines.burstBad.XData)));
 assert(contains(v.CoverageLabel.Text,'DEGRADED') && contains(v.CoverageLabel.Text,'clean-only'));
 assert(numel(v.Lines.timeI.XData)<=1024 && numel(v.Lines.timeQ.XData)<=1024);

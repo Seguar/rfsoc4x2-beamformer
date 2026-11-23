@@ -8,6 +8,8 @@ d=load(referenceMat);x=d.ref125(1:32768);rng(20261117);
 % Fake board: stream k = feed * gain_k * exp(1j*(offset_k - phase_k)) (a mixer phase
 % offset +p turns the stream by -p, as measured on the RFSoC4x2), noise added.
 offset=[0 12 80 7];level=[0 1.1 1.4 0.5];
+% optional CW tone (MXG) with its own per-stream offsets and levels
+cwOn=false;cwOffset=[0 40 -25 70];cwLevel=[0 0.5 -0.7 1];cwHz=-11e6;
 st=struct('adc_phase',[-90 -90 90 90],'dac_phase',[0 0],'adc_gain',1.99*ones(1,4), ...
     'adc_iq_phase',zeros(1,4),'adc_attenuation',zeros(1,4),'dac_gain',[1.99 1.99], ...
     'dac_iq_phase',[0 0],'dac_current_ua',[40500 40500],'revision',0);
@@ -61,6 +63,19 @@ assert(a.valid && abs(a.angles(1))<=1,'Model angle %.1f after calibration.',a.an
 % An RF change invalidates the 0 deg calibration.
 V.ApplyRF.ButtonPushedFcn(V.ApplyRF,struct());
 assert(app.Session.ZeroCal.state=="changed" && contains(V.ZeroState.Text,'again'));
+% Set 0 on the CW tone, with the OFDM still on: the tone, not the OFDM, ends at 0 deg.
+cwOn=true;
+V.ZeroSource.Value='cw';V.Zero.ButtonPushedFcn(V.Zero,struct());
+assert(app.Session.ZeroCal.state=="running" && app.Session.ZeroCal.source=="cw");
+for k=1:40
+    tick();
+    if app.Session.ZeroCal.state=="done",break,end
+end
+zc=app.Session.ZeroCal;
+assert(zc.state=="done" && abs(zc.toneHz-cwHz)<5e3,'CW calibration: %s at %.4f MHz',zc.state,zc.toneHz/1e6);
+assert(max(abs(zc.residualDeg))<0.5 && max(abs(zc.levelDb))<0.2,'CW residual %s deg / %s dB',mat2str(zc.residualDeg,3),mat2str(zc.levelDb,3));
+assert(max(abs(mod(st.adc_phase-p0-cwOffset+180,360)-180))<0.5,'CW phases %s',mat2str(st.adc_phase,4));
+assert(contains(V.ZeroState.Text,'on CW -11.0 MHz'),V.ZeroState.Text);
 report=struct('label','SYNTHETIC ZERO CALIBRATION — no hardware','residualDeg',z.residualDeg,'levelDb',z.levelDb, ...
     'phases',st.adc_phase,'gains',st.adc_gain,'modelAngleDeg',a.angles(1));
 fid=fopen(fullfile(outDir,'zero-validation.json'),'w');fprintf(fid,'%s\n',jsonencode(report));fclose(fid);
@@ -90,6 +105,10 @@ disp('ZERO_CAL_COMPLETE');
         % host orientation (I - jQ, the conjugated reference); the measured stream
         % phase follows offset - (mixer phase change), as on the board
         iq=conj(x*2^15*.03/max(abs(x)))*(g.*rot)+2*(randn(numel(x),4)+1j*randn(numel(x),4));
+        if cwOn
+            gc=10.^(cwLevel/20).*st.adc_gain/1.99;rc=exp(1j*(cwOffset-(st.adc_phase-p0))*pi/180);
+            iq=iq+200*exp(1j*2*pi*cwHz/125e6*(0:numel(x)-1).')*(gc.*rc);
+        end
         f=struct('samples',iq,'sequence',seq,'timestamp',origapp.Controller.nowSeconds(), ...
             'availableChannels',true(1,4),'signalChannels',true(1,4),'boundaryFree',true);seq=seq+1;
     end

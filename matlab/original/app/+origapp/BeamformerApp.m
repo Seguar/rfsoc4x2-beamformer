@@ -20,7 +20,7 @@ classdef BeamformerApp < handle
                 cb=struct('start',@()obj.startAcquisition(),'pause',@(on)obj.pause(on), ...
                     'rf',@(rf)obj.rf(rf),'phase',@(r)obj.phase(r), ...
                     'dac',@(on)obj.dac(on),'sync',@(m)obj.sync(m),'configure',@(delta)obj.configure(delta), ...
-                    'calibration',@()obj.calibration(),'zero',@()obj.zero(),'close',@()obj.close());
+                    'calibration',@()obj.calibration(),'zero',@(varargin)obj.zero(varargin{:}),'close',@()obj.close());
                 if ~cfg.allowBoardCommands,cb=rmfield(cb,{'pause','rf','phase','dac','sync','zero'});end
                 vc=obj.Session.Config;vc.ofdmProfile=obj.Session.Analyzer.Profile.summary;
                 vc.availableChannels=obj.Controller.availableChannels();
@@ -141,9 +141,10 @@ classdef BeamformerApp < handle
             g=obj.hold(); %#ok<NASGU>
             obj.Session.setSync(mode);obj.render(obj.Session.snapshot());
         end
-        function zero(obj)
+        function zero(obj,source)
+            if nargin<2,source="ofdm";end
             g=obj.hold(); %#ok<NASGU>
-            obj.Session.calibrateZero();obj.refreshControls();obj.render(obj.Session.snapshot());
+            obj.Session.calibrateZero(source);obj.refreshControls();obj.render(obj.Session.snapshot());
         end
         function rf(obj,value)
             g=obj.hold(); %#ok<NASGU>

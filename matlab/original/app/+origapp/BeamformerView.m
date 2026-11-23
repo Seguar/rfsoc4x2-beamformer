@@ -152,6 +152,11 @@ classdef BeamformerView < handle
             angles=obj.field(s,'angles',[]);pw=obj.field(s,'anglePowerDb',[]);
             if numel(pw)~=numel(angles),pw=nan(size(angles));end
             keep=isfinite(angles);angles=angles(keep);pw=pw(keep);
+            if logical(obj.field(obj.Config,'plotMirror',0))
+                % Mirror (display only): angle -> -angle on both spatial plots
+                scan=-scan;angles=-angles;
+                obj.setLine('doa',scan,doa);obj.setLine('pattern',scan,pat);
+            end
             sy=obj.field(s,'angleSync',[]);if numel(sy)~=numel(keep),sy=nan(size(keep));end;sy=sy(keep);
             roles=obj.directionRoles(angles,pw,string(obj.field(s,'beamformer',"")),sy,logical(obj.field(s,'tracked',false)));
             obj.mark('doa',angles,roles);obj.mark('pattern',angles,roles);
@@ -574,6 +579,11 @@ classdef BeamformerView < handle
                 'BackgroundColor',th.input,'FontColor',th.muted,'ValueChangedFcn',@(~,~)obj.maxHold(), ...
                 'Tooltip','Keep the per-bin maximum since the last clear, Fit plots or setting change');
             obj.Card.spectrum.head.ColumnWidth{3}=72;
+            obj.Controls.Mirror=uibutton(obj.Card.doa.slot,'state','Text','Mirror','FontSize',10, ...
+                'Value',logical(obj.field(obj.Config,'plotMirror',0)),'BackgroundColor',th.input,'FontColor',th.muted, ...
+                'ValueChangedFcn',@(h,~)obj.configure('plotMirror',logical(h.Value),h), ...
+                'Tooltip','Mirror the DOA spectrum and the receive pattern (angle -> -angle); display and board OLED only');
+            obj.Card.doa.head.ColumnWidth{3}=60;
             % Time domain: waveform, or per-stream phase / level histories
             obj.Lines.timeQ=plot(A.time,NaN,NaN,'Color',th.s2,'LineWidth',.8);
             obj.Lines.timeI=plot(A.time,NaN,NaN,'Color',th.s1,'LineWidth',.8);
@@ -653,7 +663,7 @@ classdef BeamformerView < handle
         end
         function buildControls(obj,parent)
             th=obj.Theme;
-            g=uigridlayout(parent,[5 1],'RowHeight',{34,176,30,'1x',0},'Padding',[10 10 10 8],'RowSpacing',8, ...
+            g=uigridlayout(parent,[5 1],'RowHeight',{34,206,30,'1x',0},'Padding',[10 10 10 8],'RowSpacing',8, ...
                 'BackgroundColor',th.panel);obj.Controls.SideGrid=g;
             buttons=uigridlayout(g,[1 2],'ColumnWidth',{'1x','1x'},'Padding',[0 0 0 0], ...
                 'BackgroundColor',th.panel);
@@ -672,7 +682,7 @@ classdef BeamformerView < handle
             obj.Controls.Error.Layout.Row=5;
             % Always visible, whatever page is open (as in the original GUI):
             % what is shown, which source, and the two algorithm selectors.
-            q=uigridlayout(g,[6 2],'ColumnWidth',{104,'1x'},'RowHeight',{26,26,26,26,26,26},'Padding',[0 0 0 0], ...
+            q=uigridlayout(g,[7 2],'ColumnWidth',{104,'1x'},'RowHeight',{26,26,26,26,26,26,26},'Padding',[0 0 0 0], ...
                 'RowSpacing',4,'ColumnSpacing',6,'BackgroundColor',th.panel);q.Layout.Row=2;obj.Controls.QuickGrid=q;
             seg=uigridlayout(g,[2 4],'RowHeight',{'1x',2},'ColumnWidth',{'1x','1x','1.35x','1.15x'},'RowSpacing',0, ...
                 'ColumnSpacing',2,'Padding',[0 0 0 0],'BackgroundColor',th.panel);seg.Layout.Row=3;
@@ -784,14 +794,21 @@ classdef BeamformerView < handle
                 'gets the complete continuity check.'];
             if numel(rows)<2,obj.Controls.rows.Enable='off';end
             obj.Controls.Zero=uibutton(q,'Text','Set 0°','BackgroundColor',th.input,'FontColor',th.text, ...
-                'ButtonPushedFcn',@(~,~)obj.action('zero',[]),'Interruptible','off','BusyAction','cancel', ...
+                'ButtonPushedFcn',@(~,~)obj.action('zero',obj.Controls.ZeroSource.Value),'Interruptible','off','BusyAction','cancel', ...
                 'Tooltip',['Common-feed calibration: every ADC gets the same splitter output, so the ADC mixer phases ' ...
                 'and gains are set until ADC_C, ADC_B and ADC_A match ADC_D (twice, then checked). The array model then ' ...
                 'reads the loopback signal at 0°. Repeat after every new session or frequency change.']);
             obj.Controls.Zero.Layout.Row=6;obj.Controls.Zero.Layout.Column=1;
             obj.Controls.ZeroState=uilabel(q,'Text','not calibrated','FontSize',10,'FontColor',th.warn,'WordWrap','on');
             obj.Controls.ZeroState.Layout.Row=6;obj.Controls.ZeroState.Layout.Column=2;
-            if ~obj.has('zero'),obj.Controls.Zero.Enable='off';obj.Controls.ZeroState.Text='needs board control';end
+            obj.label(q,7,'Calibrate on');
+            obj.Controls.ZeroSource=uidropdown(q,'Items',{'OFDM (wideband)','CW tone'},'ItemsData',{'ofdm','cw'}, ...
+                'Value','ofdm','BackgroundColor',th.input,'FontColor',th.text,'FontSize',11, ...
+                'Tooltip',['Signal Set 0° measures. OFDM: the whole band of the loopback OFDM. CW tone: the strongest ' ...
+                'spectral line (e.g. the MXG CW) at its own frequency, where a null on that tone has to be deep; ' ...
+                'the tone then reads at 0°, so feed it to every ADC the same way (common feed).']);
+            obj.Controls.ZeroSource.Layout.Row=7;obj.Controls.ZeroSource.Layout.Column=2;
+            if ~obj.has('zero'),obj.Controls.Zero.Enable='off';obj.Controls.ZeroSource.Enable='off';obj.Controls.ZeroState.Text='needs board control';end
             d=obj.controlGrid(dsp,{20,28,28,28,28,28,22,24,24,24,24});
             obj.heading(d,1,'RECEIVE PROCESSING');
             obj.number(d,2,'Source count','num',obj.field(obj.Config,'num',1),[1 5],true,'%g');
@@ -944,6 +961,7 @@ classdef BeamformerView < handle
                 obj.Config.(key)=value;
                 obj.fitLimits();
                 if strcmp(key,'scan_bw'),obj.defaultLimits('doa');obj.defaultLimits('pattern');end
+                if strcmp(key,'plotMirror') && isstruct(obj.LastData),obj.show(obj.LastData);end
                 obj.noError();
                 obj.logEvent(sprintf('%s = %s',key,obj.valueText(value)));
             catch err
@@ -1013,7 +1031,8 @@ classdef BeamformerView < handle
             switch string(z.state)
                 case "running",h.Text='calibrating…';h.FontColor=th.muted;
                 case "done"
-                    h.Text=sprintf('0° set %s · ±%.2f° ±%.2f dB',char(z.time,'HH:mm'),max(abs(z.residualDeg)),max(abs(z.levelDb)));
+                    on='';if isfield(z,'source') && z.source=="cw",on=sprintf(' on CW %+.1f MHz',z.toneHz/1e6);end
+                    h.Text=sprintf('0° set%s %s · ±%.2f° ±%.2f dB',on,char(z.time,'HH:mm'),max(abs(z.residualDeg)),max(abs(z.levelDb)));
                     h.FontColor=th.ok;
                     obj.logEvent(sprintf('0° calibration: residual %s° · %s dB · phases %s° · gains %s', ...
                         strjoin(compose('%.2f',z.residualDeg(2:4)),'/'),strjoin(compose('%.2f',z.levelDb(2:4)),'/'), ...
@@ -1563,7 +1582,11 @@ classdef BeamformerView < handle
                     obj.setp(m(k),'Value',angles(k));obj.setp(m(k),'Label',roles.text{k});
                     if k==1,c=th.ok;st='-';lw=1.6;else,c=th.warn;st='--';lw=1.2;end
                     obj.setp(m(k),'Color',c);obj.setp(m(k),'LineStyle',st);obj.setp(m(k),'LineWidth',lw);
+                    % label on the side of the line with more room (a label near
+                    % the left limit was clipped); alternate when both have room
+                    lim=m(k).Parent.XLim;room=[angles(k)-lim(1) lim(2)-angles(k)]/max(diff(lim),eps);
                     side='right';if mod(k,2)==0,side='left';end
+                    if room(1)<.35,side='right';elseif room(2)<.35,side='left';end
                     obj.setp(m(k),'LabelHorizontalAlignment',side);obj.setp(m(k),'Visible','on');
                 else
                     obj.setp(m(k),'Visible','off');
