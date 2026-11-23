@@ -1152,9 +1152,11 @@ classdef BeamformerView < handle
             qualified=obj.field(r,'qualifiedBursts',NaN);complete=obj.field(r,'metricBursts',NaN);
             secondary=obj.field(r,'qualifiedPayloadEvmPercent',NaN);
             tag='LOCKED';if degraded,tag='DEGRADED';end
-            obj.put(obj.CoverageLabel,sprintf('%s · %g/%g qualified · clean-only %.2f%%',tag,qualified,complete,secondary));
+            clean='clean-only —';if isfinite(secondary),clean=sprintf('clean-only %.2f %%',secondary);end
+            obj.put(obj.CoverageLabel,sprintf('%s · %g/%g qualified · %s',tag,qualified,complete,clean));
             obj.setp(obj.CoverageLabel,'FontColor',th.(state));
-            obj.tile('bursts',sprintf('%g / %g',qualified,complete),sprintf('clean-only %.2f %%',secondary),state);
+            obj.setp(obj.CoverageLabel,'Tooltip',char(string(obj.field(r,'reason',''))));
+            obj.tile('bursts',sprintf('%g / %g',qualified,complete),clean,state);
             cfo=median(obj.field(r,'cfoHz',NaN),'omitnan');
             ppm=obj.field(r,'samplingErrorPpm',NaN);
             obj.tile('cfo',obj.hz(cfo),sprintf('pilot timing drift %+.2f ppm',ppm),'ok');

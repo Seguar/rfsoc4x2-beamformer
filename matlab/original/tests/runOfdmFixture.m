@@ -74,6 +74,13 @@ check('primary includes rejected complete bursts', R.degraded && R.refusedComple
     R.evmPercent > 1.5*R.qualifiedPayloadEvmPercent && any(~[R.perBurst.qualified]), ...
     sprintf('primary %.2f%% vs qualified-only %.2f%%, %d/%d qualified', ...
         R.evmPercent, R.qualifiedPayloadEvmPercent, R.qualifiedBursts, R.metricBursts));
+% A buffer holding only that burst (as a 4096-row window holds one): still a
+% primary EVM, flagged degraded, no clean-only EVM.
+xs = xl(s0 - 60 : s0 + P.burstSymbols*P.symLen + 60);
+R = origapp.ofdmAnalyze(xs, P, opt);
+check('only an unqualified burst: degraded EVM, not refused', R.valid && R.degraded && R.qualifiedBursts == 0 && ...
+    R.metricBursts == 1 && isfinite(R.evmPercent) && isnan(R.qualifiedPayloadEvmPercent) && contains(R.reason, "0/1"), ...
+    sprintf('%s: %s (EVM %.2f %%)', R.state, R.reason, R.evmPercent));
 xl = x; xl(s0 + 2*P.symLen + 50) = [];
 R = origapp.ofdmAnalyze(xl, P, opt);
 c = R.candidates(abs([R.candidates.start] - s0) <= 2);

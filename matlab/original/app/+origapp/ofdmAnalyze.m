@@ -24,6 +24,8 @@ function R = ofdmAnalyze(x, P, opt)
 %    EVM: decisions on the unit-RMS ideal constellation of each row's QAM
 %    order (SETX), rms error over data cells / rms ideal (= 1). Header (BPSK)
 %    and payload (16QAM) separate. Per symbol and per subcarrier too.
+%    A buffer whose complete bursts are all unqualified is still LOCKED,
+%    flagged degraded, with no qualified-only EVM.
 % Nothing is zero-filled, repeated or tiled; a burst not entirely inside the
 % buffer is refused, never padded.
 if nargin < 3, opt = struct(); end
@@ -82,9 +84,20 @@ R.refusedCompleteBursts = numel(allB)-numel(B); R.degraded = R.refusedCompleteBu
 if isempty(cand)
     R.state = "NO SYNC";
     R.reason = sprintf('no preamble correlation >= %.2f (peak %.3f)', opt.syncThreshold, R.syncPeak);
-elseif isempty(B)
+elseif isempty(allB)
     R.state = "REFUSED";
     R.reason = "all " + numel(C) + " synced bursts refused: " + strjoin(unique(string({C.reason})), "; ");
+elseif isempty(B)
+    % Rule 4: every complete burst is in the primary EVM, also when none of them
+    % qualifies (a 4096-row window holds exactly one burst). Interference such as
+    % a CW jammer residual trips the slip/training checks; the EVM is still
+    % reported, flagged DEGRADED, with no clean-only EVM (2026-11-23).
+    R.degraded = true; R.state = "LOCKED";
+    R.reason = sprintf('0/%d complete bursts qualified (%s); primary EVM includes all %d complete bursts', ...
+        numel(allB), strjoin(unique(string({C(~[C.accepted]).reason})), "; "), numel(allB));
+    if ~isfinite(R.evmPercent)
+        R.state = "REFUSED"; R.reason = "some complete bursts cannot yield finite error; no partial primary EVM";
+    end
 else
     q = aggregate(emptyResult(P,opt), B, P);
     R.qualifiedPayloadEvmPercent = q.evmPercent;
