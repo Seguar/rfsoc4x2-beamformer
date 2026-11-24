@@ -114,6 +114,14 @@ for bf=["OFDM pilot MVDR","MVDR","LCMV","DMR"]
     why=string(a.reason);if a.valid,why=string(a.analysis.reason);end
     assert(a.valid && a.analysis.valid && abs(a.angles(1)-20)<=4,'%s on a mismatched array with a jammer: %s',bf,why);
 end
+% Source count Auto (num 0): counted per frame from the covariance eigenvalues.
+s.configure(struct('bf','Steering','num',0,'doa','MUSIC','ang_num',3));
+two(240,true);s.step();a=s.snapshot();
+assert(a.valid && a.sourceCount==2 && numel(a.angles)==2,'Auto did not count the OFDM source and the jammer: %s',mat2str(a.sourceCount));
+enqueue(241,0,true);s.step();a=s.snapshot();
+assert(a.valid && a.sourceCount==1,'Auto counted %s sources for one.',mat2str(a.sourceCount));
+s.configure(struct('ang_num',2));two(242,true);s.step();a=s.snapshot();
+assert(a.valid && abs(a.angles(1)-20)<=2,'Weaker with Auto did not pick the OFDM source.');
 s.configure(struct('bf','Steering','ang_num',3));
 s.configure(struct('num',1,'doa','MVDR','ang_num',1));
 % Original-app ranges: a source count above what 4 elements resolve, or a scan

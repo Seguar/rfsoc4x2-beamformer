@@ -219,7 +219,7 @@ classdef DemoSession < handle
                 "RVL","RAB PC","DL MVDR","DL ITER MVDR","QCB"]),'origapp:Config','Unknown beamformer.');
             assert(~next.IQcomp || next.sizeL==obj.Config.sizeL,'origapp:Calibration', ...
                 'Disable static IQ before changing filter length; learn the new filter first.');
-            assert(any(next.ang_num==[1 2 3]) && (next.ang_num==3 || next.ang_num<=next.num),'origapp:Config', ...
+            assert(any(next.ang_num==[1 2 3]) && (next.ang_num==3 || next.num==0 || next.ang_num<=next.num),'origapp:Config', ...
                 'Weaker-source priority requires at least two detected sources.');
             assert(next.diag>=0 && next.gamma>=0 && next.alpha>=0 && next.alg_scan_res>0 && ...
                 next.iter>=1 && next.iter==fix(next.iter),'origapp:Config','Invalid algorithm parameters.');
@@ -232,8 +232,9 @@ classdef DemoSession < handle
                 'origapp:Config','Average count must be a whole number >= 1.');
             assert(next.scan_bw>0 && next.scan_bw<=360 && next.scan_res>0 && next.scan_res<=next.scan_bw, ...
                 'origapp:Config','Invalid scan span/resolution.');
-            assert(next.num>=1 && next.num==fix(next.num) && next.num<next.num_elements,'origapp:Config', ...
-                'Source count must be 1..%d: %d array elements resolve at most %d sources.', ...
+            % Source count 0 = Auto: estimated per frame (processLegacyFrame)
+            assert(next.num==0 || (next.num>=1 && next.num==fix(next.num) && next.num<next.num_elements),'origapp:Config', ...
+                'Source count must be Auto or 1..%d: %d array elements resolve at most %d sources.', ...
                 next.num_elements-1,next.num_elements,next.num_elements-1);
             cells=(floor(next.scan_bw/next.scan_res)+1)*next.avg_factor;lim=origapp.processingLimits(next);
             assert(cells<=lim.maxCells,'origapp:Config', ...
@@ -321,7 +322,7 @@ classdef DemoSession < handle
                     'age',origapp.Controller.nowSeconds()-frame.timestamp,'scope',string(obj.Config.arrayLabel)+", UNCALIBRATED", ...
                     'scan',obj.Params.scan_axis,'doaSpectrum',ds,'patternDb',pat,'angles',angles,'anglePowerDb',anglePow, ...
                     'angleSync',angleSyncOf(out),'tracked',~isempty(out) && obj.Config.ang_num==3 && ~out.wantedConfident, ...
-                    'beamformer',string(obj.Config.bf), ...
+                    'beamformer',string(obj.Config.bf),'sourceCount',sourceCountOf(out), ...
                     'samples',displaySamples,'weights',weights,'analysis',r,'spectrum',r.spectrum,'vendor',[], ...
                     'fsHz',obj.Config.fsRfsoc,'directOnly',obj.Config.directOnly, ...
                     'channels',origapp.DemoSession.channelDiagnostics(frame));
@@ -525,7 +526,17 @@ classdef DemoSession < handle
                 p.ula=phased.ULA('NumElements',cfg.num_elements,'ElementSpacing',p.c/cfg.fcAnt/2);
             end
             p.scan_axis=-cfg.scan_bw/2:cfg.scan_res:cfg.scan_bw/2;
-            [p.estimator,p.estimatorKind]=origapp.makeEstimator(cfg.doa,p.ula,p.scan_axis,cfg.num,cfg.fc,cfg.calibration);
+            if cfg.num==0
+                % Auto: one estimator per possible count, picked per frame
+                p.estimators=cell(1,cfg.num_elements-1);
+                for k=1:cfg.num_elements-1
+                    [p.estimators{k},p.estimatorKind]=origapp.makeEstimator(cfg.doa,p.ula,p.scan_axis,k,cfg.fc,cfg.calibration);
+                end
+                p.estimator=p.estimators{1};
+            else
+                p.estimators={};
+                [p.estimator,p.estimatorKind]=origapp.makeEstimator(cfg.doa,p.ula,p.scan_axis,cfg.num,cfg.fc,cfg.calibration);
+            end
             if string(cfg.doa)=="MVDRman"
                 assert(~isempty(cfg.calibration.powCalibration),'origapp:Calibration','Manual MVDR needs power calibration.');
             elseif string(cfg.doa)=="MVDRman_corr"
@@ -541,7 +552,7 @@ classdef DemoSession < handle
             if string(cfg.bfEngine)=="reviewed"
                 p.reviewed.loading=cfg.diag;p.reviewed.gamma=cfg.gamma;p.reviewed.uncertainty=cfg.alpha;
                 p.reviewed.maxIterations=cfg.iter;p.reviewed.mismatchDeg=cfg.mis_ang;
-                p.reviewed.scanStepDeg=cfg.alg_scan_res;p.reviewed.sourceCount=cfg.num;
+                p.reviewed.scanStepDeg=cfg.alg_scan_res;p.reviewed.sourceCount=max(cfg.num,1);
             end
             p.iqAdaptive=logical(cfg.adIQcomp);p.iqStatic=logical(cfg.IQcomp);p.iqMu=cfg.stepMU;
             p.coupComp=false;p.phComp=logical(cfg.phComp);p.iqFilter=obj.IqFilter;
@@ -554,6 +565,10 @@ classdef DemoSession < handle
     end
 end
 
+function n=sourceCountOf(out)
+% Source count used for this frame (Auto: the per-frame estimate; [] when not beamformed).
+n=[];if isstruct(out) && isfield(out,'sourceCount'),n=out.sourceCount;end
+end
 function s=angleSyncOf(out)
 % OFDM preamble correlation per direction ([] when the frame was not beamformed).
 s=[];if isstruct(out) && isfield(out,'angleSync'),s=out.angleSync;end

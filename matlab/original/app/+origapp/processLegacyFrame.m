@@ -57,6 +57,20 @@ rawData = filtSig(rawData, p.fsRfsoc, p.bw);
 %% DOA
 Rx = rawData'*rawData;
 estimator = p.estimator;
+out.sourceCount = p.num;
+if p.num == 0 && isfield(p, 'estimators') && ~isempty(p.estimators)
+    % Source count Auto: each further source must put a covariance eigenvalue
+    % secondSourceDb above the mean of the smaller ones (the Weaker test; one
+    % OTA OFDM source measured 1.7-2.1 dB, a CW 20 dB below it 4.4 dB).
+    ev = sort(real(eig((Rx+Rx')/2)), 'descend'); k = 1;
+    for m = 2:numel(p.estimators)
+        if 10*log10(ev(m)/max(mean(ev(m+1:end)), realmin)) < p.secondSourceDb, break, end
+        k = m;
+    end
+    estimator = p.estimators{k};
+    out.sourceCount = k;
+    if isfield(p, 'reviewed'), p.reviewed.sourceCount = k; end
+end
 switch p.estimatorKind
     case "manual"
         pow = p.calibration.powCalibration;
@@ -363,7 +377,7 @@ function p = withDefaults(p)
 d = struct('iqAdaptive', false, 'iqStatic', false, 'iqFilter', zeros(4,4), 'iqMu', 1e-16, ...
     'coupComp', false, 'phComp', false, 'manualMvdrFormula', "45e726b", ...
     'preamble', [], 'ofdmConj', false, 'wantedSync', 0.5, 'wantedMargin', 0.08, 'trackAngle', NaN, 'trackGate', 5, ...
-    'symbolRows', 100, 'burstRows', 3000, 'preambleManifold', true, 'manifoldMatch', 0.7, 'secondSourceDb', 3);
+    'symbolRows', 100, 'burstRows', 3000, 'preambleManifold', true, 'manifoldMatch', 0.7, 'secondSourceDb', 3, 'num', 1);
 f = fieldnames(d);
 for k = 1:numel(f)
     if ~isfield(p, f{k}), p.(f{k}) = d.(f{k}); end

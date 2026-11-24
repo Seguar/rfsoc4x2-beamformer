@@ -160,6 +160,9 @@ classdef BeamformerView < handle
             sy=obj.field(s,'angleSync',[]);if numel(sy)~=numel(keep),sy=nan(size(keep));end;sy=sy(keep);
             roles=obj.directionRoles(angles,pw,string(obj.field(s,'beamformer',"")),sy,logical(obj.field(s,'tracked',false)));
             obj.mark('doa',angles,roles);obj.mark('pattern',angles,roles);
+            if obj.field(obj.Config,'num',1)==0 && isfield(obj.Controls,'SourceCount')
+                obj.paintSourceCount(0,obj.field(s,'sourceCount',[]));   % Auto: show this frame's count
+            end
             if isempty(angles) || isempty(doa)
                 obj.put(obj.Card.doa.note,'estimate unavailable');
                 if isempty(doa) && (logical(obj.field(s,'directOnly',false)) || isempty(angles))
@@ -811,11 +814,11 @@ classdef BeamformerView < handle
             if ~obj.has('zero'),obj.Controls.Zero.Enable='off';obj.Controls.ZeroSource.Enable='off';obj.Controls.ZeroState.Text='needs board control';end
             d=obj.controlGrid(dsp,{20,28,28,28,28,28,22,24,24,24,24});
             obj.heading(d,1,'RECEIVE PROCESSING');
-            obj.number(d,2,'Source count','num',obj.field(obj.Config,'num',1),[1 5],true,'%g');
+            obj.sourceCountButtons(d,2,obj.field(obj.Config,'num',1));
             obj.number(d,3,'Scan width','scan_bw',obj.field(obj.Config,'scan_bw',120),[2 360],true,'%g°');
             obj.number(d,4,'Scan step','scan_res',obj.field(obj.Config,'scan_res',1),[1e-4 Inf],true,'%g°');
             obj.number(d,5,'Average frames','avg_factor',obj.field(obj.Config,'avg_factor',10),[1 Inf],true,'%g');
-            for n=["num","avg_factor"],obj.Controls.(n).RoundFractionalValues='on';end
+            obj.Controls.avg_factor.RoundFractionalValues='on';
             obj.number(d,6,'Signal bandwidth','bwMHz',obj.field(obj.Config,'bw',100e6)/1e6,[1 500],false,'%g MHz');
             obj.Accepted.bw=obj.Controls.bwMHz.Value;
             obj.Controls.bwMHz.ValueChangedFcn=@(h,~)obj.bandwidth(h);
@@ -967,6 +970,46 @@ classdef BeamformerView < handle
             catch err
                 h.Value=old;obj.showError(err.message);
             end
+        end
+        function sourceCountButtons(obj,g,row,value)
+            % Source count as one row of buttons: Auto, 1, 2, 3 (Auto = 0: the
+            % session estimates the count per frame and the button shows it).
+            th=obj.Theme;obj.Controls.numLabel=obj.label(g,row,'Source count');
+            s=uigridlayout(g,[1 4],'ColumnWidth',{'1.7x','1x','1x','1x'},'ColumnSpacing',2,'Padding',[0 0 0 0], ...
+                'BackgroundColor',th.panel);s.Layout.Row=row;s.Layout.Column=2;
+            vals=[0 1 2 3];names={'Auto','1','2','3'};
+            for k=1:4
+                b=uibutton(s,'state','Text',names{k},'FontSize',11,'BackgroundColor',th.panel,'FontColor',th.muted, ...
+                    'ValueChangedFcn',@(~,~)obj.setSourceCount(vals(k)));
+                b.Layout.Row=1;b.Layout.Column=k;obj.Controls.SourceCount(k)=b;
+            end
+            obj.Controls.SourceCount(1).Tooltip=['Auto: counted on every frame. Each further source must raise a ' ...
+                'covariance eigenvalue 3 dB above the noise ones; the button shows the count used (Auto · n).'];
+            for k=2:4,obj.Controls.SourceCount(k).Tooltip=sprintf('%d source(s) for the DOA estimator',vals(k));end
+            obj.Accepted.num=value;obj.paintSourceCount(value);
+        end
+        function setSourceCount(obj,v)
+            old=obj.Accepted.num;
+            try
+                assert(obj.has('configure'),'origapp:View','Processing controls are unavailable.');
+                obj.Callbacks.configure(struct('num',v));
+                obj.Accepted.num=v;obj.Config.num=v;obj.fitLimits();obj.noError();
+                obj.logEvent(sprintf('num = %s',obj.valueText(v)));
+            catch err
+                v=old;obj.showError(err.message);
+            end
+            obj.paintSourceCount(v);
+        end
+        function paintSourceCount(obj,v,autoCount)
+            if nargin<3,autoCount=[];end
+            th=obj.Theme;vals=[0 1 2 3];
+            for k=1:4
+                b=obj.Controls.SourceCount(k);on=vals(k)==v;b.Value=on;
+                if on,set(b,'FontColor',th.text,'FontWeight','bold','BackgroundColor',th.input);
+                else,set(b,'FontColor',th.muted,'FontWeight','normal','BackgroundColor',th.panel);end
+            end
+            t='Auto';if v==0 && isscalar(autoCount) && isfinite(autoCount),t=sprintf('Auto · %d',autoCount);end
+            if ~strcmp(obj.Controls.SourceCount(1).Text,t),obj.Controls.SourceCount(1).Text=t;end
         end
         function bandwidth(obj,h)
             obj.configure('bw',h.Value*1e6,h);obj.band();

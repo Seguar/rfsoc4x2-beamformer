@@ -139,6 +139,14 @@ To show the degradation, select **Steering** and raise the MXG from −30 to −
 select **OFDM pilot MVDR**. The interferer was strongest on ADC_D (+12 dB over the
 OFDM at −14 dBm), the input nearest to it.
 
+## Source count
+
+The DSP page sets the number of sources for the DOA estimator with four buttons: **Auto**,
+**1**, **2**, **3** (4 elements resolve at most 3). Auto counts them on every frame: each
+further source must raise a covariance eigenvalue 3 dB above the mean of the smaller ones
+(the same test as Weaker below), and the button shows the count used, e.g. **Auto · 2**.
+Hardware sessions start at 1.
+
 ## Signal priority
 
 **Strongest** and **Weaker** rank the detected directions by the band power of a

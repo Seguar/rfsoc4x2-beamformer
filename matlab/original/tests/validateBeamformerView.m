@@ -171,11 +171,20 @@ drawnow;assert(isequal(getpixelposition(v.Controls.doa,true),where), ...
 reject=false;
 % Field limits are the accepted ranges (origapp.processingLimits, measured RF limits).
 C=v.Controls;
-lims=struct('num',C.num.Limits,'adc',C.adcMHz.Limits,'dac',C.dacMHz.Limits,'phase',C.phase1.Limits, ...
+lims=struct('num',[1 3],'adc',C.adcMHz.Limits,'dac',C.dacMHz.Limits,'phase',C.phase1.Limits, ...
     'bw',C.bwMHz.Limits,'res',C.scan_res.Limits,'scanbw',C.scan_bw.Value);
 assert(isequal(lims.num,[1 3]) && isequal(lims.adc,[0 6000]) && isequal(lims.dac,[-6000 6000]) ...
     && isequal(lims.phase,[-179.99 179.99]) && lims.bw(2)==125 && lims.res(2)==lims.scanbw, ...
     'Field limits do not match the accepted ranges: %s',jsonencode(lims));
+% Source count: one row of buttons Auto/1/2/3; a refusal keeps the old one; Auto shows the frame's count.
+B=C.SourceCount;assert(numel(B)==4 && strcmp(B(1).Text,'Auto') && B(2).Value && ~B(1).Value,'Source count buttons missing.');
+B(3).Value=true;B(3).ValueChangedFcn(B(3),struct());
+assert(strcmp(calls{end}.name,'configure') && calls{end}.value.num==2 && B(3).Value && ~B(2).Value,'Source count 2 not applied.');
+reject=true;B(4).Value=true;B(4).ValueChangedFcn(B(4),struct());reject=false;
+assert(B(3).Value && ~B(4).Value && contains(v.Controls.Error.Text,'deliberate'),'Refused source count moved the selection.');
+B(1).Value=true;B(1).ValueChangedFcn(B(1),struct());assert(calls{end}.value.num==0 && B(1).Value,'Auto not applied.');
+s=snapshot(31);s.sourceCount=2;v.show(s);assert(strcmp(B(1).Text,'Auto · 2'),'Auto does not show the frame count: %s',B(1).Text);
+B(2).Value=true;B(2).ValueChangedFcn(B(2),struct());assert(strcmp(B(1).Text,'Auto') && calls{end}.value.num==1);
 h=v.Controls.bf;h.Value='DL ITER MVDR';h.ValueChangedFcn(h,struct());
 assert(isequal(C.alpha.Limits,[0 2]) && string(C.alpha.LowerLimitInclusive)=="off" && string(C.alpha.UpperLimitInclusive)=="off", ...
     'Iterative MVDR uncertainty limits not applied.');
