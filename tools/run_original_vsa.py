@@ -169,7 +169,7 @@ def main():
     if window4:
         # Common splitter feed: DOA/pattern are a cable diagnostic through the explicit
         # 4-element ULA model (d = lambda/2 at 3 GHz), uncalibrated; never an arrival angle.
-        app_cfg.update(directOnly=False, ch=5, ang_num=3, dataChan=32768, fcAnt=a.rf_mhz*1e6, cutterAllowed=False,
+        app_cfg.update(directOnly=False, ch=5, ang_num=3, plotMirror=1, dataChan=32768, fcAnt=a.rf_mhz*1e6, cutterAllowed=False,
                        arrayLabel='common-feed diagnostic / array model (ULA d=lambda/2 @%g GHz)' % (a.rf_mhz/1000))
     if a.layout == 'clean':
         app_cfg.update(periodSeconds=.02, frameTimeoutSeconds=.05)

@@ -68,6 +68,10 @@ checkout.
 
 ## OFDM pilot MVDR
 
+Hardware sessions start with **Mirror** on (since v0.7.4): the DOA spectrum, the beam
+pattern, their markers and the board OLED show angle → −angle, as the antennas are
+mounted. It is display only; untick Mirror to see the model angles.
+
 Hardware sessions start in this mode (since v0.7.1): **Combined beam**, **OFDM
 (tracked)** and **OFDM pilot MVDR**. On the same over-the-air frames it gave 4.8 %
 EVM against 5.0 % for Steering, and it keeps locking with a jammer 10 dB stronger
