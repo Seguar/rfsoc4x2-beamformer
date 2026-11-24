@@ -213,6 +213,23 @@ class WindowSelectTests(unittest.TestCase):
         self.assertLess(info['stream_locks'][0], 0.3)
         self.assertTrue(np.all(np.diff(idx[s:s + 4096]) == 1))
 
+    def test_unlocked_frames_search_at_most_once_per_check(self):
+        """Nothing locks (interference everywhere): the FFT search runs at most once per
+        verify_every, the window is held at the last alignment, a re-lock is seen at once."""
+        rng = np.random.default_rng(25)
+        raw, _ = capture(self.ref, 9000, self.gains, rng)
+        state = {}
+        _, i0 = fast_window(raw, self.ref, self.burst, 4096, state=state, now=10.0)
+        blank, _ = capture(self.ref, 9000, self.gains, rng, blank=True)
+        _, i1 = fast_window(blank, self.ref, self.burst, 4096, state=state, now=11.5)   # due: one search
+        at = state['fft_at']
+        for k, now in enumerate((11.6, 11.7, 11.8)):
+            _, ik = fast_window(blank, self.ref, self.burst, 4096, state=state, now=now)
+            self.assertEqual(ik['candidate'], 'held')
+            self.assertEqual(state['fft_at'], at)                       # no new search
+        _, i5 = fast_window(raw, self.ref, self.burst, 4096, state=state, now=11.9)
+        self.assertEqual((i1['candidate'], i5['candidate'], i5['kk']), ('held', 'fast', i0['kk']))
+
     def test_never_locked_session_reports_none(self):
         rng = np.random.default_rng(24)
         blank, _ = capture(self.ref, 5000, self.gains, rng, blank=True)

@@ -453,13 +453,21 @@ def fast_window(raw, ref, burst, n, ref_fft_conj=None, state=_FAST, verify_every
         r = refc[(a - k) % n_loop:(a - k) % n_loop + len(x)]
         return float(abs(np.vdot(r, x)) / (np.sqrt(np.vdot(r, r).real) * norm + 1e-30))
 
+    base = state['kk'] if state['kk'] is not None else state.get('last_kk')
+
     def search(k):
-        # alignment on stream k: the previous one (+-8 rows) first, an FFT search when it fails
+        # alignment on stream k: the previous one (+-8 rows) first, an FFT search when it
+        # fails. The FFT search (~0.1 s on the board's core) runs on the strongest stream
+        # only, and while nothing locks at most once per verify_every: with an interferer
+        # drowning every stream, a search on every stream of every frame held the capture
+        # at ~3 frames/s (2026-11-24, MXG +12 dBm).
         x = seg(k, r0, BLOCK); nx = np.sqrt(np.vdot(x, x).real) + 1e-30
         kb, lb = None, 0.0
-        if state['kk'] is not None:
-            lb, kb = max((lock_at(state['kk'] + d, x, r0, nx), state['kk'] + d) for d in range(-8, 9))
-        if lb < 0.6 and (k == ch or state['kk'] is None):
+        if base is not None:
+            lb, kb = max((lock_at(base + d, x, r0, nx), base + d) for d in range(-8, 9))
+        due = base is None or now - state.get('fft_at', -np.inf) >= verify_every
+        if lb < 0.6 and due and (k == ch or base is None):
+            state['fft_at'] = now
             nonlocal ref_fft_conj
             fft, ifft = _corr_fft()
             if ref_fft_conj is None:
