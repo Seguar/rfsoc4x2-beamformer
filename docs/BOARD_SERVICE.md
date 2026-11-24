@@ -255,3 +255,21 @@ the service does answer on the board's USB and static Ethernet addresses),
 stopping and restoring a running `bootpy.service` on hardware (it was not
 running; covered by the fake-helper test only), and a machine with only the
 MATLAB Runtime.
+
+## Application on the board's USB drive (since 2026-11-24)
+
+The board's USB port also shows a removable drive, PYNQ-USB. It now holds:
+
+- `RFSoCBeamformer\`: `RFSoCBeamformer.exe` (R2026a build), `README.txt` and
+  `start.cmd` (starts it with an installed MATLAB R2026a instead of the Runtime).
+- `MATLAB_Runtime_R2026a_Update_5_win64\`: MathWorks' MATLAB Runtime installer,
+  unpacked (run `setup.exe`; about 4 GB once installed).
+- `README.txt`, and the PYNQ serial driver and Windows/Mac marker file.
+
+A PC with nothing installed connects the board's USB cable, installs the runtime from
+the drive, copies `RFSoCBeamformer` and starts it; the application finds the board at
+192.168.3.1. The image is `/usr/local/share/fatfs` (7 GB FAT32; the PYNQ original is kept
+as `fatfs.pynq-orig`). It must stay FAT: `/usr/local/bin/usbgadget` mounts it at every
+boot to choose RNDIS (Windows) or ECM (Mac), and this kernel has no exFAT. Rebuild it for
+a new application version with `tools/usb_drive/build_usb.py` (instructions in its
+header); the build downloads about 6 GB and slows the capture while it runs.
