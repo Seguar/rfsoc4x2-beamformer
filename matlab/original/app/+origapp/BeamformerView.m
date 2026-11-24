@@ -71,6 +71,7 @@ classdef BeamformerView < handle
         SnapshotDir = ''
         Clock = []
         FrameTimes = []
+        RATE_WINDOW_S = 5          % frames/s tile: frames counted over this many seconds
         RecordedSequence = NaN  % last frame given to record()
         SpectrumHold = []
         Page = 1
@@ -1296,8 +1297,11 @@ classdef BeamformerView < handle
             seq=obj.field(s,'sequence',NaN);
             if seq==obj.RecordedSequence,return,end
             obj.RecordedSequence=seq;
-            obj.FrameTimes(end+1)=toc(obj.Clock);
-            if numel(obj.FrameTimes)>9,obj.FrameTimes(1)=[];end
+            % Frame times of the last RATE_WINDOW_S. Intervals are bimodal (a frame that
+            % waits for a redraw takes ~110 ms, the others ~35 ms), so a median of a few
+            % intervals jumped between ~11 and ~25 /s at a steady 14 /s (2026-11-24).
+            now=toc(obj.Clock);obj.FrameTimes(end+1)=now;
+            obj.FrameTimes(obj.FrameTimes<now-obj.RATE_WINDOW_S)=[];
             obj.appendChannels(seq,obj.field(s,'channels',[]));
             r=obj.field(s,'analysis',[]);
             if isstruct(r) && isfield(r,'valid') && r.valid,obj.appendEvm(seq,r);
@@ -1685,7 +1689,8 @@ classdef BeamformerView < handle
         end
         function showRate(obj)
             rate=NaN;
-            if numel(obj.FrameTimes)>=3,rate=1/median(diff(obj.FrameTimes));end
+            ft=obj.FrameTimes;
+            if numel(ft)>=3 && ft(end)-ft(1)>=1,rate=(numel(ft)-1)/(ft(end)-ft(1));end   % frames over the last 5 s
             text='—';state='idle';
             if isfinite(rate),text=sprintf('%.2f /s',rate);state='ok';end
             if isempty(obj.LastData),state='idle';end

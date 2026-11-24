@@ -164,7 +164,10 @@ real jammer); use MUSIC or MVDR for the DOA with two sources.
 Every frame the board sends is processed (beamforming, DOA, EVM, the board OLED,
 the EVM and channel histories); the window is redrawn at most every
 `displayPeriodSeconds` (0.1 s, so up to 10 redraws per second). The frames/s
-tile counts processed frames.
+tile counts processed frames over the last 5 s (since v0.7.5; before, the median of the last 8
+intervals jumped between about 11 and 25 /s at a steady 14 /s, because a frame that waits for a
+redraw takes about 110 ms and the others about 35 ms). The board selects a window in about 7 ms;
+the rest of each frame is the application.
 
 A redraw is rendering time in MATLAB's app window, not app code. Measured with
 synthetic 4096-sample frames on the laptop (R2026a, 175 % display): about 17 ms
