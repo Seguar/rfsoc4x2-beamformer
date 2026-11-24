@@ -233,8 +233,15 @@ class WindowSelectTests(unittest.TestCase):
     def test_never_locked_session_reports_none(self):
         rng = np.random.default_rng(24)
         blank, _ = capture(self.ref, 5000, self.gains, rng, blank=True)
-        s, info = fast_window(blank, self.ref, self.burst, 4096, state={}, now=0.0)
+        state = {}
+        s, info = fast_window(blank, self.ref, self.burst, 4096, state=state, now=0.0)
         self.assertEqual(info['candidate'], 'none')
+        at = state['fft_at']
+        _, i2 = fast_window(blank, self.ref, self.burst, 4096, state=state, now=0.5)
+        self.assertEqual((i2['candidate'], state['fft_at']), ('none', at))      # no search on every frame
+        raw, _ = capture(self.ref, 5000, self.gains, rng)
+        _, i3 = fast_window(raw, self.ref, self.burst, 4096, state=state, now=1.2)
+        self.assertEqual(i3['candidate'], 'fast')                              # next search finds it
 
     def test_reused_offset_reads_fewer_rows(self):
         from board.legacy_capture import read_rows_needed, WRAP_GUARD, BLOCK

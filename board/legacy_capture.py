@@ -454,6 +454,7 @@ def fast_window(raw, ref, burst, n, ref_fft_conj=None, state=_FAST, verify_every
         return float(abs(np.vdot(r, x)) / (np.sqrt(np.vdot(r, r).real) * norm + 1e-30))
 
     base = state['kk'] if state['kk'] is not None else state.get('last_kk')
+    fft_frame = object()          # searches of this frame (several streams) share one budget
 
     def search(k):
         # alignment on stream k: the previous one (+-8 rows) first, an FFT search when it
@@ -465,8 +466,11 @@ def fast_window(raw, ref, burst, n, ref_fft_conj=None, state=_FAST, verify_every
         kb, lb = None, 0.0
         if base is not None:
             lb, kb = max((lock_at(base + d, x, r0, nx), base + d) for d in range(-8, 9))
-        due = base is None or now - state.get('fft_at', -np.inf) >= verify_every
+        # also when no alignment is known yet: a session that starts drowned searches
+        # all streams once per verify_every, not on every frame
+        due = now - state.get('fft_at', -np.inf) >= verify_every or state.get('fft_frame') == fft_frame
         if lb < 0.6 and due and (k == ch or base is None):
+            state['fft_frame'] = fft_frame
             state['fft_at'] = now
             nonlocal ref_fft_conj
             fft, ifft = _corr_fft()
