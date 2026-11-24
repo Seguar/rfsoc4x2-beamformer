@@ -21,9 +21,14 @@ assert(~c.recordFailure(MException('origapp:NoSignal','missing stream')) && ...
 assert(~c.recordFailure(MException('origapp:Boundary','wrap')) && c.BoundaryFrames==1);
 assert(~c.recordFailure(MException('origapp:Expired','stale draw')) && c.ExpiredFrames==1);
 assert(origapp.LegacyVsaBackend.validWindowSummary(struct('candidate','after-wrap')));
-for s={struct(),struct('candidate','fallback'),struct('candidate','none'),struct('candidate',[])}
+for s={struct(),struct('candidate','fallback'),struct('candidate',[])}
     assert(~origapp.LegacyVsaBackend.validWindowSummary(s{1}),'Invalid selector summary accepted.');
 end
+% Nothing locked ("none"; reduced also "held": last alignment) is shown unverified (2026-11-24).
+assert(origapp.LegacyVsaBackend.validWindowSummary(struct('candidate','none')) && ...
+    origapp.LegacyVsaBackend.validWindowSummary(struct('candidate','none'),true) && ...
+    origapp.LegacyVsaBackend.validWindowSummary(struct('candidate','held'),true),'Unlocked window refused.');
+assert(~origapp.LegacyVsaBackend.validWindowSummary(struct('candidate','held')),'Full window accepted a reduced-only label.');
 % Reduced windows: the reduced selector's searched ("fast") and reused ("fixed")
 % offsets are accepted, the full selector's names and fallbacks are not.
 assert(origapp.LegacyVsaBackend.validWindowSummary(struct('candidate','fast'),true) && ...

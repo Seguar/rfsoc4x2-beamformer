@@ -190,12 +190,34 @@ class WindowSelectTests(unittest.TestCase):
         self.assertEqual(s2, s0)
         blank, _ = capture(self.ref, 5000, self.gains, rng, blank=True)
         _, i3 = fast_window(blank, self.ref, self.burst, 4096, state=state, now=101.3)
-        self.assertNotEqual(i3['candidate'], 'fixed')                 # level drop: checked, unlocked
+        self.assertEqual(i3['candidate'], 'held')                     # level drop: checked, unlocked,
+        self.assertEqual(i3['kk'], i0['kk'])                          # shown at the last alignment
         self.assertNotIn('fixed', state)
         _, i4 = fast_window(raw2, self.ref, self.burst, 8192, state=state, now=101.4)
         self.assertEqual(i4['candidate'], 'fast')                     # no reuse after unlock
         _, i5 = fast_window(raw2, self.ref, self.burst, 4096, state=state, now=101.5)
         self.assertEqual(i5['candidate'], 'fast')                     # other row count: checked
+
+    def test_jammed_strongest_stream_locks_on_another(self):
+        """A CW near one antenna makes that stream the strongest and unlocked; the
+        alignment comes from another stream (2026-11-24, MXG CW on ADC_D)."""
+        rng = np.random.default_rng(23)
+        raw, idx = capture(self.ref, 7000, self.gains, rng)
+        rows = raw.reshape(-1, 8).astype(float)
+        n = np.arange(rows.shape[0]); cw = 20000 * np.exp(2j * np.pi * 0.0325 * n)
+        rows[:, 0] = np.clip(rows[:, 0] + cw.real, -32768, 32767); rows[:, 1] = np.clip(rows[:, 1] + cw.imag, -32768, 32767)
+        jam = np.round(rows).astype('<i2').ravel()
+        s, info = fast_window(jam, self.ref, self.burst, 4096, state={}, now=0.0)
+        self.assertEqual(info['candidate'], 'fast')
+        self.assertNotEqual(info['det_stream'], 0)
+        self.assertLess(info['stream_locks'][0], 0.3)
+        self.assertTrue(np.all(np.diff(idx[s:s + 4096]) == 1))
+
+    def test_never_locked_session_reports_none(self):
+        rng = np.random.default_rng(24)
+        blank, _ = capture(self.ref, 5000, self.gains, rng, blank=True)
+        s, info = fast_window(blank, self.ref, self.burst, 4096, state={}, now=0.0)
+        self.assertEqual(info['candidate'], 'none')
 
     def test_reused_offset_reads_fewer_rows(self):
         from board.legacy_capture import read_rows_needed, WRAP_GUARD, BLOCK

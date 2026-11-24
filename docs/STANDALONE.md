@@ -110,12 +110,14 @@ Use DL MVDR, LCMV or OFDM pilot MVDR against a jammer.
 
 ## Interference demo
 
-An input that loses the wanted-signal lock under interference is no longer a reason
-to drop the frame: a jammed input carries more power, and the beamformers need it to
-null the interferer. Frames are still refused when no input locks, or when an
-unlocked input is also near silent (20 dB below the locked ones: a dead or blank input).
-Before v0.7.2 a strong interferer on one input stopped all frames, so the window showed
-nothing instead of the degraded EVM.
+Missing lock is never a reason to drop a frame (since v0.7.3): the plots keep showing
+whatever the antennas receive, and the EVM tile reports the demodulator's own "no lock".
+The board aligns the window on any input that locks, and when none does it keeps the
+session's last alignment (window label `held`, shown unverified). OFDM pilot MVDR
+without a usable preamble uses the steering vector for that frame. Frames are still
+refused for transport faults: a stale or corrupt capture, a board summary fault, or a
+loop wrap or sample jump that the host check finds. v0.7.2 kept frames while at least
+one input locked; v0.7.1 and older dropped every frame in which any input lost lock.
 
 Measured with an MXG CW at 5.204 GHz radiating from a patch antenna next to the array,
 replayed through the application's own chain (median EVM of 15 frames, 2026-11-24):

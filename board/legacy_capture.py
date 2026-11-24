@@ -453,27 +453,49 @@ def fast_window(raw, ref, burst, n, ref_fft_conj=None, state=_FAST, verify_every
         r = refc[(a - k) % n_loop:(a - k) % n_loop + len(x)]
         return float(abs(np.vdot(r, x)) / (np.sqrt(np.vdot(r, r).real) * norm + 1e-30))
 
-    kk, lock = None, 0.0
-    if state['kk'] is not None:
-        c = [(lock_at(state['kk'] + d), state['kk'] + d) for d in range(-8, 9)]
-        lock, kk = max(c)
-    if lock < 0.6:                                   # first capture, or the alignment moved
-        fft, ifft = _corr_fft()
-        if ref_fft_conj is None:
-            ref_fft_conj = np.conj(fft(ref.astype(np.complex64)))
-        x = np.zeros(n_loop, np.complex64)
-        x[r0:r0 + BLOCK] = z
-        k2 = int(np.argmax(np.abs(ifft(fft(x) * ref_fft_conj))))
-        l2 = lock_at(k2)
-        if l2 > lock:
-            lock, kk = l2, k2
+    def search(k):
+        # alignment on stream k: the previous one (+-8 rows) first, an FFT search when it fails
+        x = seg(k, r0, BLOCK); nx = np.sqrt(np.vdot(x, x).real) + 1e-30
+        kb, lb = None, 0.0
+        if state['kk'] is not None:
+            lb, kb = max((lock_at(state['kk'] + d, x, r0, nx), state['kk'] + d) for d in range(-8, 9))
+        if lb < 0.6 and (k == ch or state['kk'] is None):
+            nonlocal ref_fft_conj
+            fft, ifft = _corr_fft()
+            if ref_fft_conj is None:
+                ref_fft_conj = np.conj(fft(ref.astype(np.complex64)))
+            y = np.zeros(n_loop, np.complex64)
+            y[r0:r0 + BLOCK] = x
+            k2 = int(np.argmax(np.abs(ifft(fft(y) * ref_fft_conj))))
+            l2 = lock_at(k2, x, r0, nx)
+            if l2 > lb:
+                lb, kb = l2, k2
+        return lb, kb
+
+    # The strongest stream first; an interferer near one antenna makes that the
+    # jammed one, so the others are tried before giving up (2026-11-24, MXG CW).
+    lock, kk = search(ch)
+    if lock < 0.6:
+        for k in sorted(range(4), key=lambda q: -rms[q]):
+            if k != ch:
+                lk, kq = search(k)
+                if lk > lock:
+                    lock, kk, ch = lk, kq, k
+                if lock >= 0.6:
+                    break
     info = {'det_stream': ch, 'rms_sub4': [round(v, 2) for v in rms], 'lock_block': round(lock, 4), 'rows': int(n)}
+    held = False
     if lock < LOCK_MIN:
         state['kk'] = None
-        info.update(note='unlocked: no wanted signal in the reduced window', start=r0, candidate='none',
-                    select_s=time.perf_counter() - t0)
-        return r0, info
-    state['kk'] = kk % n_loop
+        if state.get('last_kk') is None:
+            info.update(note='unlocked: no wanted signal in the reduced window', start=r0, candidate='none',
+                        select_s=time.perf_counter() - t0)
+            return r0, info
+        # No stream locks (interference or no signal): keep showing the window at the
+        # last alignment of this session (the DAC -> ADC latency does not move).
+        kk, held = state['last_kk'], True
+    else:
+        state['kk'] = state['last_kk'] = kk % n_loop
     # next frame start at or after r0 + FRAME_LEAD (burst phase; bursts are alike)
     # loop index first: the loop (131072 rows) is not a whole number of bursts
     ph = ((r0 - kk) % n_loop) % burst
@@ -490,6 +512,11 @@ def fast_window(raw, ref, burst, n, ref_fft_conj=None, state=_FAST, verify_every
         x = seg(k, start, m)
         nx = np.sqrt(np.vdot(x, x).real) + 1e-30
         locks.append(round(max(lock_at(kw + d, x, start, nx) for d in range(-3, 4)), 4))
+    if held:
+        info.update(start=int(start), candidate='held', kk=kw, stream_locks=locks,
+                    note='unlocked: last alignment of this session reused, window not verified',
+                    select_s=time.perf_counter() - t0)
+        return int(start), info
     level = _level(rows, ch, int(start), n)
     if level > 0:     # 0: rows not read yet (a check on a reduced read whose offset moved): no reuse
         state['fixed'] = dict(n=n, start=int(start), kk=kw, ch=ch, at=now, level=level)

@@ -5,7 +5,7 @@ classdef Controller < handle
     % through the injected backend (BACKEND_CONTRACT.md).
 
     properties (Constant)
-        DEAD_STREAM_DB = -20   % unlocked stream this far below the locked median = dead
+        DEAD_STREAM_DB = -20   % unlocked stream this far below the median = dead (reported only)
     end
     properties (SetAccess = private)
         Config
@@ -146,25 +146,19 @@ classdef Controller < handle
                     'Array mode needs 4 measured channels; backend reports %s.', mat2str(m));
             end
             if ~obj.Config.directOnly && isfield(raw,'signalChannels')
-                % Backend's independent per-stream wanted-reference lock: a
-                % blank, dead or missing stream must not enter DOA/beamforming.
-                % A stream that lost lock under interference is not dead: it
-                % carries more power, not less, and the beamformers need it to
-                % null the interferer (2026-11-24, MXG CW: ADC_D lost lock at
-                % -14 dBm while OFDM pilot MVDR still demodulated at 9.7 %).
-                % So refuse only when no stream locks, or an unlocked stream is
-                % also near silent (DEAD_STREAM_DB below the locked median).
+                % Backend's independent per-stream wanted-reference lock. It is
+                % reported, never a reason to drop the frame (2026-11-24): an
+                % interferer can drown one or every stream, and the plots must
+                % keep showing it; the OFDM analysis reports its own lock.
+                % unlockedChannels: streams without lock; deadChannels: of
+                % those, the near-silent ones (DEAD_STREAM_DB below the median
+                % of all streams): a blank or disconnected input.
                 sc = raw.signalChannels;
                 assert(islogical(sc) && isequal(size(sc),[1 4]), 'origapp:Channels', ...
                     'signalChannels must be a 1-by-4 logical mask.');
-                dead = ~sc;
-                if any(sc) && ~all(sc)
-                    p = mean(abs(double(x)).^2,1);
-                    dead = ~sc & p < median(p(sc))*10^(origapp.Controller.DEAD_STREAM_DB/10);
-                end
-                assert(~any(dead), 'origapp:NoSignal', ...
-                    'No wanted-signal lock on stream(s) %s: array DOA/pattern unavailable.', mat2str(find(dead)-1));
-                raw.interferedChannels = ~sc & ~dead;
+                p = mean(abs(double(x)).^2,1);
+                raw.unlockedChannels = ~sc;
+                raw.deadChannels = ~sc & p < median(p)*10^(origapp.Controller.DEAD_STREAM_DB/10);
             end
             if isfield(raw,'boundaryFree')
                 assert(islogical(raw.boundaryFree) && isscalar(raw.boundaryFree), ...

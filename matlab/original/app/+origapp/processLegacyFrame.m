@@ -208,7 +208,21 @@ end
 if string(p.bf) == "OFDM pilot MVDR"
     template=p.preamble;
     if p.ofdmConj, template=conj(template); end
-    weights=origapp.ofdmPilotWeights(rawData,template,p.symbolRows,p.burstRows);
+    try
+        weights=origapp.ofdmPilotWeights(rawData,template,p.symbolRows,p.burstRows);
+    catch err
+        % No preamble or too few gap samples (e.g. an interferer drowns every
+        % stream): keep the frame on screen with the steering vector at the
+        % estimated direction; the OFDM analysis then reports no lock.
+        if string(err.identifier) ~= "origapp:NoSignal", rethrow(err); end
+        ps = p; ps.bf = "Steering";
+        if p.bfEngine == "reviewed"
+            weights = reviewedWeights(rawData, estimated_angle, ps);
+        else
+            weights = originalWeights(rawData, estimated_angle, npc, ps);
+        end
+        out.corrections(end+1) = "pilotFallbackSteering";
+    end
 elseif p.bfEngine == "reviewed"
     [weights, manifold] = reviewedWeights(rawData, estimated_angle, p);
     if manifold == "preamble", out.corrections(end+1) = "preambleManifold"; end

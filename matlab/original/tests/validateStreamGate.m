@@ -1,8 +1,8 @@
 function validateStreamGate
 %VALIDATESTREAMGATE Controller per-stream lock gate (origapp.Controller.acquire).
-% A stream without wanted-signal lock is refused only when it is also near
-% silent (dead or blank); a stream that lost lock under interference, with
-% more power than the others, passes and is reported in interferedChannels.
+% Lock is reported, never a reason to drop a frame (2026-11-24): every frame
+% passes; unlockedChannels lists streams without lock and deadChannels the
+% near-silent ones among them.
 here=fileparts(mfilename('fullpath'));addpath(fullfile(fileparts(here),'app'));
 n=4096;rng(7);
 sig=@(a)(randn(n,1)+1i*randn(n,1))*a;
@@ -21,14 +21,16 @@ k=0;
 cfg=origapp.defaultConfig();cfg.dataChan=n;cfg.directOnly=false;cfg.staleSeconds=5;
 cfg.backend=struct('next',@next,'close',@()[]);
 c=origapp.Controller(cfg);
-expect={'ok','ok','origapp:NoSignal','origapp:NoSignal','ok'};
+expect={'ok','ok','ok','ok','ok'};
+unl={false(1,4),[true false false false],[false false true false],true(1,4),[true false false false]};
+dd={false(1,4),false(1,4),[false false true false],false(1,4),false(1,4)};
 for j=1:numel(frames)
     try
         f=c.acquire();got='ok';
-        if j==2, assert(isequal(f.interferedChannels,[true false false false]),'gate:mask','jammed stream not reported'); end
+        assert(isequal(f.unlockedChannels,unl{j}),'gate:mask','frame %d: unlocked mask %s',j,mat2str(f.unlockedChannels));
+        assert(isequal(f.deadChannels,dd{j}),'gate:dead','frame %d: dead mask %s',j,mat2str(f.deadChannels));
     catch e
         got=e.identifier;
-        if j==3, assert(contains(e.message,'stream(s) 2'),'gate:msg','dead stream not named: %s',e.message); end
     end
     assert(strcmp(got,expect{j}),'gate:result','frame %d: expected %s, got %s',j,expect{j},got);
     fprintf('frame %d: %s\n',j,got);

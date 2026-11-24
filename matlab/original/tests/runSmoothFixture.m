@@ -3,7 +3,7 @@ function results = runSmoothFixture(originalRepoPath, outDir, appPath)
 % IQ, struct backend with an OFFLINE VSA stub; no board, no native VSA).
 % Checks: (1) accepted frames reuse the persistent pattern/spectrum lines and
 % xlines (no per-frame cla/plot/xline creation); (2) a user zoom on the
-% pattern axes is kept across frames; (3) a rejected (no-signal) frame
+% pattern axes is kept across frames; (3) a rejected (loop-boundary) frame
 % blanks the display at once (NaN data, xlines hidden, "unavailable"
 % titles) and resets the Avg history, and the next good frame recovers on
 % the same objects; (4) the frame is drawn before the (blocking) VSA call
@@ -62,11 +62,11 @@ R.zoomKept = isequal(ax.XLim, [-10 25]) && isequal(ax.YLim, [-12 1]) && ~app.Axe
 app.setAxesFollow(2, true); drawnow;
 R.autoscaleRestored = app.AxesFollow(2) && isequal(ax.XLim, [app.scan_axis(1) app.scan_axis(end)]);
 
-%% 3. no-signal frame: immediate blank + Avg reset, then recovery on the same objects
+%% 3. refused frame (loop boundary; a missing lock is shown since 2026-11-24): blank + Avg reset, then recovery
 mode = "blank"; app.tick(); mode = "good";
 R.blank = blankState(app);
 R.blankStatus = string(app.Status);
-R.blankKeepsRunning = app.Controller.IsOpen && app.Controller.NoSignalFrames == 1;
+R.blankKeepsRunning = app.Controller.IsOpen && app.Controller.BoundaryFrames == 1;
 app.tick();
 pm = privGet(app, 'p_manual_mean');
 R.recovered = ~isempty(app.CurrentDoa) && abs(app.CurrentDoa(1) - 20) <= 2 && isequal(handlesOf(app), h1) && ...
@@ -146,9 +146,8 @@ fprintf('SMOOTH_FIXTURE_COMPLETE %s\n', outDir);
         N = cfg.dataChan; m = (0:3); t = (0:N-1).'/cfg.fsRfsoc;
         s1 = 3000*exp(1j*2*pi*5e6*t + 1j*2*pi*rand);
         X = s1*exp(1j*pi*m*sind(20)) + 30*(randn(N,4) + 1j*randn(N,4));
-        sc = true(1,4); if mode == "blank", sc(3) = false; end
         fr = struct('samples', X, 'timestamp', origapp.Controller.nowSeconds() - tsOffset, 'sequence', seq, ...
-            'availableChannels', true(1,4), 'signalChannels', sc, 'boundaryFree', true);
+            'availableChannels', true(1,4), 'signalChannels', true(1,4), 'boundaryFree', mode ~= "blank");
     end
     function stubVsa(~, varargin)
         evmValid = false;

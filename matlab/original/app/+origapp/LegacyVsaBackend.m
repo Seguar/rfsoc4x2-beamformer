@@ -641,7 +641,12 @@ classdef LegacyVsaBackend < handle
             if max(locks) >= obj.Config.lockThreshold
                 I = origapp.windowIntegrity(X(:,kb), obj.Ref, obj.RefFftConj, obj.Burst, obj.RefAct);
             end
-            A = struct('streamLocks', locks, 'boundaryFree', logical(I.ok), 'integrityReason', string(I.reason), ...
+            % Without any locked stream the wrap search cannot run: the window
+            % is shown unverified (interference can drown every stream; the
+            % user wants the plots to keep updating) instead of refused.
+            verified = max(locks) >= obj.Config.lockThreshold;
+            A = struct('streamLocks', locks, 'boundaryFree', logical(I.ok || ~verified), 'verified', verified, ...
+                'integrityReason', string(I.reason), ...
                 'integrityStream', kb - 1, 'lagSpread', I.lagSpread, 'minCorr', I.minCorr, ...
                 'anchorsTried', I.anchorsTried, 'integrityS', I.elapsedS, ...
                 'startPhase', I.startPhase, 'endPhase', I.endPhase, ...
@@ -674,7 +679,12 @@ classdef LegacyVsaBackend < handle
                 reason = "reduced window: reference lock at both ends, no wrap search";
             end
             [~, kb] = max(locks);
-            A = struct('streamLocks', locks, 'boundaryFree', all(locks >= obj.Config.lockThreshold), ...
+            % The reduced check is a lock test, not a wrap search: a stream
+            % without lock (interference) leaves the window unverified, shown.
+            % Only a missing board alignment refuses it.
+            unaligned = isequal(string(origapp.LegacyVsaBackend.metaField(info, 'candidate')), "none");
+            A = struct('streamLocks', locks, 'boundaryFree', unaligned || (isnumeric(kk) && isscalar(kk) && isfinite(kk)), ...
+                'verified', all(locks >= obj.Config.lockThreshold), ...
                 'integrityReason', reason, 'integrityStream', kb - 1, 'lagSpread', NaN, 'minCorr', min(locks), ...
                 'anchorsTried', 0, 'integrityS', toc(t0), 'startPhase', NaN, 'endPhase', NaN, ...
                 'legacyPsiJumps', [], 'wraps', [], 'loopIdx1', NaN, 'psi', []);
@@ -691,7 +701,10 @@ classdef LegacyVsaBackend < handle
             ok = isstruct(info) && isscalar(info) && isfield(info,'candidate');
             if ~ok, return; end
             c = string(info.candidate);
-            names = ["before-wrap","after-wrap","nowrap","clear"]; if reduced, names = ["fast","fixed"]; end
+            % "none": no stream locked (blank input or interference everywhere);
+            % "held": reduced window at the session's last alignment while nothing
+            % locks. Both are shown unverified (2026-11-24: keep showing everything).
+            names = ["before-wrap","after-wrap","nowrap","clear","none"]; if reduced, names = ["fast","fixed","held","none"]; end
             ok = isscalar(c) && ~ismissing(c) && any(c == names);
         end
         function h = sha256(path)
@@ -988,8 +1001,8 @@ classdef LegacyVsaBackend < handle
             frame.signalChannels = A.streamLocks >= obj.Config.lockThreshold;
             summaryOK = origapp.LegacyVsaBackend.validWindowSummary(info, reduced);
             frame.reducedWindow = reduced;
-            frame.boundaryFree = logical(A.boundaryFree && summaryOK && ...
-                max(A.streamLocks) >= obj.Config.lockThreshold);
+            frame.boundaryFree = logical(A.boundaryFree && summaryOK);
+            frame.boundaryVerified = logical(A.verified);
             frame.boardSummaryOk = summaryOK;
             cand = obj.metaField(info, 'candidate');
             if ischar(cand) || (isstring(cand) && isscalar(cand)), frame.boardCandidate = string(cand); else, frame.boardCandidate = "missing"; end
