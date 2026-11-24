@@ -108,6 +108,31 @@ Unloaded MVDR and DMR stay near 12 %: the wideband over-the-air signal is not
 exactly one narrowband signature, and without loading they suppress part of it.
 Use DL MVDR, LCMV or OFDM pilot MVDR against a jammer.
 
+## Interference demo
+
+An input that loses the wanted-signal lock under interference is no longer a reason
+to drop the frame: a jammed input carries more power, and the beamformers need it to
+null the interferer. Frames are still refused when no input locks, or when an
+unlocked input is also near silent (20 dB below the locked ones: a dead or blank input).
+Before v0.7.2 a strong interferer on one input stopped all frames, so the window showed
+nothing instead of the degraded EVM.
+
+Measured with an MXG CW at 5.204 GHz radiating from a patch antenna next to the array,
+replayed through the application's own chain (median EVM of 15 frames, 2026-11-24):
+
+| MXG power | Steering | OFDM pilot MVDR |
+|---|---|---|
+| off | 10.4 % | 9.3 % |
+| −30 dBm | 12.0 % | 9.6 % |
+| −25 dBm | 14.2 % | 9.8 % |
+| −20 dBm | 19.6 % | 9.6 % |
+| −14 dBm | no lock (34.6 % with Source count 2) | 9.7 % |
+| −8 dBm | no lock | 9.9 % |
+
+To show the degradation, select **Steering** and raise the MXG from −30 to −14 dBm; then
+select **OFDM pilot MVDR**. The interferer was strongest on ADC_D (+12 dB over the
+OFDM at −14 dBm), the input nearest to it.
+
 ## Signal priority
 
 **Strongest** and **Weaker** rank the detected directions by the band power of a

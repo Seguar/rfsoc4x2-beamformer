@@ -4,6 +4,9 @@ classdef Controller < handle
     % It never opens a socket, VSA or instrument by itself: all I/O goes
     % through the injected backend (BACKEND_CONTRACT.md).
 
+    properties (Constant)
+        DEAD_STREAM_DB = -20   % unlocked stream this far below the locked median = dead
+    end
     properties (SetAccess = private)
         Config
         Backend = []
@@ -145,11 +148,23 @@ classdef Controller < handle
             if ~obj.Config.directOnly && isfield(raw,'signalChannels')
                 % Backend's independent per-stream wanted-reference lock: a
                 % blank, dead or missing stream must not enter DOA/beamforming.
+                % A stream that lost lock under interference is not dead: it
+                % carries more power, not less, and the beamformers need it to
+                % null the interferer (2026-11-24, MXG CW: ADC_D lost lock at
+                % -14 dBm while OFDM pilot MVDR still demodulated at 9.7 %).
+                % So refuse only when no stream locks, or an unlocked stream is
+                % also near silent (DEAD_STREAM_DB below the locked median).
                 sc = raw.signalChannels;
                 assert(islogical(sc) && isequal(size(sc),[1 4]), 'origapp:Channels', ...
                     'signalChannels must be a 1-by-4 logical mask.');
-                assert(all(sc), 'origapp:NoSignal', ...
-                    'No wanted-signal lock on stream(s) %s: array DOA/pattern unavailable.', mat2str(find(~sc)-1));
+                dead = ~sc;
+                if any(sc) && ~all(sc)
+                    p = mean(abs(double(x)).^2,1);
+                    dead = ~sc & p < median(p(sc))*10^(origapp.Controller.DEAD_STREAM_DB/10);
+                end
+                assert(~any(dead), 'origapp:NoSignal', ...
+                    'No wanted-signal lock on stream(s) %s: array DOA/pattern unavailable.', mat2str(find(dead)-1));
+                raw.interferedChannels = ~sc & ~dead;
             end
             if isfield(raw,'boundaryFree')
                 assert(islogical(raw.boundaryFree) && isscalar(raw.boundaryFree), ...
