@@ -63,10 +63,14 @@ PROFILE = 'legacy-ofdm64-truncated-v1'
 # which of them adds constructively changes from session to session (converter clock
 # start-up; not the MTS latency): 3 of 4 streams were 10-18 dB weaker in the wrong one.
 # select_dac_zone measures both once per session (bench 2026-11-17, 13 sessions).
+# Over the air with the AKF-1252 filter the image is weaker and the right zone wins by
+# only 1.9-4.6 dB (2026-11-24, 20 sessions: zone 1 stronger by 1.9-2.7 dB in 10 of them,
+# zone 2 by 2.9-4.6 dB in the others). The former 3 dB margin kept zone 2 in all 20, so
+# half the sessions ran 3 dB weaker (EVM ~7 % instead of ~5 %); 1 dB picks the right one.
 RF_PROFILES = {3000: dict(adc_zone=2, dac_zone=1), 5200: dict(adc_zone=1, dac_zone=2)}
 SELECT_DAC_ZONE = {5200}
 DEFAULT_RF_MHZ = 5200
-ZONE_MARGIN_DB = 3.0
+ZONE_MARGIN_DB = 1.0
 # DAC waveform peak (int16 code per I/Q rail). The reviewed reference is stored at 1200;
 # --dac-peak rescales it on the board. Over the air (2026-11-19, 0.5 m, AKF-1252 filter)
 # 1200 left every stream near the noise floor. Before any frame, a start-up capture must
@@ -78,7 +82,8 @@ ADC_PEAK_LIMIT_DBFS = -6.0
 # phase (--dac-a-phase) is part of the start configuration, written by configure_dacs()
 # with the SYSREF event and latched by the wrapper's sync_tiles(), as /boot/doa_mts.py does.
 # Over the air with the AKF-1252 filter, +40 deg added the two coherently (+5 dB over
-# DAC_B alone), the same in 6 sessions and after a reboot (2026-11-22).
+# DAC_B alone), the same in 6 sessions and after a reboot (2026-11-22). On 2026-11-24 the
+# optimum was 15-30 deg in both DAC zones (8 fresh sessions); the service default is now 20.
 SRC_SHA = '3f17e6cccef941d1bac4fefff4439472d8a6e6923b0ef7633e6184448be9eef3'
 RAM = 1048576
 SENTINEL = np.array([32767, -32768, 32767, -32768, 32767, -32768, 32767, -32768], dtype='<i2')

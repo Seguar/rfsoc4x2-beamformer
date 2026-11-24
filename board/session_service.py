@@ -57,7 +57,7 @@ RF_PROFILES = {3000: dict(adc_zone=2, dac_zone=1), 5200: dict(adc_zone=1, dac_zo
 DEFAULT_RF_MHZ = 5200
 DAC_PEAK_MAX = 24000          # equal to the helper's; it also checks ADC headroom at start
 DEFAULT_DACS = 'AB'              # DAC_B + DAC_A into one 0 deg combiner (over the air, 2026-11-22)
-DEFAULT_DAC_A_PHASE = 40.0       # deg; coherent sum for this cabling, stable over sessions and a reboot
+DEFAULT_DAC_A_PHASE = 20.0       # deg; coherent sum for this cabling: best 15-30 deg in both DAC zones (2026-11-24, 8 sessions; 40 was 0.15 dB lower)
 DEFAULT_DAC_PEAK = 24000         # over the air at 0.2 m: 1200 no lock, 9600 0.92, 24000 0.98 (2026-11-19)
 KEEP_RUNS = 20
 READY_LINE = 'Waiting for legacy client'

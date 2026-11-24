@@ -183,7 +183,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(argv[argv.index('--rf-mhz')+1], '3000')
         self.assertEqual(argv[argv.index('--dac-peak')+1], str(svc.DEFAULT_DAC_PEAK))
         self.assertIn('--both-dacs', argv)
-        self.assertEqual(argv[argv.index('--dac-a-phase')+1], '40.00')
+        self.assertEqual(argv[argv.index('--dac-a-phase')+1], '%.2f' % svc.DEFAULT_DAC_A_PHASE)
         c.close()
 
     def test_single_dac_request(self):

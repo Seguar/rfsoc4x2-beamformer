@@ -32,7 +32,7 @@ zone three of the four streams were 10–18 dB weaker and two no longer demodula
 
 So at 5.2 GHz the board, right after start-up synchronisation, plays the waveform,
 captures with each DAC zone (only the zone register changes: no retune, no tile
-resynchronisation), keeps the zone with more received power (margin 3 dB, else
+resynchronisation), keeps the zone with more received power (margin 1 dB, else
 zone 2), turns the DAC off again and reports the zone in its ready message. The
 manifest records both measurements (`dac_zone_selection`).
 
@@ -87,14 +87,24 @@ compression), so sessions now start at peak 24000; the helper's start-up capture
 session whose ADC peak exceeds −6 dBFS. With the filter, the DAC zone measurement
 at start no longer shows the 7 dB difference (0.1–2.4 dB at the noise floor).
 
+Over the air the choice still matters (2026-11-24, 20 sessions, both DACs): in half of
+them zone 1 was 1.9–2.7 dB stronger, in the others zone 2 by 2.9–4.6 dB. With the old
+3 dB margin every session kept zone 2, so half of them ran 3 dB weaker (SNR 20.5 instead
+of 23.5 dB, EVM about 7 % instead of 5 %). The margin is now 1 dB: in 8 further sessions
+the board chose zone 1 four times and zone 2 four times, and all eight started at the
+full level (SNR 23.1 dB in zone 1, 23.6 dB in zone 2). An in-session retune, a DAC phase
+search or a different MTS latency does not change the state; only the zone does (the
+MTS latencies of 20 sessions did not predict it).
+
 **Both DACs (default since 2026-11-22).** DAC_B and DAC_A play the same waveform into
 a ZN2PD-9G-S+ 0° combiner, then AKF-1252 → ZX60-V63+ amplifier (+20 dB measured at
 5.2 GHz) → patch. With the filter in the chain, DAC_A's phase acts smoothly and
-repeatably: the sum peaks at +40° and cancels near −150°, +5 dB over DAC_B alone,
-the same in 6 sessions and after a board reboot. The board sets that phase in the
+repeatably: the sum peaked at +40° and cancelled near −150°, +5 dB over DAC_B alone,
+the same in 6 sessions and after a board reboot (2026-11-22). On 2026-11-24 the peak
+was at 15–30° in both DAC zones (8 sessions, 0.15 dB above 40°); the default is now 20°. The board sets that phase in the
 start configuration (`configure_dacs()` with SYSREF, then the wrapper's
 `sync_tiles()`), not with a later `dphasec`. On 2026-11-19, without the filter,
-every `dphasec` had landed DAC_A at a random phase. The +40° belongs to this
+every `dphasec` had landed DAC_A at a random phase. The +20° belongs to this
 cabling; after changing the DAC cables, sweep it again (`dac_a_phase_deg` in the
 start request, or `--dac-a-phase` of the service). `dacs: "B"` keeps DAC_B only.
 

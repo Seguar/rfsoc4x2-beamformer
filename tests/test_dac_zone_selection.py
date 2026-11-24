@@ -74,6 +74,29 @@ class Selection(unittest.TestCase):
         self.assertFalse(o.enabled)
         self.assertFalse(o.dac0_player.any() or o.dac1_player.any())
 
+    def test_over_the_air_two_db_difference_switches(self):
+        # 2026-11-24 over the air: the right zone was only ~2 dB stronger
+        o = FakeOverlay(strong_zone=1)
+        o.capture = lambda gain=1, o=o: FakeOverlay.capture(o, gain) if o.dac[0].NyquistZone == 1 else self.weaker(o)
+        orig = lc.synced_trigger
+        lc.synced_trigger = lambda ov, *_: ov.capture()
+        try:
+            manifest = {}
+            chosen = lc.select_dac_zone(o, np.full(lc.RAM, 1000, '<i2'), '0', 5200, manifest)
+        finally:
+            lc.synced_trigger = orig
+        r = manifest['dac_zone_selection']
+        self.assertEqual(chosen, 1)
+        self.assertTrue(1.0 < r['mean_dbfs']['1'] - r['mean_dbfs']['2'] < 3.0)
+
+    @staticmethod
+    def weaker(o):
+        # same streams as the strong zone, 2.3 dB lower (amplitude x 0.77)
+        amp = np.array([46, 66, 68, 58]) * 0.77
+        x = o.rng.normal(0, 1, (lc.RAM // 8, 8)) * 11
+        x += np.repeat(amp, 2) / np.sqrt(2) * o.rng.choice([-1, 1], (lc.RAM // 8, 8))
+        o.adc_capture[:] = np.clip(x, -32768, 32767).astype('<i2').ravel()
+
     def test_small_difference_keeps_the_profile_zone(self):
         o, chosen, r = self.run_selection(strong=None)       # both zones weak and equal
         self.assertEqual(chosen, lc.RF_PROFILES[5200]['dac_zone'])
