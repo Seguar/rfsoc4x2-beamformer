@@ -263,7 +263,7 @@ classdef BeamformerView < handle
                 obj.FramesCleared=obj.FramesCleared+1;
                 obj.logEvent("display cleared · "+reason);obj.LastReason=reason;
             end
-            obj.LastData=[];obj.LastSequence=NaN;obj.FrameTimes=[];
+            obj.LastData=[];obj.LastSequence=NaN;   % FrameTimes kept: the rate is throughput, not display state
             obj.ScopeLabel.Text=char(string(obj.field(obj.Config,'arrayLabel','Array model'))+' · UNCALIBRATED');
             obj.ScopeLabel.Tooltip=obj.ScopeLabel.Text;
             obj.showRate();
@@ -1689,8 +1689,9 @@ classdef BeamformerView < handle
         end
         function showRate(obj)
             rate=NaN;
-            ft=obj.FrameTimes;
-            if numel(ft)>=3 && ft(end)-ft(1)>=1,rate=(numel(ft)-1)/(ft(end)-ft(1));end   % frames over the last 5 s
+            % frames over the last 5 s, aged out by the clock (paused or no frames: idle)
+            obj.FrameTimes(obj.FrameTimes<toc(obj.Clock)-obj.RATE_WINDOW_S)=[];ft=obj.FrameTimes;
+            if numel(ft)>=3 && ft(end)-ft(1)>=1,rate=(numel(ft)-1)/(ft(end)-ft(1));end
             text='—';state='idle';
             if isfinite(rate),text=sprintf('%.2f /s',rate);state='ok';end
             if isempty(obj.LastData),state='idle';end
