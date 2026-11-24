@@ -273,3 +273,8 @@ as `fatfs.pynq-orig`). It must stay FAT: `/usr/local/bin/usbgadget` mounts it at
 boot to choose RNDIS (Windows) or ECM (Mac), and this kernel has no exFAT. Rebuild it for
 a new application version with `tools/usb_drive/build_usb.py` (instructions in its
 header); the build downloads about 6 GB and slows the capture while it runs.
+
+Every release also updates the application on the drive with
+`tools/usb_drive/update_app.py` (the R2026a build, its README and a `VERSION.txt` with
+the SHA256): seconds, the medium is detached only during the copy, and the USB network
+and a running session stay up.
