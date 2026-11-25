@@ -1,6 +1,6 @@
 classdef LegacyVsaBackend < handle
-    %LEGACYVSABACKEND Board + native VSA backend for VSA_rfsoc_refactor_exported
-    % (BACKEND_CONTRACT.md, demo 0d628ae). native VSA profile, v2.
+    %LEGACYVSABACKEND Board stream backend of the app (matlab/README.md):
+    % receives the board helper's frames and checks every window on the host.
     %
     % Transport (helper legacy_capture.py v2): magic R4X2IQ2 + JSON metadata,
     % frames IQL2, end END2. One request byte per wanted frame; the board
@@ -24,18 +24,6 @@ classdef LegacyVsaBackend < handle
     %   A request read late by the board (e.g. after a pause) cannot make a
     %   frame look older than the best bound. Never receive time.
     %
-    % Native VSA: one new owned 89600 instance via rfsoc.VsaSession (SETX sha
-    % pinned, allowSetxStatus32). The session reads vendor EVM/sync with a
-    % near-zero threshold so the RAW vendor values are always recorded; the
-    % backend then applies the profile guard: a metric is valid ONLY if the
-    % independent wanted-reference block lock >= lockThreshold (0.3) AND the
-    % vendor sync correlation >= syncCorrThreshold (0.9, profile default).
-    % Rejected frames (blanks, noise, false vendor locks) are NOT errors: they
-    % are logged, vsaStatus() reports valid=false with the reason, and the
-    % owned VSA window title says UNAVAILABLE. No padding, tiling, joining,
-    % payload fit or sample modification (except the configured orientation
-    % conjugate). The window fed to VSA is one contiguous boundary-free run.
-    %
     % v3 (cfg.wireMode = "window4", helper --wire-mode window4): magic R4X2IQ3,
     % frames IQZ3/IQL3 + extension (window start row, SHA256 of the full capture
     % and of the selected window, board selection time, bounded JSON summary),
@@ -45,10 +33,7 @@ classdef LegacyVsaBackend < handle
     % samples, availableChannels [1 1 1 1]; the host re-checks every frame
     % independently (per-stream wanted-reference lock, boundary/jump-free
     % blocks, window SHA, a repeated capture SHA is stale) and reports
-    % signalChannels (stream lock >= lockThreshold). vsaSend accepts either a
-    % raw measured column or the app's combined (weighted) output of the SAME
-    % frame (info.kind/sequence); the input kind and raw-stream vs combined
-    % locks are logged separately. Zero-padded buffers are refused.
+    % signalChannels (stream lock >= lockThreshold).
     % The stream mode must equal cfg.wireMode; there is no silent switch.
     properties (SetAccess = private)
         Config
@@ -58,19 +43,11 @@ classdef LegacyVsaBackend < handle
         DisplayOff = false
         DisplayAt = -Inf
         Metadata = struct()
-        Log = struct([])
         Ended = false
         LastFrameMeta = struct()
         Delivered = {}
-        Session = []
-        VsaState = struct('valid',false,'state',"idle",'reason',"no frame yet",'evmPercent',NaN, ...
-            'evmDb',NaN,'syncCorrelation',NaN,'lock',NaN,'sequence',NaN,'timestamp',NaN, ...
-            'vendorEvmPercent',NaN,'vendorSync',NaN,'vendorStatus',"",'updatedPosix',NaN,'shortReason',"no frame yet",'source',"SOURCE NOT YET KNOWN")
-        DisplaySupported = false
         SourceTag = "SOURCE NOT YET KNOWN"   % LIVE HW only for helper source rfsoc4x2-hardware
-        DisplayLog = strings(0,1)
         PrefetchHold = false
-        WarmupSeconds = zeros(1,0)
         N = 131072                 % wire samples per stream (v2 131072, v3 32768)
         FRAME_BYTES = 4*131072
         AVAILABLE = logical([1 0 0 0])
@@ -78,8 +55,6 @@ classdef LegacyVsaBackend < handle
         WireMode = "adc-d-fullram"
         LastMeasured4 = []         % v3: measured N-by-4 (I - jQ)/2^16 of the last frame
         LastCaptureSha = ""
-        VsaStartError = ""         % first owned-VSA start failure; never retried in this session
-        VsaIdleFcn = []            % app callback run while the owned VSA measurement is pending
     end
     properties (Access = private)
         Client = []
@@ -97,7 +72,6 @@ classdef LegacyVsaBackend < handle
         ExpectedSeq = 0
         BodyNeed = 0
         LastReceiptPosix = NaN
-        LastMeasured = []
         Ref = []
         RefFftConj = []
         Burst = NaN
@@ -121,33 +95,25 @@ classdef LegacyVsaBackend < handle
     end
     methods
         function obj = LegacyVsaBackend(cfg)
-            req = {'host','port','referenceMat','orientation','dllPath','setupPath', ...
-                'setupSha256','vsaPort','visible'};
+            req = {'host','port','referenceMat','orientation'};
             for k = 1:numel(req)
                 assert(isfield(cfg,req{k}), 'a2live:Config', 'Missing %s', req{k});
             end
             assert(any(cfg.orientation == ["IminusjQ","IplusjQ"]), 'a2live:Config', ...
                 'orientation must be IminusjQ (as delivered) or IplusjQ (conjugated)');
-            d = struct('connectTimeoutSeconds',30,'lockThreshold',0.3,'minWindow',32768, ...
-                'logFile',"",'syncCorrThreshold',0.9,'vendorReadThreshold',1e-6, ...
+            d = struct('connectTimeoutSeconds',30,'lockThreshold',0.3, ...
                 'staleSeconds',2,'allowContinuous',false,'rawDir',"",'maxTimestampDelaySeconds',2, ...
-                'expectSource',"rfsoc4x2-hardware",'prefetch',true,'warmup',true, ...
-                'wireMode',"adc-d-fullram",'vsaStartupTimeoutSeconds',120,'frameLogFile',"",'prefetchWithoutVsa',false,'controlPort',0,'controlTimeoutSeconds',8,'controlLogFile',"");
+                'expectSource',"rfsoc4x2-hardware",'prefetch',true, ...
+                'wireMode',"adc-d-fullram",'frameLogFile',"",'controlPort',0,'controlTimeoutSeconds',8,'controlLogFile',"");
             f = fieldnames(d);
             for k = 1:numel(f)
                 if ~isfield(cfg,f{k}), cfg.(f{k}) = d.(f{k}); end
             end
-            % Profile guard: 0.9 is the frozen legacy-profile default (0.5 admitted
-            % a live noise frame at sync 0.542). It never weakens below 0.9 here.
-            assert(cfg.syncCorrThreshold >= 0.9 && cfg.syncCorrThreshold <= 1, 'a2live:Config', ...
-                'legacy profile needs syncCorrThreshold in [0.9, 1]');
             assert(cfg.lockThreshold >= 0.3 && cfg.lockThreshold < 1, 'a2live:Config', ...
                 'legacy profile needs lockThreshold in [0.3, 1)');
             cfg.wireMode = string(cfg.wireMode);
             assert(any(cfg.wireMode == ["adc-d-fullram","window4"]), 'a2live:Config', ...
                 'wireMode must be "adc-d-fullram" (v2) or "window4" (v3)');
-            % VSA needs 28710 contiguous complex samples; the v3 window is 32768.
-            assert(cfg.minWindow >= 28710 && cfg.minWindow <= 131072, 'a2live:Config', 'minWindow out of range');
             obj.Config = cfg;
             obj.setMode(cfg.wireMode);
             r = load(cfg.referenceMat);
@@ -172,7 +138,7 @@ classdef LegacyVsaBackend < handle
             if obj.Config.controlPort>0 && isfield(obj.Metadata,'display_controls')
                 display=reshape(string(obj.Metadata.display_controls),1,[]);
             end
-            c=struct('commands',names,'txArrayElements',0,'uploadDac',false,'display',display);
+            c=struct('commands',names,'display',display);
         end
 
         function showEvm(obj,evmPercent,angleDeg)
@@ -297,14 +263,12 @@ classdef LegacyVsaBackend < handle
             % bytes keep arriving). Returns [] if the requested frame is not
             % complete in time; partial bytes are kept, so framing is never lost.
             frame = [];
-            obj.updateStale();
             if obj.Ended || obj.Closed, return; end
             if isempty(obj.Client), obj.open(); end
             t = tic;
             if obj.ControlPaused, return; end
             if ~obj.Pending, obj.sendRequest(); end
             while true
-                obj.updateStale();
                 switch obj.Stage
                     case 0, target = obj.Hdr; need = obj.HEADER_BYTES;
                     case 1, target = obj.ExtBuf; need = obj.EXT_BYTES;
@@ -325,9 +289,7 @@ classdef LegacyVsaBackend < handle
                     break
                 end
                 left = timeoutSeconds - toc(t);
-                if left <= 0
-                    obj.updateStale(); return
-                end
+                if left <= 0, return; end
                 avail = double(obj.Client.Available);
                 if avail == 0
                     % Wait inside .NET (Poll), not pause() (pause yields to the UI
@@ -344,176 +306,12 @@ classdef LegacyVsaBackend < handle
             frame = obj.finishFrame();
         end
 
-        function vsaReset(obj, request)
-            assert(request.fs == 125e6, 'a2live:Vsa', 'Legacy profile needs fs 125 MHz');
-            assert(request.dataChan == obj.N, 'a2live:Vsa', 'dataChan must be %d (%s)', obj.N, obj.WireMode);
-            setx = string(request.setupFile);
-            if strlength(setx) == 0, setx = string(obj.Config.setupPath); end
-            assert(isfile(setx) && origapp.LegacyVsaBackend.sha256(setx) == string(obj.Config.setupSha256), ...
-                'a2live:Vsa', 'SETX is not the matched FFT64 setup');
-            if ~isempty(obj.Session) && isvalid(obj.Session), return; end   % owned session kept
-            % A failed start can leave the started VSA running on the startup
-            % port; retrying would only collide with it ("port in use").
-            assert(strlength(obj.VsaStartError) == 0, 'a2live:VsaStart', ...
-                'Owned VSA start failed earlier and is not retried: %s', obj.VsaStartError);
-            vc = struct('dllPath', obj.Config.dllPath, 'fsHz', 125e6, 'fcHz', 0, ...
-                'bandwidthHz', 125e6, 'captureSamples', 16384, 'visible', logical(obj.Config.visible), ...
-                'setupPath', char(setx), 'startupPort', obj.Config.vsaPort, ...
-                'maxInputSamples', obj.N, 'allowSetxStatus32', true, ...
-                'syncCorrThreshold', obj.Config.vendorReadThreshold, ...   % raw read; guard below
-                'startupTimeoutSeconds', obj.Config.vsaStartupTimeoutSeconds);
-            try
-                obj.Session = rfsoc.VsaSession(vc);
-            catch er
-                obj.VsaStartError = string(er.message);
-                rethrow(er);
-            end
-            if isprop(obj.Session, 'IdleFcn'), obj.Session.IdleFcn = obj.VsaIdleFcn; end
-            obj.DisplaySupported = ismethod(obj.Session, 'setDisplayStatus');
-            obj.showStatus("RFSoC native VSA [" + obj.SourceTag + "] | waiting for first frame (legacy FFT64, guard lock>=" + ...
-                obj.Config.lockThreshold + " sync>=" + obj.Config.syncCorrThreshold + ")");
-            obj.warmLink();
-        end
-
-        function warmLink(obj)
-            % One PAD2 link warm-up filler (zeros, NOT ADC data, never delivered)
-            % right before the first frame request: the first transfer after the
-            % ~40 s VSA start-up idle was ~3 s slower than the rest.
-            if ~obj.Config.warmup || isempty(obj.Client) || obj.Pending || obj.ExpectedSeq > 0, return; end
-            t = tic;
-            obj.Stream.Write(uint8('W'), 0, 1);
-            h = obj.readBlocking(obj.HEADER_BYTES);
-            assert(isequal(char(h(1:4).'), 'PAD2'), 'a2live:Protocol', 'Expected PAD2 warm-up');
-            n = double(typecast(h(49:52),'uint32'));
-            assert(n == double(obj.Metadata.pad_bytes), 'a2live:Protocol', 'PAD2 size differs');
-            obj.readBlocking(n);
-            obj.WarmupSeconds(end+1) = toc(t);
-        end
-
-        function vsaSend(obj, buffer, info)
-            x = buffer(:);
-            if nargin < 3, info = struct(); end
-            inputKind = obj.classifyVsaInput(x, info);
-            if isempty(obj.Session) || ~isvalid(obj.Session)
-                error('a2live:Vsa','vsaSend before vsaReset (no owned VSA session)');
-            end
-            assert(numel(x) == obj.N && all(isfinite(x)), 'a2live:Vsa', 'Need one full contiguous capture/window');
-            if obj.Config.orientation == "IplusjQ", x = conj(x); end
-            A = obj.analyzeBlocks(x);
-            Aother = obj.analyzeBlocks(conj(x));
-            lock = A.medianLock; lockOther = Aother.medianLock;
-            m = obj.LastFrameMeta;
-            winErr = "";
-            try
-                [win, note] = obj.chooseWindow(A);
-            catch er
-                win = []; note = er.message; winErr = string(er.message);
-            end
-            r = struct('evmPercent',NaN,'evmDb',NaN,'fresh',false,'status','not sent: no boundary-free window', ...
-                'elapsedSeconds',0,'sentFloats',0,'quality',struct());
-            if ~isempty(win)
-                pending=obj.VsaState; pending.valid=false; pending.state="acquiring";
-                pending.evmPercent=NaN; pending.evmDb=NaN;
-                pending.reason="VSA measurement in progress; previous display is history";
-                pending.shortReason="VSA acquiring"; pending.sequence=m.sequence;
-                pending.timestamp=m.timestamp; obj.VsaState=pending;
-                obj.showStatus("RFSoC native VSA ["+obj.SourceTag+"] | ACQUIRING seq "+ ...
-                    m.sequence+" | previous display is history");
-                r = obj.Session.sendFrame(x(win));   % blanks too: real IQ as negative control
-            end
-            sync = obj.field(r.quality,'syncCorrelation');
-            % ---- guard (independent of vendor EVM magnitude) ----
-            short = "";
-            captureAge=origapp.LegacyVsaBackend.now()-m.timestamp;
-            if captureAge>obj.Config.staleSeconds || captureAge< -0.5
-                short="stale acquisition";
-                reason=sprintf('acquisition age %.2f s exceeds freshness bound',captureAge);
-            elseif lock < obj.Config.lockThreshold
-                short = "no wanted-signal lock";
-                reason = sprintf('no wanted-reference lock (block lock %.3f < %.2f)', lock, obj.Config.lockThreshold);
-            elseif strlength(winErr) > 0
-                short = "no boundary-free window";
-                reason = "no boundary-free contiguous window: " + winErr;
-            elseif ~r.fresh
-                short = "VSA not fresh";
-                reason = "VSA measurement not fresh: " + string(r.status);
-            elseif ~isfinite(r.evmPercent)
-                short = "VSA rejected frame";
-                reason = "VSA rejected frame: " + string(r.status);
-            elseif ~(isfinite(sync) && sync >= obj.Config.syncCorrThreshold && sync <= 1)
-                short = sprintf('VSA sync %.2f < %.2f', sync, obj.Config.syncCorrThreshold);
-                reason = sprintf('insufficient VSA sync correlation %.3f < %.2f', sync, obj.Config.syncCorrThreshold);
-            else
-                reason = "";
-            end
-            valid = strlength(string(reason)) == 0;
-            nowS = origapp.LegacyVsaBackend.now();
-            s = obj.VsaState;
-            s.valid = valid; s.state = string(ifelse(valid, "valid", "unavailable")); s.source = obj.SourceTag;
-            s.reason = string(ifelse(valid, "ok", reason)); s.shortReason = string(ifelse(valid, "ok", short));
-            s.evmPercent = ifelse(valid, r.evmPercent, NaN); s.evmDb = ifelse(valid, r.evmDb, NaN);
-            s.syncCorrelation = sync; s.lock = lock; s.sequence = m.sequence; s.timestamp = m.timestamp;
-            s.vendorEvmPercent = r.evmPercent; s.vendorSync = sync; s.vendorStatus = string(r.status);
-            s.updatedPosix = nowS;
-            obj.VsaState = s;
-            if valid
-                obj.showStatus(sprintf('RFSoC native VSA [%s] | VALID seq %d | guarded EVM %.2f %% | sync %.3f | lock %.2f', ...
-                    obj.SourceTag, m.sequence, r.evmPercent, sync, lock));
-            else
-                obj.showStatus(sprintf('RFSoC native VSA [%s] | UNAVAILABLE seq %d: %s | vendor display is not a valid measurement', ...
-                    obj.SourceTag, m.sequence, s.reason));
-            end
-            if isempty(win), w = [NaN NaN]; else, w = [win(1) win(end)]; end
-            e = struct('sequence', m.sequence, 'timestamp', m.timestamp, 'phase', m.phase, ...
-                'hostRequestSent', m.hostRequestSent, 'hostReceived', m.hostReceived, ...
-                'ageAtReceipt', m.hostReceived - m.timestamp, 'ageAtVsaDone', nowS - m.timestamp, ...
-                'boardDelayS', m.boardDelayS, 'anchorTimestamp', m.anchorTimestamp, ...
-                'requestBoundTimestamp', m.requestBoundTimestamp, ...
-                'lockI', lock, 'lockConj', lockOther, 'boundary', {A.boundaryBlocks}, 'window', w, ...
-                'windowNote', note, 'guardValid', valid, 'guardReason', s.reason, ...
-                'guardedEvmPercent', s.evmPercent, 'vendorEvmPercent', r.evmPercent, 'vendorEvmDb', r.evmDb, ...
-                'vendorSync', sync, 'vendorFresh', r.fresh, 'vendorStatus', string(r.status), ...
-                'sentFloats', r.sentFloats, 'elapsedSeconds', r.elapsedSeconds, ...
-                'iqStatus', obj.field(r.quality,'iqStatus'), 'summaryStatus', obj.field(r.quality,'summaryStatus'), ...
-                'lockThreshold', obj.Config.lockThreshold, 'syncCorrThreshold', obj.Config.syncCorrThreshold, ...
-                'wireMode', obj.WireMode, 'vsaInput', inputKind, 'inputLock', lock, ...
-                'rawStreamLocks', obj.metaField(m, 'hostStreamLocks'), 'boardStreamLocks', obj.metaField(m, 'boardStreamLocks'), ...
-                'windowStart', obj.metaField(m, 'windowStart'), 'captureSha256', obj.metaField(m, 'captureSha256'), ...
-                'windowSha256', obj.metaField(m, 'windowSha256'), 'boardSelectS', obj.metaField(m, 'boardSelectS'), ...
-                'hostCheckS', obj.metaField(m, 'hostCheckS'), 'boundaryFree', obj.metaField(m, 'boundaryFree'), ...
-                'integrityReason', obj.metaField(m, 'integrityReason'));
-            if isempty(obj.Log), obj.Log = e; else, obj.Log(end+1) = e; end
-            fprintf('A2VSA seq=%d phase=%s input=%s age=%.2fs lock=%.3f/%.3f win=%d..%d vendorEVM=%.4f%% sync=%.4f guard=%d %s :: %s\n', ...
-                e.sequence, e.phase, inputKind, e.ageAtReceipt, lock, lockOther, w(1), w(end), r.evmPercent, sync, valid, ...
-                s.reason, r.status);
-            if strlength(string(obj.Config.logFile)) > 0
-                fid = fopen(obj.Config.logFile,'a'); fprintf(fid,'%s\n',jsonencode(e)); fclose(fid);
-            end
-        end
-
-        function setVsaIdle(obj, fn)
-            % App display watchdog run inside the owned session's polling loop.
-            assert(isempty(fn) || isa(fn, 'function_handle'), 'a2live:Config', 'VSA idle hook must be a function handle');
-            obj.VsaIdleFcn = fn;
-            if ~isempty(obj.Session) && isvalid(obj.Session) && isprop(obj.Session, 'IdleFcn')
-                obj.Session.IdleFcn = fn;
-            end
-        end
-
         function holdPrefetch(obj, tf)
             obj.PrefetchHold = logical(tf);
         end
 
         function tf = requestOutstanding(obj)
             tf = obj.Pending;
-        end
-
-        function s = vsaStatus(obj)
-            % Latest guarded native-VSA result for the UI: valid, state
-            % (idle/valid/unavailable/stale), source (LIVE HW / OFFLINE ...), reason, guarded evmPercent/evmDb,
-            % raw vendor values kept separately (vendorEvmPercent, vendorSync).
-            obj.updateStale();
-            s = obj.VsaState;
         end
 
         function close(obj)
@@ -526,11 +324,6 @@ classdef LegacyVsaBackend < handle
             obj.Client = []; obj.Stream = [];
             if ~isempty(obj.Control), delete(obj.Control); obj.Control=[]; end
             if ~isempty(obj.Display), delete(obj.Display); obj.Display=[]; end
-            try
-                if ~isempty(obj.Session) && isvalid(obj.Session), delete(obj.Session); end
-            catch
-            end
-            obj.Session = [];
         end
 
         function delete(obj)
@@ -576,56 +369,12 @@ classdef LegacyVsaBackend < handle
                 'jumpSizes', d(jumps), 'blockLen', L);
         end
 
-        function [win, note] = chooseWindow(obj, A)
-            N = numel(A.lock)*A.blockLen; L = A.blockLen; nb = N/L;
-            if A.medianLock < obj.Config.lockThreshold
-                win = (1:N).'; note = 'unlocked: whole capture from start (negative control), boundary unknown'; return
-            end
-            keep = true(1,nb); keep(A.boundaryBlocks) = false;
-            best = [0 0]; s0 = 0;
-            for j = 1:nb+1
-                if j <= nb && keep(j)
-                    if s0 == 0, s0 = j; end
-                elseif s0 > 0
-                    if j - s0 > best(2) - best(1), best = [s0 j]; end
-                    s0 = 0;
-                end
-            end
-            W = (best(2) - best(1)) * L;
-            if W < obj.Config.minWindow
-                error('a2live:Window','No boundary-free contiguous window >= %d (jumps %s)', ...
-                    obj.Config.minWindow, mat2str(A.jumps));
-            end
-            win = ((best(1)-1)*L + 1 : (best(2)-1)*L).';
-            unexpected = A.jumpSizes(abs(abs(A.jumpSizes) - (5*obj.Burst - obj.LOOP_N)) > 300);
-            note = sprintf('blocks %d..%d, jumps %s (sizes %s), wraps %s, excluded %s%s', best(1), best(2)-1, ...
-                mat2str(A.jumps), mat2str(round(A.jumpSizes)), mat2str(A.wraps), mat2str(A.boundaryBlocks), ...
-                repmat(' UNEXPECTED-JUMP', 1, ~isempty(unexpected) || numel(A.jumps) > 1));
-        end
-
-        function frame = replayFrame(obj, x, sequence, phase)
-            % Offline replay of a genuine stored capture (measured column only)
-            % through the same guard; no board. x = ADC counts, I - 1j*Q.
-            obj.SourceTag = "OFFLINE REPLAY - NOT LIVE";
-            if size(x,2) == 4
-                obj.LastMeasured4 = x/2^16; obj.LastMeasured = x(:,1)/2^16;
-            else
-                obj.LastMeasured = x(:)/2^16;
-            end
-            t = origapp.LegacyVsaBackend.now();
-            obj.LastFrameMeta = struct('timestamp', t, 'sequence', sequence, 'phase', phase, ...
-                'hostRequestSent', t, 'hostReceived', t, 'boardDelayS', 0, 'anchorTimestamp', NaN, ...
-                'requestBoundTimestamp', t);
-            frame = obj.LastFrameMeta;
-            obj.vsaSend(obj.LastMeasured);
-        end
-
         function A = hostWindowCheck(obj, X)
             % Independent host check of one v3 window (N-by-4, I - jQ counts):
             % per-stream wanted-reference block locks, and sample continuity of
             % the strongest stream by origapp.windowIntegrity (frame-timing
             % model; covers the first/last 8192-row blocks, fails closed where
-            % the data cannot show a wrap). Same orientation as vsaSend. The
+            % the data cannot show a wrap). The
             % 8192-block burst-phase jumps are kept only as a logged diagnostic:
             % they are burst-label ambiguous (live seq-25 false positive) and
             % blind inside the first/last block.
@@ -812,7 +561,6 @@ classdef LegacyVsaBackend < handle
             if kind == string(ifelse(v3, "END3", "END2"))
                 assert(seq == obj.ExpectedSeq, 'a2live:Sequence', 'END count %d differs from %d frames received', seq, obj.ExpectedSeq);
                 obj.Ended = true; obj.Pending = false; ended = true;
-                obj.updateStale(true);
                 return
             end
             % The codec is per frame (its magic): a reduced v3 window is sent raw
@@ -880,12 +628,10 @@ classdef LegacyVsaBackend < handle
                 w = reshape(w, 8, []).';
                 samples = w(:,1:2:7) - 1j*w(:,2:2:8);   % four measured streams, same capture rows
                 obj.LastMeasured4 = samples/2^16;
-                obj.LastMeasured = samples(:,1)/2^16;
             else
                 w = reshape(w, 2, []).';
                 samples = zeros(obj.N, 4);
                 samples(:,1) = w(:,1) - 1j*w(:,2);      % measured ADC_D; columns 2..4 placeholders
-                obj.LastMeasured = samples(:,1)/2^16;   % what the UI hands to vsaSend for ch 1
             end
             obj.LastReceiptPosix = received;
             frame = struct('samples', samples, 'timestamp', ts, 'sequence', seq, ...
@@ -923,15 +669,10 @@ classdef LegacyVsaBackend < handle
             obj.Delivered{end+1} = obj.LastFrameMeta;
             if numel(obj.Delivered) > 5000, obj.Delivered(1) = []; end   % bounded history
             % Prefetch: at most ONE outstanding request. The next capture starts
-            % now, so its transfer overlaps this frame's VSA processing; the
-            % board still acquires only on request and the timestamp is the
-            % capture time (an unread prefetched frame simply ages).
-            % Integrated analysis explicitly enables the same one-request pipeline.
-            % Native VSA waits until it has answered fast (last measurement < 1 s),
-            % so a prefetched frame does not age during VSA warm-up.
-            ready = obj.Config.prefetchWithoutVsa || ...
-                (~isempty(obj.Log) && obj.Log(end).elapsedSeconds < 1);
-            if obj.Config.prefetch && ~obj.PrefetchHold && ready && ...
+            % now, so its transfer overlaps this frame's processing; the board
+            % still acquires only on request and the timestamp is the capture
+            % time (an unread prefetched frame simply ages).
+            if obj.Config.prefetch && ~obj.PrefetchHold && ...
                     (obj.Metadata.continuous || seq + 1 < obj.Metadata.frames_planned)
                 obj.sendRequest();
             end
@@ -939,7 +680,7 @@ classdef LegacyVsaBackend < handle
 
         function logFrame(obj, frame, err)
             % One JSON record per received frame (accepted or not), before any
-            % Controller/plot/VSA step: host verdict, reasons and provenance.
+            % Controller/plot step: host verdict, reasons and provenance.
             if strlength(string(obj.Config.frameLogFile)) == 0, return; end
             e = rmfield(frame, intersect(fieldnames(frame), {'samples'}));
             e.receiveError = err;
@@ -1016,62 +757,9 @@ classdef LegacyVsaBackend < handle
             frame.hostCheckS = toc(t);
         end
 
-        function kind = classifyVsaInput(obj, x, info)
-            % v2: only the measured ADC_D stream. v3: a raw measured column of
-            % the last frame, or the app's combined output of that same frame.
-            if obj.WireMode ~= "window4"
-                assert(~isempty(obj.LastMeasured) && isequal(x, obj.LastMeasured), 'a2live:Channel', ...
-                    'vsaSend input is not the measured ADC_D stream (available channels [1 0 0 0])');
-                kind = "raw-ADC_D";
-                return
-            end
-            assert(~isempty(obj.LastMeasured4) && numel(x) == obj.N, 'a2live:Channel', ...
-                'vsaSend before a v3 frame or wrong length');
-            for k = 1:4
-                if isequal(x, obj.LastMeasured4(:,k)), kind = "raw-stream" + (k-1); return, end
-            end
-            assert(isstruct(info) && isfield(info,'kind') && any(string(info.kind) == ["combined","weighted-channel"]) && ...
-                isfield(info,'sequence') && isequal(info.sequence, obj.LastFrameMeta.sequence), 'a2live:Channel', ...
-                'vsaSend input is neither a measured stream nor the combined output of the current frame');
-            z = x == 0; run = 0; longest = 0;
-            for k = 1:numel(z)
-                if z(k), run = run + 1; longest = max(longest, run); else, run = 0; end
-            end
-            assert(longest < 256, 'a2live:Channel', 'Zero-padded VSA input refused (%d zero samples in a row)', longest);
-            kind = string(info.kind);
-        end
-
         function updateTheta(obj, bound, hostT)
             if ~isfinite(obj.ThetaLB) || bound >= obj.ThetaLB - obj.DRIFT*max(0, hostT - obj.ThetaLBHost)
                 obj.ThetaLB = bound; obj.ThetaLBHost = hostT;
-            end
-        end
-
-        function updateStale(obj, ended)
-            if nargin < 2, ended = false; end
-            if ~isfinite(obj.VsaState.timestamp) || obj.VsaState.state == "stale", return; end
-            age = origapp.LegacyVsaBackend.now() - obj.VsaState.timestamp;
-            if ended || age > obj.Config.staleSeconds
-                s = obj.VsaState;
-                s.valid = false; s.state = "stale"; s.evmPercent = NaN; s.evmDb = NaN;
-                if ended, s.reason = "stream ended: no fresh frame";
-                else, s.reason = sprintf('no fresh frame for %.1f s (> %g s)', age, obj.Config.staleSeconds); end
-                s.shortReason = "stale: no fresh frame";
-                s.updatedPosix = origapp.LegacyVsaBackend.now();
-                obj.VsaState = s;
-                obj.showStatus("RFSoC native VSA [" + obj.SourceTag + "] | STALE: " + s.reason + " | last display is NOT current");
-            end
-        end
-
-        function showStatus(obj, text)
-            text = string(text);
-            if strlength(text) > 200, text = extractBefore(text, 198) + ".."; end
-            obj.DisplayLog(end+1,1) = string(datetime('now','TimeZone','UTC','Format','HH:mm:ss.SSS')) + " " + text;
-            if ~obj.DisplaySupported || isempty(obj.Session) || ~isvalid(obj.Session), return; end
-            try
-                obj.Session.setDisplayStatus(text);
-            catch er
-                obj.DisplayLog(end+1,1) = "display error: " + string(er.message);
             end
         end
 

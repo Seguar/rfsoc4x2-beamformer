@@ -1,6 +1,6 @@
 # Standalone application
 
-`RFSoCBeamformer.exe` is the focused MATLAB interface ([GUI.md](GUI.md)) compiled
+`RFSoCBeamformer.exe` is the beamformer window ([GUI.md](GUI.md)) compiled
 with MATLAB Compiler. It needs no MATLAB licence, only the free
 [MATLAB Runtime R2025b](https://www.mathworks.com/products/compiler/matlab-runtime.html)
 for Windows. Download it from the repository's Releases page. Two builds are
@@ -14,7 +14,6 @@ for the launched process).
 |---|---|
 | `RFSoCBeamformer.exe` (double-click) | **Hardware session, board found automatically.** The search order is below. Needs the [board session service](BOARD_SERVICE.md), installed once. |
 | `RFSoCBeamformer.exe demo` | **Simulation, no hardware.** A synthetic four-element array receives the reference OFDM loop from a model angle that sweeps ±20°. The real session, DSP and view run on it. |
-| `RFSoCBeamformer.exe <frontend.json>` | **Hardware session owned by the launcher.** The JSON is the one `tools/run_original_vsa.py` writes; the launcher owns the board helper and its shutdown. |
 
 Board search, in this order; the first address whose service answers is used:
 
@@ -56,15 +55,6 @@ Optional name/value pairs:
 The first start takes longer while the runtime unpacks the application. The
 window has no console: a start-up failure opens a dialog and writes
 `%TEMP%\RFSoCBeamformer-error.log`.
-
-With the launcher instead of the board service, the compiled window replaces MATLAB:
-
-```powershell
-py -3 tools/run_original_vsa.py --config <private-config.json> --i-own-board --mode durable --max-seconds 1800 --standalone C:\path\RFSoCBeamformer.exe
-```
-
-The launcher needs its private configuration, board access and the `vsa_rfsoc`
-checkout.
 
 ## OFDM pilot MVDR
 
@@ -193,8 +183,7 @@ turning off zoom and pan saved under 4 ms per redraw and is not done.
 
 ## Limits
 
-- Windows x64 only, clean layout only. The legacy App Designer layout and the
-  native-VSA comparison need MATLAB.
+- Windows x64 only.
 - The Antenna Toolbox patch element cannot be deployed. The standalone uses
   isotropic model elements and adds `isotropic elements` to the scope label.
 - The simulation shows the processing chain on synthetic frames. It is not a
@@ -202,8 +191,8 @@ turning off zoom and pan saved under 4 ms per redraw and is not done.
 - The application packages the `vsa_rfsoc` processing functions, the matched
   OFDM setup file and the reference loop. It contains no credential, calibration
   or measurement; the only addresses in it are the two PYNQ defaults above.
-- The automatic hardware session uses isotropic model elements and the
-  common-feed diagnostic scope, as the launcher's `--standalone` path does.
+- The hardware session uses isotropic model elements and labels its angles as
+  the uncalibrated array model.
 
 ## Build
 
@@ -221,26 +210,10 @@ the `vsa_rfsoc/Functions` folder on the path; `validateStandaloneDemo` checks it
 
 ## Validation
 
-**Test / How:** `validateStandaloneDemo` runs the entry point from source in
-simulation mode and checks accepted frames, demodulation, that the model angle
-follows the simulated angle, the snapshot and refusal of bad arguments. The
-compiled v0.1.0 binary was then started twice on the MATLAB host: in simulation
-mode, and against the RFSoC4x2 with the existing board helper at the usual low
-DAC level.
-
-**Results:** from source the model angle matched the simulated angle within 1°
-at 0.45 % EVM. The compiled simulation run exited 0 and wrote its snapshot. The
-compiled hardware run exited 0 with 38 accepted frames and 4 logged rejections
-(stale or expired frames), wrote its snapshot, and the helper then cleared both
-DAC RAMs and commanded both outputs off without shutdown errors.
-
-**Conclusions / Ways to resolve:** the compiled window works with simulated and
-real board samples on the build host, which has MATLAB installed. A machine with
-only the MATLAB Runtime was not tested. The R2026a build also ran in simulation
-mode on a second Windows machine against its installed MATLAB R2026a, with no
-runtime: window up within about 3 minutes on first start, plots updating, no
-errors. The launcher's `--standalone` option was
-exercised only through its settings format, not by a full launcher run.
-
-The automatic board search and the board session service were validated
-separately; see [BOARD_SERVICE.md](BOARD_SERVICE.md).
+`matlab/original/tests/runSuite.m` runs the MATLAB checks without hardware,
+including `validateStandaloneDemo` (the entry point in simulation mode: accepted
+frames, demodulation, model angle against the simulated angle, snapshot, refused
+arguments). Every release is built with R2025b and R2026a and started on the
+laptop over USB against the board before it is published; the R2026a build also
+goes onto the board's USB drive. A PC with only the MATLAB Runtime runs the same
+build as one with MATLAB R2026a and `start.cmd`.

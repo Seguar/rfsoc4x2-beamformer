@@ -1,8 +1,8 @@
 # Board session service
 
 `RFSoCBeamformer.exe` starts a hardware session by itself when the RFSoC4x2 runs
-the session service (`board/session_service.py`). The service replaces the SSH
-launcher for this use: the application needs only a TCP connection to the board.
+the session service (`board/session_service.py`): the application needs only a
+TCP connection to the board.
 
 ## Install (once per board)
 
@@ -13,7 +13,8 @@ unit, `rfsoc4x2-beamformer.service`, enabled at boot. `/boot` is not written and
 boot overlay and waveform; the installer builds the DAC reference from
 `/boot/data.mat` on the board.
 
-With the private launcher configuration (PuTTY, see `examples/board.example.json`):
+With a private PuTTY configuration (JSON with `host`, `user`, `host_key` and
+`password_file`):
 
 ```sh
 python tools/install_board_service.py --config local/board.json
@@ -53,8 +54,8 @@ client network (see Access).
    It then sets PL clock 0 to 136.36 MHz (service option `--capture-clock-mhz`,
    0 keeps the overlay's 124.99875 MHz; a client may request another value with
    `capture_clock_mhz` in its start request). See "Capture sample loss" below.
-5. The application receives the stream port (4011) and control port (4012) and
-   runs as it does with the launcher ([BOARD_CONTROL.md](BOARD_CONTROL.md)).
+5. The application receives the stream port (4011) and control port (4012)
+   ([BOARD_CONTROL.md](BOARD_CONTROL.md)).
 6. When the window closes, the service stops the helper. The helper zeroes both
    DAC RAMs with readback and commands both outputs off; the application shows an
    error if the board does not confirm this. `bootpy.service` is started again
@@ -62,8 +63,8 @@ client network (see Access).
 
 The session connection is the owner of the helper. If the application crashes,
 the cable is pulled (TCP keepalive, about 8 s) or the service is stopped, the
-helper shuts down the same way. As with the launcher, the DAC-off record is a
-command and readback record, not an independent RF measurement.
+helper shuts down the same way. The DAC-off record is a command and readback
+record, not an independent RF measurement.
 
 ## Capture read time
 

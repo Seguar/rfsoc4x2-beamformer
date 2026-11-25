@@ -6,8 +6,8 @@ session over plain TCP. Installing is a one-time, persistent change on the board
 files in /opt/rfsoc4x2-beamformer, logs in /var/lib/rfsoc4x2-beamformer and one
 systemd unit. /boot is not written and bootpy.service is not changed.
 
-Access is the same private configuration the launcher uses (PuTTY), or an
-OpenSSH destination with key login:
+Access is a private PuTTY configuration (JSON: host, user, host_key, password_file,
+optionally plink/pscp paths), or an OpenSSH destination with key login:
 
   python tools/install_board_service.py --config local/board.json
   python tools/install_board_service.py --ssh <destination> --password-file <sudo password file>
@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -27,7 +28,17 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from tools.run_demo import executable
+
+def executable(config, key, default):
+    """PuTTY tool from the private config, PATH or its default install folder."""
+    value = config.get(key) or shutil.which(default)
+    if not value:
+        candidate = Path('C:/Program Files/PuTTY')/(default+'.exe')
+        value = str(candidate) if candidate.is_file() else None
+    if not value:
+        raise RuntimeError(f'Install PuTTY or set {key} in private config')
+    return value
+
 
 NAME = 'rfsoc4x2-beamformer'
 DEST = '/opt/' + NAME

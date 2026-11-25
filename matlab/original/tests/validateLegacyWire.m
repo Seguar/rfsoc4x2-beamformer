@@ -1,5 +1,6 @@
 function validateLegacyWire(fixtureDir)
-% Synthetic wire fixtures; no VSA/board. Exact reconstruction and bounded inflate.
+% Synthetic wire fixtures (tests/make_wire_fixtures.py); no board. Exact
+% reconstruction and bounded inflate.
 read=@(name)readBytes(fullfile(fixtureDir,name));
 raw=read('wire-raw.bin'); encoded=read('wire-valid.bin');
 actual=origapp.LegacyVsaBackend.decodeWire(encoded,numel(raw));

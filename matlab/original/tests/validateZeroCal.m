@@ -20,10 +20,10 @@ backend=struct('open',@()[],'close',@()[],'next',@nextFrame,'availableChannels',
     'send',@send,'capabilities',@()caps,'controlStatus',@status);
 c=origapp.defaultConfig();c.backend=backend;c.originalRepoPath=string(referenceRepo);
 c.visible=false;c.directOnly=false;c.dataChan=32768;c.ch=5;c.fc=3e9;c.fcAnt=3e9;c.fc_d0=3e9;c.fc_d1=3e9;
-c.elementModel="isotropic";c.analyzer="integrated";c.allowBoardCommands=true;c.dacPow=[1 0 0 0];
+c.elementModel="isotropic";c.allowBoardCommands=true;c.dacPow=[1 0 0 0];
 c.periodSeconds=.02;c.frameTimeoutSeconds=.01;
-c.vsaSetupFile=fullfile(referenceRepo,'Settings/ofdm_iq_100_16_4x2.setx');
-c.ofdm=struct('setupSha256',origapp.LegacyVsaBackend.sha256(c.vsaSetupFile), ...
+c.ofdmSetupFile=fullfile(referenceRepo,'Settings/ofdm_iq_100_16_4x2.setx');
+c.ofdm=struct('setupSha256',origapp.LegacyVsaBackend.sha256(c.ofdmSetupFile), ...
     'referenceMat',referenceMat,'orientation',"IplusjQ",'syncThreshold',.8);
 app=origapp.BeamformerApp(c);stop(app.AcqTimer);guard=onCleanup(@()delete(app));
 app.startAcquisition();stop(app.AcqTimer);

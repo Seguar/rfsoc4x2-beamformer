@@ -9,10 +9,10 @@ n=4096;rng(11);k=0;
 X={(randn(n,4)+1i*randn(n,4))*30, ...
    exp(1i*2*pi*0.0325*(0:n-1)')*exp(1i*[0 1 2 3])*3000+(randn(n,4)+1i*randn(n,4))*30};
 c=origapp.defaultConfig();c.originalRepoPath=string(referenceRepo);c.visible=false;c.directOnly=false;
-c.dataChan=n;c.ch=5;c.fc=5.2e9;c.fcAnt=5.2e9;c.elementModel="isotropic";c.analyzer="integrated";
+c.dataChan=n;c.ch=5;c.fc=5.2e9;c.fcAnt=5.2e9;c.elementModel="isotropic";
 c.bf='OFDM pilot MVDR';c.doa='MUSIC';c.num=1;c.ang_num=3;
-c.vsaSetupFile=fullfile(referenceRepo,'Settings/ofdm_iq_100_16_4x2.setx');
-c.ofdm=struct('setupSha256',origapp.LegacyVsaBackend.sha256(c.vsaSetupFile),'referenceMat',referenceMat, ...
+c.ofdmSetupFile=fullfile(referenceRepo,'Settings/ofdm_iq_100_16_4x2.setx');
+c.ofdm=struct('setupSha256',origapp.LegacyVsaBackend.sha256(c.ofdmSetupFile),'referenceMat',referenceMat, ...
     'orientation',"IplusjQ",'syncThreshold',.8);
 c.backend=struct('open',@()[],'close',@()[],'next',@next,'availableChannels',@()true(1,4));
 s=origapp.DemoSession(c);s.start();

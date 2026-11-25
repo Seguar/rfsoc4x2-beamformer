@@ -5,8 +5,6 @@ function report=RFSoCBeamformer(varargin)
 %                                   answers, a window asks for its IP address
 %                                   (or starts the simulation)
 %   RFSoCBeamformer demo            simulated four-element array, no hardware
-%   RFSoCBeamformer <settings.json> hardware session owned by the launcher
-%                                   tools/run_original_vsa.py (it writes the JSON)
 % Optional name/value pairs (text when deployed):
 %   board ADDRESS  skip the search and use this board address
 %   dialog off     never open the address window; fail instead (automation)
@@ -40,11 +38,9 @@ try
     end
     if any(strcmpi(mode,{'demo','--demo','-demo'}))
         report=runDemo(opt);
-    elseif strcmpi(mode,'auto')
-        report=runAuto(opt);
     else
-        assert(isfile(mode),'origapp:Standalone','Settings file not found: %s',mode);
-        report=runOriginalVsa(mode,opt);
+        assert(strcmpi(mode,'auto'),'origapp:Standalone','Unknown mode "%s" (no argument or demo).',mode);
+        report=runAuto(opt);
     end
 catch err
     text=getReport(err,'extended','hyperlinks','off'); %#ok<NASGU>
@@ -131,7 +127,7 @@ end
 
 function report=runBoard(session,opt)
 % Hardware session through the board service: the same reviewed four-stream
-% profile and session loop as the launcher path (runOriginalVsa), with the
+% profile and session loop (runSession), with the
 % session connection as the owner of the board helper.
 link=session.link;linkGuard=onCleanup(@()delete(link));
 [setx,ref]=origapp.demoResources();
@@ -156,21 +152,20 @@ fc=rf.rf_mhz*1e6;
 dacPow=[1 0 0 0];dphase=[0 0 0 0];
 if isfield(session.ready,'dac_power'),dacPow=double(reshape(session.ready.dac_power,1,[]));end
 if isfield(session.ready,'dac_a_phase_deg'),dphase(3)=double(session.ready.dac_a_phase_deg);end
-app=struct('frontend','clean','visible',true,'directOnly',false,'allowBoardCommands',true,'sendInitialTuning',false, ...
-    'da',2,'vsaSetupFile',setx,'vsa',1,'ch',5,'ang_num',3,'bf','OFDM pilot MVDR','plotMirror',1,'dataChan',32768,'fc',fc,'fc_d0',fc,'fc_d1',fc,'fcAnt',fc, ...
+app=struct('visible',true,'directOnly',false,'allowBoardCommands',true, ...
+    'da',2,'ofdmSetupFile',setx,'ch',5,'ang_num',3,'bf','OFDM pilot MVDR','plotMirror',1,'dataChan',32768,'fc',fc,'fc_d0',fc,'fc_d1',fc,'fcAnt',fc, ...
     'adcMirror',1,'nyquistZone',rf.adc_nyquist_zone,'nyquistZone_d0',rf.dac_nyquist_zone, ...
     'nyquistZone_d1',rf.dac_nyquist_zone,'dacPow',dacPow,'dphase',dphase,'fsRfsoc',125e6, ...
-    'staleSeconds',2,'periodSeconds',.005,'frameTimeoutSeconds',.05,'outputDir',out,'analyzer','integrated', ...
-    'cutterAllowed',false,'elementModel','isotropic', ...
+    'staleSeconds',2,'periodSeconds',.005,'frameTimeoutSeconds',.05,'outputDir',out, ...
+    'elementModel','isotropic', ...
     'arrayLabel',sprintf('common-feed diagnostic / array model (ULA d=lambda/2 @%g GHz) · isotropic elements',fc/1e9), ...
     'ofdm',struct('setupSha256',sha,'referenceMat',ref,'orientation','IplusjQ','syncThreshold',.8, ...
         'lockThreshold',.3,'staleSeconds',2));
 if ~isdeployed && isfolder(fullfile(fileparts(fileparts(setx)),'Functions')),app.originalRepoPath=fileparts(fileparts(setx));end
 backend=struct('host',host,'port',session.ready.stream_port,'referenceMat',ref,'orientation','IplusjQ', ...
-    'dllPath','unused-integrated','setupPath',setx,'setupSha256',sha,'vsaPort',60685,'visible',true, ...
-    'allowContinuous',true,'staleSeconds',2,'expectSource','rfsoc4x2-hardware','logFile','','rawDir','', ...
+    'allowContinuous',true,'staleSeconds',2,'expectSource','rfsoc4x2-hardware','rawDir','', ...
     'frameLogFile','','controlPort',session.ready.control_port,'controlLogFile',fullfile(out,'commands.jsonl'), ...
-    'wireMode','window4','prefetchWithoutVsa',true);
+    'wireMode','window4');
 if ~isempty(opt.record)
     % Diagnostics: every received window (raw int16), one JSON line per frame
     % from the receiver and one per demodulated buffer. Measurements: keep them
@@ -186,7 +181,7 @@ fid=fopen(settingsPath,'w');assert(fid>=0,'origapp:Standalone','Cannot write %s'
 fprintf(fid,'%s\n',jsonencode(settings));fclose(fid);
 failure=[];
 try
-    report=runOriginalVsa(settingsPath,opt);
+    report=runSession(settingsPath,opt);
 catch failure
     report=struct();
 end
@@ -202,13 +197,13 @@ function report=runDemo(opt)
 % Simulation only: synthetic frames through the real session, DSP and view.
 [setx,ref]=origapp.demoResources();
 cfg=origapp.defaultConfig();
-cfg.frontend="clean";cfg.visible=true;cfg.directOnly=false;cfg.allowBoardCommands=false;
+cfg.visible=true;cfg.directOnly=false;cfg.allowBoardCommands=false;
 cfg.dataChan=32768;cfg.ch=5;cfg.ang_num=3;cfg.fc=5.2e9;cfg.fcAnt=5.2e9;cfg.fc_d0=5.2e9;cfg.fc_d1=5.2e9;cfg.dacPow=[1 0 0 0];
 cfg.nyquistZone=1;cfg.nyquistZone_d0=2;cfg.nyquistZone_d1=2;cfg.adcMirror=1;
-cfg.elementModel="isotropic";cfg.analyzer="integrated";cfg.periodSeconds=.05;cfg.frameTimeoutSeconds=.05;
+cfg.elementModel="isotropic";cfg.periodSeconds=.05;cfg.frameTimeoutSeconds=.05;
 cfg.avg_factor=3;cfg.staleSeconds=5;
 cfg.arrayLabel='SIMULATION, no hardware / array model (ULA d=lambda/2 @5.2 GHz)';
-cfg.vsaSetupFile=setx;
+cfg.ofdmSetupFile=setx;
 cfg.ofdm=struct('setupSha256',origapp.LegacyVsaBackend.sha256(setx),'referenceMat',ref, ...
     'orientation',"IplusjQ",'syncThreshold',.8);
 if ~isdeployed,cfg.originalRepoPath=string(fileparts(fileparts(setx)));end

@@ -3,7 +3,7 @@ function [estimator, kind] = makeEstimator(doa, ula, scan_axis, num, fc, calibra
 % kind: "spectrum" -> [yspec, angles] = estimator(Rx)
 %       "angles"   -> angles = estimator(Rx); no spatial spectrum
 %       "manual"   -> numeric matrix used by the original manual MVDR loop
-% Differences from doaEst.m (documented in CONTROL_MAP.md):
+% Differences from doaEst.m:
 %  * 'WSFR' is listed in the original UI but commented out in doaEst, which
 %    then silently built an MVDR estimator. Here it builds the toolbox
 %    phased.RootWSFEstimator it names.

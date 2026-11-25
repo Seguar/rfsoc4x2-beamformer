@@ -1,190 +1,142 @@
 # RFSoC 4x2 beamformer
 
-Pilot-locked OFDM demodulation, frequency/phase tracking and four-channel
-adaptive combining for the RFSoC4x2. Uses the existing `doa_rfsoc/main` matched
-boot overlay and `vsa_rfsoc` sample conventions; no FPGA build is required.
+A four-element over-the-air receive beamformer for the AMD RFSoC 4x2 board. The
+board transmits an OFDM loop from its two DACs and captures four ADC streams from
+a patch array. A Windows application estimates the direction of arrival, forms the
+beam and demodulates the OFDM. It keeps working while a signal generator jams the
+array.
 
-**Current UI:** one focused [six-panel MATLAB window](docs/GUI.md): DOA, receive
-pattern, spectrum, time-domain I/Q, constellation and EVM in %/dB, with readout
-tiles (EVM, level, CFO, sync, bursts, rate), per-stream phase/level monitor,
-EVM per subcarrier, view-only hold, snapshot, event log and a live dark/light
-theme. Main RF controls
-and DSP options stay in a collapsible sidebar; unused/debug/device controls and
-separate measurement windows are removed from the default layout. The launcher
-defaults to `--layout clean --analyzer integrated`; native VSA is an optional
-separately labelled comparison. `--layout legacy` retains the earlier App Designer
-interface. The new GUI reuses the original refactor's guarded DSP/transport core.
+![The default window: simulated array, default settings, light theme](docs/img/interface.png)
 
-Sessions start at **5.2 GHz** by default (3 GHz on request); converter settings,
-the per-session DAC zone measurement and EVM numbers are in
-[docs/RF_PROFILES.md](docs/RF_PROFILES.md).
+*The default window, here on the built-in simulation (`RFSoCBeamformer.exe demo`), not hardware data.*
 
-A compiled [standalone application](docs/STANDALONE.md) is attached to the
-releases; it needs only the MATLAB Runtime. Started without arguments it finds
-the board on USB, then on Ethernet, and otherwise asks for its IP address; this
-needs the [board session service](docs/BOARD_SERVICE.md), installed once. It
-also has a built-in simulation mode.
+## Start
 
-![Synthetic fixture screenshot of the focused interface, not hardware data](docs/img/gui-dark-synthetic.png)
+1. Connect the board to the PC with USB. It appears as a network adapter and as a
+   drive named **PYNQ-USB**.
+2. Once per PC, install the MATLAB Runtime R2026a: run `setup.exe` in
+   `PYNQ-USB\MATLAB_Runtime_R2026a_Update_5_win64`. With MATLAB R2026a installed,
+   skip this and use `start.cmd` in the next step.
+3. Copy `PYNQ-USB\RFSoCBeamformer` to the PC and start `RFSoCBeamformer.exe`.
 
-ADC and DAC MTS now follow the installed library policy, with SYSREF on both
-active tile groups and a shared DAC-player/ADC capture start by default. See
-[synchronization details](docs/HARDWARE.md#shared-adcdac-synchronization).
+The application finds the board (USB first, then Ethernet, otherwise it asks for the
+address), starts a board session (about 10 s) and opens the window. Closing the
+window ends the session and switches the DAC outputs off. The same builds are on
+the [Releases](https://github.com/Seguar/rfsoc4x2-beamformer/releases) page;
+`RFSoCBeamformer.exe demo` runs without hardware. Options and limits:
+[docs/STANDALONE.md](docs/STANDALONE.md).
 
-Live MATLAB frequency/phase, pause/resume and selected-DAC controls use a separate
-[acknowledged command socket](docs/BOARD_CONTROL.md). Old buffered revisions are
-discarded. DOA and receive pattern remain explicitly uncalibrated common-feed
-model diagnostics in the current splitter wiring.
+## The window
 
-**Status: direct ADC_D capture and live demodulation demonstrated with waveform2.**
-One hundred live frames had zero bit errors and no pilot-lock failures; measured
-EVM median3.79%, maximum9.98%. Raw timing loss remains, so constant EVM is not
-claimed. Physical array beamforming and MXG rejection are still unvalidated.
-See [validation](docs/VALIDATION.md) and [agent instructions](AGENTS.md).
+From top to bottom:
 
-The [MATLAB + VSA refactor](docs/MATLAB_VSA.md) adds a readable MATLAB frontend,
-twelve beamformer choices and a hardware-independent legacy boot stream loop.
-All twelve MATLAB beamformer software checks pass. A fresh 100-frame MATLAB
-direct-cable run locked every frame with zero BER: EVM median 3.31% (−29.61 dB),
-maximum 8.30%. That MATLAB GUI session has ended. Matched offline VSA replay now passes with
-an explicit unclassified-status warning. The original-app native backend also
-demonstrated live synchronization with blank-input rejection; see its launch notes.
+- **Header:** Hide controls (F6), the session state (`LIVE`, `PAUSED`, `HELD`…), the
+  frame number and its age, **Hold** (F3, freezes the plots while the board keeps
+  streaming), **Snapshot** (F2, PNG and MAT of the shown frame), **Fit plots** (F5)
+  and the theme switch (F7).
+- **Readout tiles:** payload EVM in % and in dB, output level, carrier offset,
+  preamble sync peak, bursts (qualified / complete) and frames per second over the
+  last 5 s.
+- **Six plots:** DOA spectrum (**Mirror** button), receive pattern of the applied
+  weights, baseband spectrum (**Max hold**), time domain (I/Q waveform, or the phase
+  or level of each ADC stream), constellation (16-QAM payload, BPSK header, pilots)
+  and payload EVM (history, per subcarrier or per symbol; % or dB). Angles are
+  angles of the array model; the array is not calibrated.
+- **Controls** on the left. Always visible: Start / Pause (F8), **Output**, **Signal
+  priority**, **Beamformer**, **DOA estimator**, **Data amount**, **Set 0°** with
+  **Calibrate on**. Below them four pages:
+  - **DSP:** Source count (Auto / 1 / 2 / 3), scan width and step, frames averaged,
+    signal bandwidth, IQ and phase/power correction.
+  - **RF:** ADC and DAC centre frequencies and Nyquist zones, DAC power, DAC/ADC
+    sync mode, per-connector converter settings (mixer phase, gain, I/Q phase,
+    attenuator, DAC current).
+  - **Algorithms:** loading, uncertainty, iterations, mismatch angle and step, IQ
+    filter length and step.
+  - **Monitor:** level, phase and coherence of each ADC stream with its applied
+    weight, session counters, the OFDM profile and an event log.
+- **Footer:** the scope of the angles, the function keys and the lock state.
 
-**Connector correction:** this overlay's logical `dac0` is the printed **DAC_B**;
-`dac1` is DAC_A. Earlier DAC_A wording in direct-test descriptions was incorrect.
-The launcher defaults to DAC_B (`--dac-port B`); `--dac-port A` selects DAC_A.
-The user confirmed the current physical path is **DAC_B → 20 dB → ADC_D**;
-ADC_D is capture stream0. Current RX level/age are shown, and stale/unlocked data clears the
-current EVM instead of retaining a good historical number.
+Every frame the board sends is processed; the window redraws at most 10 times a
+second. A refused frame clears the current plots and names the reason. Details of
+every control: [docs/GUI.md](docs/GUI.md).
 
-The [real-time demo](docs/LIVE_DEMO.md) adds live fixed-versus-adaptive EVM,
-beamforming ON/OFF, broadside calibration and a moving-array simulation:
+### Start-up settings of a hardware session
 
-```sh
-python -m rfsoc_demo.live --simulate
-python -m rfsoc_demo.live --host BOARD_ADDRESS
-```
+| Setting | Value |
+|---|---|
+| Frequency | 5.2 GHz: ADC odd zone, DAC zone measured at every session start ([RF_PROFILES.md](docs/RF_PROFILES.md)) |
+| Transmitters | DAC_B and DAC_A, DAC_A mixer phase +20°, DAC peak code 24000, DACs start with each capture (DAC = ADC) |
+| FPGA image | `dmasync` (DMA capture, DAC starts synchronised to the RF clock) |
+| Output | Combined beam |
+| Signal priority | OFDM (tracked): the beam follows the direction that carries the OFDM preamble |
+| Beamformer | OFDM pilot MVDR (weights from the preamble and the gaps between bursts) |
+| DOA estimator | MVDR, source count 1, scan ±60° in 1° steps, 10 frames averaged |
+| Data amount | 4096 samples (one OFDM frame per capture, fastest) |
+| Display | Mirror on (angles as the antennas are mounted), light theme |
+| Calibration | none: press **Set 0°** with a common feed to align the ADCs |
 
-Target antenna silkscreen is 5.2 GHz; spacing and RF response are unmeasured.
-The current 2–4.2 GHz passives need replacement or characterization for that
-later antenna test. Initial conducted loopback and OTA validation are separate.
+## How it works
 
 ```text
-DAC0 ─┐
-      ZAPDQ-4 (90° hybrid) ── ZA4PD-4 ── ADC0, ADC1, ADC2, ADC3
-DAC1 ─┘                                  │
-                         pilot lock → MRC / MVDR → OFDM EVM + BER
+board (RFSoC 4x2, PYNQ)                                     PC (RFSoCBeamformer.exe)
+ DAC_B + DAC_A ─► TX patches ~~~ air ~~~ 4 RX patches ─► ADC_D,C,B,A (5 GS/s, NCO)
+ capture RAM ─DMA─► capture helper (window alignment) ─► session service
+        ─── USB or Ethernet: frames (4011), commands (4012), session (4013) ───►
+ controller (stream checks) ─► DOA + beamformer ─► OFDM demodulator ─► window
 ```
 
-This cable setup demonstrates calibrated coherent combining and signal tracking.
-The shared splitter gives both DACs the same receive steering vector. It cannot
-demonstrate an arrival angle or independently steer the two DAC sources. An MXG
-signal entering before the splitter shares that limitation. External interference
-needs a distinct spatial path for spatial rejection; frequency separation can
-instead support filtering. Ethernet control does not establish an RF connection.
+- **Board:** a systemd service ([docs/BOARD_SERVICE.md](docs/BOARD_SERVICE.md))
+  starts one session per connection. The capture helper loads the FPGA image,
+  synchronises the converters (MTS), plays the reference loop and sends four-stream
+  windows. Live commands use a separate socket ([docs/BOARD_CONTROL.md](docs/BOARD_CONTROL.md)).
+- **Application:** every window is checked on the host (stream locks, loop wrap,
+  sample continuity, window SHA-256). Lock is reported, never a reason to drop a
+  frame. The DOA estimators and beamformers come from the `vsa_rfsoc` processing
+  functions. The OFDM demodulator follows the pinned VSA setup file:
+  64-point FFT at 100 MHz (80 points at the 125 MS/s capture rate), training-based
+  frequency offset and channel estimate, pilot phase and timing tracking, EVM over
+  every complete burst.
 
-## Run the software demo
+## Repository
 
-Python 3.10+ on the host (Linux or Windows). No MATLAB licence is required.
+| Path | Contents |
+|---|---|
+| `matlab/standalone` | `RFSoCBeamformer.m` (entry point) and `buildStandalone.m` |
+| `matlab/original/app/+origapp` | the application: view, session, controller, board link, DSP, OFDM demodulator |
+| `matlab/original/tests` | MATLAB checks; `runSuite.m` runs them all |
+| `matlab/+rfsoc` | reviewed beamformer engine |
+| `board` | board side: session service, capture helper, control socket, MTS, OLED |
+| `tools` | service installer, reference builder, session client, slip scan, USB drive tools |
+| `tests` | Python tests, fake board stream and fake session service |
+
+Code map and checks: [matlab/README.md](matlab/README.md).
+
+## Build and test
+
+Python 3.10+ with numpy and scipy:
 
 ```sh
-python -m pip install -e .
-python -m unittest discover -s tests -v
-rfsoc-demo simulate --out out/simulation
-rfsoc-demo reference --out out/reference.npz
+LEGACY_SOURCE=<vsa_rfsoc>/Signals/dac_ofdm_f_500.mat python3 -m unittest discover -s tests
 ```
 
-Open `out/simulation/demo.png` and `metrics.json`. The plot compares single ADC,
-matched combining (MRC) and residual-covariance MVDR; the other panels show pilot
-frequency tracking and held-out payload constellations. The fixture varies CFO
-and capture delay across frames with a fixed, distinct-path CW interferer.
-The tests also check the collinear-path impossibility and receive conjugation.
+MATLAB R2025b or R2026a with the Phased Array System Toolbox (the RAB PC and DL ITER
+MVDR beamformers also need the Optimization Toolbox); MATLAB Compiler for the application. `legacy_ref125.mat` comes from
+`tools/legacy_reference.py`.
 
-Use `python -m rfsoc_demo.cli` instead of `rfsoc-demo` without installing.
-`simulate --shared-path` intentionally challenges acquisition with a strong
-collinear jammer; it may produce only unlocked frames and return failure.
-That is a useful negative control, not a promised working cancellation case.
-
-## Run on the board
-
-Follow [the hardware procedure](docs/HARDWARE.md). A bounded board capture stages
-the reference and helper in a new directory, takes exclusive control from the
-legacy service, verifies runtime rates, captures four ADCs, then disables both
-DACs with disable-command and direction-register records. These do not prove
-physical RF-off: AXI GPIO output DATA reads return zero. It changes volatile overlay/clock/RF settings and leaves
-the boot files intact. Do not run it beside the existing RF process.
-
-Analyze the returned capture on the laptop:
-
-```sh
-rfsoc-demo analyze local/capture.npz --out out/hardware
+```matlab
+addpath('matlab/original/tests');
+runSuite('<legacy_ref125.mat>','<vsa_rfsoc checkout>','<scratch folder>');
+addpath('matlab/standalone');
+buildStandalone('<vsa_rfsoc checkout>','<legacy_ref125.mat>','<build folder outside the repository>');
 ```
 
-Alternatively, `capture-legacy --host BOARD_ADDRESS` reads the existing continuous
-TCP stream. It does not upload this reference or retune the board, so a pilot lock
-requires the matching waveform already running. Its stop command has no ACK;
-RF-off must be checked separately through board access.
+Every release also goes onto the board's USB drive (`tools/usb_drive/update_app.py`).
 
-## Signal and metrics
+## References
 
-- ADC 125 Mcomplex/s; mode3 DAC input 500 Mcomplex/s: 10 GS/s / interpolation10 /
-  additional IMR2. Runtime checks include that extra stage. The old 1 Gcomplex/s
-  reference was incorrect; regenerate it. Fourier interpolation uses a 4:1 ratio.
-- A 4096-sample ADC period becomes 16384 complex DAC samples, repeated twice to
-  fill 32768 complex RAM samples / 65536 int16 words.
-  OFDM uses 256-point FFT, 64-sample cyclic prefix, 48 occupied bins, four training
-  symbols and eight QPSK payload symbols, with four phase pilots per payload symbol.
-- Pilot-only delay/CFO acquisition searches ±150 kHz and both conjugations.
-  Each triggered capture reacquires; there is no assumed continuous sample time.
-- Training fits the steering vector and residual covariance. Regularized MVDR
-  weights stay fixed through payload. Training also supplies per-bin equalization;
-  version2 payload pilots at FFT bins−21,−7,+7,+21 track common phase and timing
-  phase slope. Payload EVM and BER exclude pilots. Version1 used adjacent pilots
-  and common-phase tracking only; do not mix waveform versions.
-- EVM is reference RMS error, with training-derived gain. It is not WLAN-standard
-  compliance, decision-directed EVM, dBm, or a direct jammer-suppression measurement.
-  Initial receiver model assumes a flat spatial response over the occupied band.
+- [vsa_rfsoc](https://github.com/Seguar/vsa_rfsoc): the original MATLAB app, its
+  processing functions, the OFDM waveform and the VSA setup file.
+- [doa_rfsoc](https://github.com/Seguar/doa_rfsoc): the board's boot overlay
+  (`main`) and the DMA-capture FPGA images (`dma-capture`).
 
-## References and provenance
-
-- [vsa_rfsoc](https://github.com/Seguar/vsa_rfsoc), reference commit
-  `94145663665da25ba1d7dd4b74ce8878d8b49960`: `Functions/tcpDataRec.m`
-  (eight int16 lanes, I − jQ), `Functions/sigPrepare.m` (TX I + jQ), MVDR work.
-- [doa_rfsoc/main](https://github.com/Seguar/doa_rfsoc/tree/main), reference commit
-  `6759b3916d7bddb18e998c2734a1db0d9d88efc4`: matched boot wrapper/hardware
-  and `runtime/rfsoc4x2/manifest.json`. These assets are not copied here.
-- [ZAPDQ-4 datasheet](https://www.minicircuits.com/pdfs/ZAPDQ-4.pdf): 2–4.2 GHz,
-  two-way 90° hybrid; calibrate relative DAC phase rather than assuming zero.
-- [ZA4PD-4+ datasheet](https://www.minicircuits.com/pdfs/ZA4PD-4%2B.pdf):
-  2–4.2 GHz, four-way nominal 0° splitter.
-
-Instrument endpoints, credentials and raw measurements stay in ignored `local/`.
-The AD936x bridge MXG interface is a reference for explicit VISA/SCPI control;
-this demo does not enable or reconfigure the MXG automatically.
-
-Direct cable milestone: acquired and streamed actual ADC_A samples with no
-digital rail hits. Distributed timing pilots reduced the measured EVM excursions:
-bounded30frames median/max3.49/8.89%; live100frames3.79/9.98%, allzeroBER. Raw
-sample loss still persists. The factory lower-rate profile was incompatible with
-this overlay; original500/500MHz clocks remain the validated operating profile.
-
-For a repeatable direct-cable session on the laptop, copy
-`examples/board.example.json` to ignored `local/board.json`, fill in private board
-address, pinned host key and retained password-file path, then run:
-
-```sh
-python tools/run_demo.py --config local/board.json
-```
-
-This launcher stages and verifies a fresh reference/helper, starts the board
-session and opens live ADC_A EVM. Closing the display disconnects acquisition and
-requests DAC shutdown; private output contains the shutdown manifest. The boot
-service remains stopped. See LIVE_DEMO.md for the finite headless check and limits.
-
-
-The MATLAB frontend also shows a selectable Beamscan/MVDR/MUSIC DOA spectrum,
-pilot-based wanted-DAC angle, and the normalized receive pattern of the selected
-weights versus the frozen baseline. Set measured `spacingM` and correct `fcHz`
-(or supply a calibrated manifold) before array mode. These are geometry-model
-plots, not measured antenna radiation patterns; direct-cable mode leaves them
-unavailable. Loss of lock or stale capture clears current spatial plots.
+Addresses, credentials, calibration files and measurements stay out of this repository.

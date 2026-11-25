@@ -1,8 +1,8 @@
 classdef Controller < handle
     %CONTROLLER Owns the injected backend, the board-command queue, frame
-    % freshness and the bounded error policy for VSA_rfsoc_refactor_exported.
-    % It never opens a socket, VSA or instrument by itself: all I/O goes
-    % through the injected backend (BACKEND_CONTRACT.md).
+    % freshness and the bounded error policy of the app.
+    % It never opens a socket or instrument by itself: all I/O goes
+    % through the injected backend (matlab/README.md).
 
     properties (Constant)
         DEAD_STREAM_DB = -20   % unlocked stream this far below the median = dead (reported only)
@@ -189,24 +189,13 @@ classdef Controller < handle
             end
         end
 
-        function s = vsaStatus(obj)
-            % Optional backend op: latest guarded native-VSA result
-            % (valid, reason, evmPercent...). [] when the backend has none.
-            % sendVsa returning true only means the hook exists.
-            s = [];
-            if obj.hasBackend() && origapp.Controller.hasOp(obj.Backend, "vsaStatus")
-                s = obj.Backend.vsaStatus();
-            end
-        end
-
         function c = capabilities(obj)
-            % Optional backend op (VSA_rfsoc_new port). Declares which new
-            % commands/operations the backend really supports; nothing is
-            % assumed from the board name or a network address.
-            %   commands        string array of command verbs it accepts
-            %   txArrayElements DAC channels usable as one steerable TX array
-            %   uploadDac       true when uploadDacWaveform(port, int16) exists
-            c = struct('commands', strings(1,0), 'txArrayElements', 0, 'uploadDac', false, 'display', strings(1,0));
+            % Optional backend op. Declares which board commands the backend
+            % really supports; nothing is assumed from the board name or a
+            % network address.
+            %   commands  string array of command verbs it accepts
+            %   display   display-only commands (board OLED: evm, doa)
+            c = struct('commands', strings(1,0), 'display', strings(1,0));
             if obj.hasBackend() && origapp.Controller.hasOp(obj.Backend, "capabilities")
                 d = obj.Backend.capabilities();
                 assert(isstruct(d), 'origapp:Capabilities', 'capabilities() must return a struct.');
@@ -216,9 +205,6 @@ classdef Controller < handle
                 end
                 c.commands = reshape(string(c.commands), 1, []);
                 c.display = reshape(string(c.display), 1, []);
-                assert(isscalar(c.txArrayElements) && c.txArrayElements >= 0 && ...
-                    islogical(c.uploadDac) && isscalar(c.uploadDac), 'origapp:Capabilities', ...
-                    'capabilities(): txArrayElements >= 0 and logical uploadDac expected.');
             end
         end
 
@@ -239,19 +225,9 @@ classdef Controller < handle
         end
 
         function [ok, reason] = queueChecked(obj, command)
-            % Queue a VSA_rfsoc_new command only if the policy allows it.
+            % Queue a board command only if the policy allows it.
             [ok, reason] = origapp.commandPolicy(string(command), obj.capabilities());
             if ok, obj.queue(command); end
-        end
-
-        function uploadDac(obj, port, interleaved)
-            c = obj.capabilities();
-            assert(c.uploadDac && origapp.Controller.hasOp(obj.Backend, "uploadDacWaveform"), ...
-                'origapp:Unsupported', ['DAC waveform upload is not provided by this backend ' ...
-                '(capabilities().uploadDac=false); the file was prepared only.']);
-            assert(obj.Config.allowBoardCommands, 'origapp:Unsupported', ...
-                'DAC waveform upload held: cfg.allowBoardCommands=false.');
-            obj.Backend.uploadDacWaveform(string(port), interleaved);
         end
 
         function n = expectedSamples(obj)
@@ -260,31 +236,6 @@ classdef Controller < handle
 
         function setDataChan(obj, n)
             obj.Config.dataChan = n;
-        end
-
-        function sent = sendVsa(obj, buffer, info)
-            % Native VSA feed is backend-owned (a2). Returns false when absent.
-            % info (optional): what the buffer is (kind "combined" / "weighted-
-            % channel", frame sequence, weights) so the backend labels the VSA
-            % input truthfully; raw measured columns need no info.
-            sent = origapp.Controller.hasOp(obj.Backend, "vsaSend");
-            if ~sent, return, end
-            if nargin < 3 || isempty(info) || ~isobject(obj.Backend)
-                obj.Backend.vsaSend(buffer);
-            else
-                obj.Backend.vsaSend(buffer, info);
-            end
-        end
-
-        function setVsaIdle(obj, fn)
-            % Optional: a backend whose native VSA call blocks may run fn while
-            % it waits (display age watchdog). Backends without it ignore it.
-            if origapp.Controller.hasOp(obj.Backend, "setVsaIdle"), obj.Backend.setVsaIdle(fn); end
-        end
-
-        function done = vsaReset(obj, request)
-            done = origapp.Controller.hasOp(obj.Backend, "vsaReset");
-            if done, obj.Backend.vsaReset(request); end
         end
 
         function recordSuccess(obj)

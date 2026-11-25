@@ -1,5 +1,5 @@
 function validateWindowAdmission()
-% Controller admission independent of VSA enable; no board, UI or VSA.
+% Controller admission of the boundary flag; no board or UI.
 cfg=origapp.defaultConfig(); cfg.directOnly=false; cfg.dataChan=16;
 cfg.outputDir=string(tempname); mkdir(cfg.outputDir);
 folderGuard=onCleanup(@()rmdir(cfg.outputDir,'s')); %#ok<NASGU>
@@ -13,7 +13,7 @@ for k=1:2
         if k==1, rejected=strcmp(e.identifier,'origapp:Boundary');
         else, rejected=strcmp(e.identifier,'origapp:Channels'); end
     end
-    assert(rejected,'Invalid boundary flag admitted to DOA with VSA disabled.');
+    assert(rejected,'Invalid boundary flag admitted to DOA.');
 end
 [f,~]=c.acquire(); assert(f.boundaryFree && f.sequence==3,'Clean recovery failed.');
 assert(~c.recordFailure(MException('origapp:NoSignal','missing stream')) && ...

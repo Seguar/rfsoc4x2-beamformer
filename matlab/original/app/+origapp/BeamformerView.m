@@ -221,7 +221,6 @@ classdef BeamformerView < handle
                     obj.tile('sync',sprintf('%.2f',analysis.syncPeak),sub,'warn');
                 end
             end
-            obj.showVendor(obj.field(s,'vendor',[]),seq);
             obj.showRate();
             obj.LastSequence=seq;
             obj.holdLimits();
@@ -258,7 +257,6 @@ classdef BeamformerView < handle
             obj.timeNote(0,NaN);
             obj.tile('rx','—','','idle');
             obj.showChannels([],[]);
-            obj.showVendor([],NaN);
             if reason~=obj.LastReason
                 obj.FramesCleared=obj.FramesCleared+1;
                 obj.logEvent("display cleared · "+reason);obj.LastReason=reason;
@@ -343,9 +341,9 @@ classdef BeamformerView < handle
             stamp=char(datetime('now','Format','yyyyMMdd_HHmmss_SSS'));
             base=fullfile(folder,['rfsoc4x2_' stamp]);
             data=obj.LastData;
-            settings=obj.Accepted;drop={'phase1','phase2','phase3','phase4','phaseKind','CompareVsa','bwMHz','bw','dac','analyzer'};
+            settings=obj.Accepted;drop={'phase1','phase2','phase3','phase4','phaseKind','bwMHz','bw','dac'};
             settings=rmfield(settings,drop(isfield(settings,drop)));
-            settings.bwHz=obj.field(obj.Config,'bw',NaN);settings.analyzer=char(string(obj.field(obj.Config,'analyzer','')));
+            settings.bwHz=obj.field(obj.Config,'bw',NaN);
             settings.dacEnabled=logical(obj.Controls.Dac.Value);settings.phases=obj.PhaseValues;
             settings.theme=obj.ThemeName; %#ok<STRNU>
             history=struct('sequence',obj.HistorySequence,'evmPercent',obj.HistoryEvm, ...
@@ -456,7 +454,7 @@ classdef BeamformerView < handle
                 'evmDb','EVM (dB)','Same payload EVM in dB; header and pilot EVM below'; ...
                 'rx','OUTPUT LEVEL','Mean level of the analysed output buffer; highest raw ADC peak below'; ...
                 'cfo','CARRIER OFFSET','Median training-based CFO; pilot timing drift along the burst in ppm (a slip indicator in shared-clock loopback)'; ...
-                'sync','SYNC PEAK','Best preamble correlation in this buffer (own metric 0..1, not the vendor sync quantity) and median training-row SNR estimate'; ...
+                'sync','SYNC PEAK','Best preamble correlation in this buffer (own metric 0..1) and median training-row SNR estimate'; ...
                 'bursts','BURSTS','Qualified / complete bursts in this buffer; clean-only EVM is the secondary metric'; ...
                 'rate','DISPLAY RATE','Fresh frames received by the display per second (also while held); acquisition counters of this session'};
             for k=1:size(spec,1),obj.buildTile(kg,spec{k,1},spec{k,2},spec{k,3});end
@@ -813,7 +811,7 @@ classdef BeamformerView < handle
                 'the tone then reads at 0°, so feed it to every ADC the same way (common feed).']);
             obj.Controls.ZeroSource.Layout.Row=7;obj.Controls.ZeroSource.Layout.Column=2;
             if ~obj.has('zero'),obj.Controls.Zero.Enable='off';obj.Controls.ZeroSource.Enable='off';obj.Controls.ZeroState.Text='needs board control';end
-            d=obj.controlGrid(dsp,{20,28,28,28,28,28,22,24,24,24,24});
+            d=obj.controlGrid(dsp,{20,28,28,28,28,28,22,24,24,24});
             obj.heading(d,1,'RECEIVE PROCESSING');
             obj.sourceCountButtons(d,2,obj.field(obj.Config,'num',1));
             obj.number(d,3,'Scan width','scan_bw',obj.field(obj.Config,'scan_bw',120),[2 360],true,'%g°');
@@ -832,9 +830,6 @@ classdef BeamformerView < handle
             if isempty(obj.field(cal,'steeringCorrection',[])) || isempty(obj.field(cal,'powCalibration',[]))
                 obj.Controls.phComp.Enable='off';obj.Controls.phComp.Tooltip='Load matching steering and power calibration tables first.';
             end
-            obj.Controls.CompareVsa=obj.checkbox(d,11,'Compare with native VSA','CompareVsa',string(obj.field(obj.Config,'analyzer','integrated'))~="integrated",false);
-            obj.Accepted.analyzer=obj.Controls.CompareVsa.Value;
-            obj.Controls.CompareVsa.ValueChangedFcn=@(h,~)obj.compareVsa(h);
             % --- Algorithms -------------------------------------------------
             a=obj.controlGrid(advanced,{20,28,28,28,28,28,28,6,22,28,28,44});
             obj.heading(a,1,'BEAMFORMER PARAMETERS');
@@ -850,7 +845,7 @@ classdef BeamformerView < handle
             note=uilabel(a,'Text','Only supported processing options are shown. RF changes reset current measurements.', ...
                 'WordWrap','on','FontSize',10,'FontColor',th.dim,'VerticalAlignment','top');note.Layout.Row=12;note.Layout.Column=[1 2];
             % --- Monitor ----------------------------------------------------
-            m=obj.controlGrid(mon,{20,100,38,20,32,28,44,20,'1x',28});
+            m=obj.controlGrid(mon,{20,100,38,20,32,44,20,'1x',28});
             obj.heading(m,1,'RECEIVE STREAMS · RAW CAPTURE');
             tg=uigridlayout(m,[5 6],'ColumnWidth',{34,'1x','1x','1x','1x','1x'},'RowHeight',repmat({'1x'},1,5), ...
                 'RowSpacing',2,'ColumnSpacing',4,'Padding',[0 0 0 0],'BackgroundColor',th.panel);
@@ -873,15 +868,13 @@ classdef BeamformerView < handle
             obj.heading(m,4,'SESSION');
             obj.Monitor.counts=uilabel(m,'Text','No frame displayed yet','WordWrap','on','FontSize',11,'FontColor',th.muted, ...
                 'VerticalAlignment','top');obj.Monitor.counts.Layout.Row=5;obj.Monitor.counts.Layout.Column=[1 2];
-            obj.Controls.Vendor=uilabel(m,'Text','Native VSA comparison —','WordWrap','on', ...
-                'FontColor',th.muted,'FontSize',11,'VerticalAlignment','top');obj.Controls.Vendor.Layout.Row=6;obj.Controls.Vendor.Layout.Column=[1 2];
             obj.Controls.Profile=uilabel(m,'Text','OFDM profile · awaiting data','WordWrap','on', ...
-                'FontColor',th.muted,'FontSize',10,'VerticalAlignment','top');obj.Controls.Profile.Layout.Row=7;obj.Controls.Profile.Layout.Column=[1 2];
-            obj.heading(m,8,'EVENT LOG');
+                'FontColor',th.muted,'FontSize',10,'VerticalAlignment','top');obj.Controls.Profile.Layout.Row=6;obj.Controls.Profile.Layout.Column=[1 2];
+            obj.heading(m,7,'EVENT LOG');
             obj.Monitor.log=uitextarea(m,'Editable','off','Value',{'(no events yet)'},'FontSize',10, ...
                 'BackgroundColor',th.bg,'FontColor',th.muted,'WordWrap','on');
-            obj.Monitor.log.Layout.Row=9;obj.Monitor.log.Layout.Column=[1 2];
-            obj.Controls.ClearHistory=obj.button(m,10,'Clear histories',@(~,~)obj.clearHistory());
+            obj.Monitor.log.Layout.Row=8;obj.Monitor.log.Layout.Column=[1 2];
+            obj.Controls.ClearHistory=obj.button(m,9,'Clear histories',@(~,~)obj.clearHistory());
             obj.Controls.ClearHistory.Tooltip='Forget the EVM and per-stream histories, max hold and rate estimate';
             obj.phaseKind();
             if isfield(obj.Config,'ofdmProfile'),obj.Controls.Profile.Text=obj.profileText(obj.Config.ofdmProfile);end
@@ -1014,10 +1007,6 @@ classdef BeamformerView < handle
         end
         function bandwidth(obj,h)
             obj.configure('bw',h.Value*1e6,h);obj.band();
-        end
-        function compareVsa(obj,h)
-            mode='integrated';if h.Value,mode='both';end
-            obj.configure('analyzer',mode,h);
         end
         function valueAction(obj,name,h,value)
             old=~logical(h.Value);
@@ -1714,18 +1703,6 @@ classdef BeamformerView < handle
             if numel(obj.EventLog)>80,obj.EventLog(81:end)=[];end
             if isfield(obj.Monitor,'log') && isvalid(obj.Monitor.log)
                 obj.Monitor.log.Value=obj.EventLog(:);
-            end
-        end
-        function showVendor(obj,v,seq)
-            if ~isstruct(v) || ~isfield(v,'valid') || ~v.valid
-                obj.put(obj.Controls.Vendor,'Native VSA — no current measurement');
-                obj.setp(obj.Controls.Vendor,'FontColor',obj.Theme.muted);
-            elseif ~isfield(v,'sequence') || v.sequence~=seq
-                obj.put(obj.Controls.Vendor,'Native VSA — waiting for this frame');
-                obj.setp(obj.Controls.Vendor,'FontColor',obj.Theme.muted);
-            else
-                obj.put(obj.Controls.Vendor,sprintf('Native VSA comparison: %.2f%% / %.1f dB',v.evmPercent,20*log10(v.evmPercent/100)));
-                obj.setp(obj.Controls.Vendor,'FontColor',obj.Theme.ok);
             end
         end
         function text=profileText(obj,p)

@@ -1,15 +1,13 @@
-# MATLAB to RFSoC4x2 live control
+# Live board control
 
-The original-app launcher enables a separate command socket for `window4` sessions.
+Every board session has a separate command socket next to the four-stream data socket.
 It remains responsive while IQ data is being captured, transmitted or paused. This
 uses the legacy command names from the MATLAB/ZCU216 interface with the 4x2's own
 wrapper and channel indexing. No ZCU216 overlay or burst commands are used.
 
-The data port continues to carry framed IQ. The control port defaults to data port
-plus one; private configuration may set `control_port`. `--no-board-controls`
-retains acquisition-only operation. Direct ADC_D/v2 mode remains acquisition-only.
-Startup does not send frequency tuning. The UI's initial frequency, Nyquist zones
-and selected-DAC mask match the launcher's initial 3 GHz setup.
+The data port (4011) carries framed IQ; the control port is the data port plus
+one (4012). The application sends no frequency command at start: its RF page
+starts from the frequency, Nyquist zones and DACs the board reports.
 
 ## Supported commands
 
@@ -32,6 +30,7 @@ and selected-DAC mask match the launcher's initial 3 GHz setup.
 | `diqphase p0/x/p2/x` | DAC QMC I/Q phase correction, hundredths of a degree |
 | `dvop c0/x/c2/x` | DAC output current, µA (2250..40500) |
 | `evm e` | Display only: the app's EVM for the board OLED, hundredths of a percent (0..100000, −1 = none). No converter is touched and the settings revision is kept. Listed in the header as `display_controls` |
+| `doa a` | Display only: the beam direction for the board OLED, hundredths of a degree (99999 = none); sent with `evm` as `evm e#doa a` |
 
 The path settings (`again` … `dvop`) are kept by the board helper and written
 again after `fc`, `phase` and `dphase`, because the board wrapper rewrites QMC
@@ -42,11 +41,11 @@ ADC_B 6 dB attenuation −6.00 dB on ADC_B only, DAC_B gain 1.00 and half curren
 about −6 dB on all streams. The wrapper's own `phase` command re-synchronises the
 tiles, which moved tile 226 against tile 224 by 144° in one test; use `phasec`.
 
-The current four-stream profile has 32768 complex rows per channel (`dataChan
-262144` lane words). Changing frame size requires a compatible profile and a new
-session; the UI field is disabled. Automatic ADC calibration, waveform upload,
-ZCU216 `stream`/`dacbf`, gain and IQ-offset commands are not supported by this
-session. They are explicitly rejected; automatic calibration's button is disabled.
+A full four-stream window has 32768 complex rows per channel (`dataChan 262144`
+lane words); `dataChan` selects one of the reduced sizes the stream declares
+(`window_rows_allowed`: 4096, 8192, 16384). Automatic ADC calibration, waveform
+upload and the ZCU216 `stream`/`dacbf` commands are not supported and are
+explicitly rejected.
 
 The trigger in this bitstream also enables both DAC players. Therefore `dacPow`
 OFF zeroes the selected waveform RAM with readback before acknowledgement; ON
@@ -81,7 +80,7 @@ closes the control connection and requires a session restart.
 Private runs save applied acknowledgements to `commands.jsonl`, per-frame
 revisions to `frames.jsonl`, and failures to `errors.jsonl`. Board manifests retain
 the command history. The control endpoint shares the session lifetime: owner loss,
-expiry or closing the original app clears both DAC RAMs and commands outputs off.
+expiry or closing the application clears both DAC RAMs and commands outputs off.
 
 ## Validation
 

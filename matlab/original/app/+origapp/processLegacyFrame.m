@@ -1,9 +1,9 @@
 function out = processLegacyFrame(rawData, p)
 %PROCESSLEGACYFRAME DOA + beamforming of one N-by-4 frame, ported from the
 % rfsocBf.m revision the original app was written against (vsa_rfsoc commit
-% 45e726b, 2025-01-14: 29-argument call, no 'num'). TCP receive and VSA send
-% are removed: frames come from the injected backend, VSA output is returned
-% as out.vsaBuffer for the backend's vsaSend.
+% 45e726b, 2025-01-14: 29-argument call, no 'num'). Frames come from the
+% injected backend; the beamformed output is returned as out.outputBuffer
+% for the OFDM analyzer.
 %
 % Original silent failures are explicit errors here (identifier origapp:*),
 % so the caller clears the current DOA/pattern instead of looping silently.
@@ -26,7 +26,7 @@ function out = processLegacyFrame(rawData, p)
 % out.iqFilter returns the updated adaptive filter state.
 
 out = struct('yspec',[],'estimated_angle',[],'anglePowerDb',[],'angleSync',[],'wantedConfident',false,'bfSig',[],'weights',[], ...
-    'rawData',[],'vsaBuffer',[],'spectrumAvailable',false,'engine',string(p.bfEngine), ...
+    'rawData',[],'outputBuffer',[],'spectrumAvailable',false,'engine',string(p.bfEngine), ...
     'iqFilter',[],'corrections',strings(1,0));
 assert(size(rawData,2)==4, 'origapp:Frame', 'Need N-by-4 data.');
 p = withDefaults(p);
@@ -278,7 +278,7 @@ out.angleSync = angleSync;
 out.bfSig = bfSig;
 out.weights = weights;
 out.rawData = rawData;
-out.vsaBuffer = buff;
+out.outputBuffer = buff;
 end
 
 function weights = originalWeights(rawData, estimated_angle, npc, p)

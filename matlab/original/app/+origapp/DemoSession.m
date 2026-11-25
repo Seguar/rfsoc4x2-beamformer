@@ -49,11 +49,8 @@ classdef DemoSession < handle
                 addpath(fullfile(cfg.originalRepoPath,'Functions'));
             end
             if ~isdeployed && strlength(string(cfg.reviewedPath))>0,addpath(cfg.reviewedPath);end
-            % Integrated metrics define the plotted constellation/EVM. Vendor
-            % measurements are an optional separately labelled comparison.
-            if string(obj.Config.analyzer)=="vsa",obj.Config.analyzer="both";end
             obj.Controller=origapp.Controller(obj.Config);
-            obj.Analyzer=origapp.OfdmAnalyzer(obj.Config.ofdm,obj.Config.vsaSetupFile,obj.Config.fsRfsoc);
+            obj.Analyzer=origapp.OfdmAnalyzer(obj.Config.ofdm,obj.Config.ofdmSetupFile,obj.Config.fsRfsoc);
             obj.IqFilter=zeros(cfg.sizeL,4);
             obj.Params=obj.parameters(obj.Config);obj.resetAverage();
             obj.FullRows=obj.Config.dataChan;obj.Rows=obj.FullRows;
@@ -198,13 +195,11 @@ classdef DemoSession < handle
             end
             allowed=["ch","bf","doa","num","ang_num","scan_bw","scan_res","avg_factor","diag", ...
                 "alpha","gamma","iter","mis_ang","alg_scan_res","bw","adIQcomp","IQcomp","sizeL", ...
-                "stepMU","phComp","analyzer"];
+                "stepMU","phComp"];
             if isfield(delta,'rows')
                 n=delta.rows;delta=rmfield(delta,'rows');
                 assert(isnumeric(n) && isscalar(n) && any(n==obj.rowsAllowed()),'origapp:Config', ...
                     'Data amount must be one of %s samples.',mat2str(obj.rowsAllowed()));
-                assert(n==obj.FullRows || string(obj.Config.analyzer)=="integrated",'origapp:Config', ...
-                    'The native VSA comparison needs the full frame; switch it off first.');
                 if obj.Controller.IsOpen,obj.applyRows(n);end
                 obj.Rows=n;
                 if isempty(fieldnames(delta))
@@ -243,8 +238,6 @@ classdef DemoSession < handle
                 next.alg_scan_res>=lim.alg_scan_res(1) && next.alg_scan_res<=lim.alg_scan_res(2),'origapp:Config', ...
                 'Bandwidth, mismatch angle or algorithm step outside the accepted range.');
             assert(next.bw>0 && next.bw<=next.fsRfsoc,'origapp:Config','Bandwidth must fit the receive sample rate.');
-            assert(string(next.analyzer)=="integrated" || obj.Rows==obj.FullRows,'origapp:Config', ...
-                'The native VSA comparison needs the full frame; set the data amount to full first.');
             m=obj.Controller.availableChannels();
             assert(isscalar(next.ch) && next.ch==fix(next.ch) && next.ch>=1 && next.ch<=5 && ...
                 ((next.ch<=4 && m(next.ch)) || (next.ch==5 && ~next.directOnly && all(m))), ...
@@ -305,7 +298,7 @@ classdef DemoSession < handle
                     out=origapp.processLegacyFrame(frame.samples,p);
                     if out.wantedConfident,obj.WantedAngle=out.estimated_angle(1);end
                     assert(all(isfinite(out.weights)),'origapp:NoSignal','No finite beamforming weights.');
-                    obj.IqFilter=out.iqFilter;buffer=out.vsaBuffer;angles=out.estimated_angle;anglePow=out.anglePowerDb;weights=out.weights;
+                    obj.IqFilter=out.iqFilter;buffer=out.outputBuffer;angles=out.estimated_angle;anglePow=out.anglePowerDb;weights=out.weights;
                     if out.spectrumAvailable
                         [ds,obj.SpectrumAverage]=avgData(out.yspec(:),obj.SpectrumAverage);
                         ds=ds/max(ds);
@@ -323,7 +316,7 @@ classdef DemoSession < handle
                     'scan',obj.Params.scan_axis,'doaSpectrum',ds,'patternDb',pat,'angles',angles,'anglePowerDb',anglePow, ...
                     'angleSync',angleSyncOf(out),'tracked',~isempty(out) && obj.Config.ang_num==3 && ~out.wantedConfident, ...
                     'beamformer',string(obj.Config.bf),'sourceCount',sourceCountOf(out), ...
-                    'samples',displaySamples,'weights',weights,'analysis',r,'spectrum',r.spectrum,'vendor',[], ...
+                    'samples',displaySamples,'weights',weights,'analysis',r,'spectrum',r.spectrum, ...
                     'fsHz',obj.Config.fsRfsoc,'directOnly',obj.Config.directOnly, ...
                     'channels',origapp.DemoSession.channelDiagnostics(frame));
                 if obj.Config.phComp,obj.Last.scope=string(obj.Config.arrayLabel)+", MODEL CALIBRATION";
@@ -335,11 +328,6 @@ classdef DemoSession < handle
                 main=NaN;if ~isempty(angles),main=angles(1);end
                 if logical(obj.Config.plotMirror),main=-main;end   % as the plots show it
                 obj.Controller.showEvm(r.evmPercent,main);
-                if any(string(obj.Config.analyzer)==["vsa","both"])
-                    weights=[];if ~isempty(out),weights=out.weights;end
-                    info=struct('kind',kind,'sequence',frame.sequence,'channel',obj.Config.ch,'weights',weights);
-                    obj.Controller.sendVsa(buffer,info);obj.Last.vendor=obj.Controller.vsaStatus();
-                end
                 assert(origapp.Controller.nowSeconds()-frame.timestamp<=obj.Config.staleSeconds, ...
                     'origapp:Expired','Frame expired during processing.');
                 obj.Controller.recordSuccess();

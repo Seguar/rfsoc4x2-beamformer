@@ -1,17 +1,16 @@
 function report=validateDemoSession(referenceMat,referenceRepo,outDir)
-% Synthetic reference IQ, no hardware, sockets or real VSA.
+% Synthetic reference IQ, no hardware or sockets.
 if ~isfolder(outDir),mkdir(outDir);end
 addpath(fullfile(referenceRepo,'Functions'));
 d=load(referenceMat);x=d.ref125(1:32768);rng(20261116);
-q={};closed=0;sends={};vendorBuffers={};shown={};shownAngle={};showFails=false;
+q={};closed=0;sends={};shown={};shownAngle={};showFails=false;
 backend=struct('open',@()[],'close',@closeBackend,'next',@nextFrame, ...
-    'availableChannels',@()true(1,4),'send',@send,'vsaSend',@sendVsa,'showEvm',@showEvm, ...
-    'vsaStatus',@()struct('valid',true,'evmPercent',9,'sequence',2));
+    'availableChannels',@()true(1,4),'send',@send,'showEvm',@showEvm);
 c=origapp.defaultConfig();c.backend=backend;c.originalRepoPath=string(referenceRepo);
 c.visible=false;c.directOnly=false;c.dataChan=32768;c.ch=5;c.fc=3e9;c.fcAnt=3e9;
-c.elementModel="isotropic";c.analyzer="integrated";c.periodSeconds=.02;c.frameTimeoutSeconds=.01;
-c.vsaSetupFile=fullfile(referenceRepo,'Settings/ofdm_iq_100_16_4x2.setx');
-c.ofdm=struct('setupSha256',origapp.LegacyVsaBackend.sha256(c.vsaSetupFile), ...
+c.elementModel="isotropic";c.periodSeconds=.02;c.frameTimeoutSeconds=.01;
+c.ofdmSetupFile=fullfile(referenceRepo,'Settings/ofdm_iq_100_16_4x2.setx');
+c.ofdm=struct('setupSha256',origapp.LegacyVsaBackend.sha256(c.ofdmSetupFile), ...
     'referenceMat',referenceMat,'orientation',"IplusjQ",'syncThreshold',.8);
 figures0=numel(findall(groot,'Type','figure'));timers0=numel(timerfindall);
 assert(isequal(origapp.DemoSession.mixerPhaseCode([-180 180 179.999 -90 90 540 12.345]), ...
@@ -49,14 +48,12 @@ try,s.configure(struct('doa','MVDRman'));catch e,refused=string(e.identifier)=='
 assert(refused && strcmp(s.Config.doa,old));
 refused=false;try,s.configure(struct('IQcomp',true));catch e,refused=string(e.identifier)=='origapp:Calibration';end
 assert(refused);
-s.configure(struct('analyzer','both'));enqueue(2,0,true);s.step();a=s.snapshot();
-assert(a.valid && numel(vendorBuffers)==1 && isequal(conj(vendorBuffers{1}),a.samples), ...
-    'Vendor and integrated display must use the same physical buffer.');
+enqueue(2,0,true);s.step();a=s.snapshot();assert(a.valid);
 enqueue(3,3,true);s.step();a=s.snapshot();assert(~a.valid && s.Controller.TotalErrors==1);
 enqueue(4,0,true);s.step();a=s.snapshot();assert(a.valid);
 % backend lock missing on every stream: reported, still shown (2026-11-24)
 enqueue(5,0,false);s.step();a=s.snapshot();assert(a.valid && s.Controller.NoSignalFrames==0);
-s.configure(struct('bf','DL MVDR','diag',1e-6,'analyzer','integrated'));
+s.configure(struct('bf','DL MVDR','diag',1e-6));
 enqueue(6,0,true);same=q{1};s.step();a=s.snapshot();assert(a.valid);w1=a.weights;
 s.configure(struct('diag',1e6));same.sequence=7;q={same};s.step();a=s.snapshot();assert(a.valid);
 assert(norm(w1-a.weights)>1e-5,'Loading control did not reach the reviewed DSP engine.');
@@ -148,8 +145,8 @@ for k=402:409,enqueue(k,3,true);s.step();a=s.snapshot();assert(~a.valid && s.Con
 assert(s.Controller.ExpiredFrames==e0+8 && s.Controller.ConsecutiveErrors==0);
 enqueue(410,0,true);s.step();a=s.snapshot();assert(a.valid,'No recovery after stale frames: %s',string(a.reason));
 s.close();delete(s);assert(closed==1);
-% Full clean frontend uses one figure and one timer, no hidden legacy app.
-closed=0;c.analyzer="integrated";c.allowBoardCommands=true;
+% The app uses one figure and one timer.
+closed=0;c.allowBoardCommands=true;
 app=origapp.BeamformerApp(c);assert(numel(findall(groot,'Type','figure'))==figures0+1);
 assert(numel(timerfindall)==timers0+1 && isempty(sends));
 app.Controller.open();enqueue(5,0,true);app.tick();
@@ -187,8 +184,6 @@ assert(isempty(V.Error.Text) && app.Session.Rows==4096 && ~app.Session.BoardRows
 enqueue(8,0,true);app.tick();a=app.Session.snapshot();
 assert(a.valid && numel(a.samples)==4096 && a.analysis.valid && a.analysis.metricBursts==1, ...
     'Reduced frame must hold one complete OFDM frame: %s',jsonencode(struct('n',numel(a.samples),'state',string(a.analysis.state),'reason',string(a.analysis.reason),'bursts',a.analysis.metricBursts)));
-refused=false;try,app.Session.configure(struct('analyzer','both'));catch e,refused=string(e.identifier)=='origapp:Config';end
-assert(refused,'Native VSA comparison must need the full frame.');
 % Every frame is processed and recorded; the window is redrawn at most every
 % displayPeriodSeconds (0.1 s): the EVM history stays per frame, without false gaps.
 pause(.25);acc0=app.Controller.FramesAccepted;shown0=app.View.FramesShown;
@@ -230,7 +225,6 @@ disp('DEMO_SESSION_COMPLETE');
     end
     function closeBackend(),closed=closed+1;end
     function send(line),sends{end+1}=line;end
-    function sendVsa(z),vendorBuffers{end+1}=z;end
     function showEvm(v,angle)
         shown{end+1}=v;shownAngle{end+1}=angle;
         if showFails,error('test:display','display failed');end

@@ -23,7 +23,7 @@ def main():
     with tempfile.TemporaryDirectory() as state:
         args = svc.parser().parse_args(['--root', str(ROOT/'tests'), '--state', state, '--bind', a.bind,
                                         '--port', str(a.port), '--helper', 'fake_session_helper.py',
-                                        '--board-name', 'RFSoC4x2', '--start-timeout', '20'])
+                                        '--board-name', 'RFSoC4x2', '--start-timeout', '20', '--overlay', 'boot'])
         pre = dict(board='RFSoC4x2', machine='aarch64', busy=[], bootpy='failed', ports_taken=[], hashes=dict(svc.EXPECTED))
         service = svc.Service(args, preflight_fn=lambda ports: pre, networks_fn=lambda: [], systemctl=lambda *x: None).start()
         print('FAKE session service (no hardware) on %s:%d' % (a.bind, service.port), flush=True)

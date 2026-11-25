@@ -15,7 +15,6 @@ SPEC = importlib.util.spec_from_file_location('session_service', ROOT/'board/ses
 svc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(svc)
 sys.path.insert(0, str(ROOT))
-from tools.run_demo import EXPECTED
 from tools.legacy_reference import SOURCE_SHA
 
 
@@ -26,8 +25,9 @@ def good(**changes):
 
 
 class PolicyTests(unittest.TestCase):
-    def test_expected_assets_match_the_launcher(self):
-        self.assertEqual(svc.EXPECTED, {**EXPECTED, '/boot/data.mat': SOURCE_SHA})
+    def test_expected_assets_include_the_source_waveform(self):
+        self.assertEqual(svc.EXPECTED['/boot/data.mat'], SOURCE_SHA)
+        self.assertEqual(set(svc.EXPECTED), {'/boot/doa_mts.py', '/boot/doa_mts.bit', '/boot/doa_mts.hwh', '/boot/data.mat'})
 
     def test_peers(self):
         attached = [ipaddress.ip_network('198.51.100.64/26')]
@@ -231,10 +231,6 @@ class SessionTests(unittest.TestCase):
         ns3 = {}
         exec(src[src.index('REFERENCE_PEAK = '):src.index('\n', src.index('DAC_PEAK_MAX = '))], ns3)
         self.assertEqual(ns3['DAC_PEAK_MAX'], svc.DAC_PEAK_MAX)
-        launcher = (ROOT/'tools/run_original_vsa.py').read_text()
-        ns2 = {}
-        exec(launcher[launcher.index('RF_ZONES = '):launcher.index('\n', launcher.index('RF_ZONES = '))], ns2)
-        self.assertEqual(ns2['RF_ZONES'], {k: (v['adc_zone'], v['dac_zone']) for k, v in svc.RF_PROFILES.items()})
 
     def test_refusals(self):
         self.pre = good(busy=['18 1 S python3 -m ipykernel_launcher'])

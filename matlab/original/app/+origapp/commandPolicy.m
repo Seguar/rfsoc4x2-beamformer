@@ -5,8 +5,7 @@ function [ok, reason] = commandPolicy(command, capabilities)
 %
 % * ZCU216-only VSA_rfsoc_new commands (on-board DAC beamforming 'dacbf',
 %   'dacbfcorr' and the burst request 'stream N') are always refused on the
-%   RFSoC4x2: they need the ZCU216 overlay/notebook and are rejected by the
-%   staged 4x2 legacy parser (board/legacy_server.py).
+%   RFSoC4x2: they need the ZCU216 overlay/notebook.
 % * Other commands introduced by VSA_rfsoc_new ('dgain','again','diqphase',
 %   'aiqphase') are refused unless the injected backend declares them in
 %   capabilities().commands. No current 4x2 backend declares them; the

@@ -1,197 +1,141 @@
-# Focused MATLAB interface
+# The beamformer window
 
-The default launcher layout is one resizable window, in the light theme unless
-`theme dark` is given (the theme button or F7 switches it live): a header with the
-acquisition state, a row of readout tiles, six measured views and a control
-sidebar. The six views are DOA spectrum, receive pattern, baseband spectrum,
-time domain, constellation and payload EVM. All panels use the same admitted
-capture and the selected combined/channel buffer.
+One resizable window, light theme by default (`theme dark` at start, or F7 / the
+theme button live): a header, a row of readout tiles, six plots and a control
+sidebar. All plots show the same captured frame. The code is
+`origapp.BeamformerView` (drawing only) on top of the headless `origapp.DemoSession`.
 
-## Readouts
+## Header
 
-Seven tiles show numbers the analyzer and session already compute; none is new
-DSP. A coloured edge marks state only (green current, amber quality-flagged, red
-near full scale, grey no current value).
+- **☰ Controls / Hide controls** (F6) shows or hides the sidebar.
+- The state pill: `LIVE`, `HELD`, `PAUSED`, `WAITING`, `STALE`, `NO DATA`,
+  `STOPPED` or `IDLE`, then the frame number and its age.
+- **Hold** (F3) freezes the plots on the current frame while the board keeps
+  streaming. An invalid frame releases the hold and clears the display, so a held
+  frame never hides a refused one. **Pause** (F8, sidebar) stops the board stream.
+- **Snapshot** (F2) writes a PNG of the window and a MAT file with the shown frame,
+  the accepted settings, the histories and the event log. Snapshots are
+  measurements: keep them out of the repository.
+- **Fit plots** (F5) restores the default limits and resets max hold. The view
+  holds axis limits between redraws and changes them only when the data leaves
+  them; a zoom or pan stays until Fit plots.
+- **Dark / Light** (F7) switches the theme in place.
+
+## Readout tiles
+
+A coloured edge marks the state: green current, amber quality-flagged, red near
+full scale, grey no current value.
 
 | Tile | Value | Second line |
 |---|---|---|
-| Payload EVM | primary EVM, all complete bursts, % | median / max of the retained history |
-| EVM (dB) | same metric in dB | header and pilot EVM |
-| Output level | mean level of the analysed buffer, dBFS | highest raw ADC peak; count of samples at full scale |
-| Carrier offset | median training CFO | pilot timing drift along the burst, ppm |
-| Sync peak | own preamble correlation, 0..1 | median training-row SNR estimate |
-| Bursts | qualified / complete | clean-only EVM (secondary metric) |
-| Display rate | fresh frames drawn per second | accepted / rejected acquisition counters |
-
-In the shared-clock loopback the timing drift is a slip indicator, not an
-oscillator offset. The sync peak is this repository's metric, not the vendor's.
+| Payload EVM | primary EVM over every complete burst, % | median / max of the history |
+| EVM (dB) | the same in dB | header and pilot EVM |
+| Output level | mean level of the analysed buffer, dBFS | highest raw ADC peak |
+| Carrier offset | median training frequency offset | pilot timing drift, ppm |
+| Sync peak | preamble correlation, 0..1 | training-row SNR |
+| Bursts | qualified / complete | EVM of the qualified bursts only |
+| Display rate | frames processed per second over the last 5 s | accepted / rejected frames |
 
 ## Plots
 
-- **DOA spectrum / receive pattern** carry a permanent `MODEL` badge and dashed
-  markers labelled `model x°` at the estimated angles. They are array-model
-  quantities; no beamwidth, null depth or gain number is derived.
-- **Baseband spectrum** shades the configured signal bandwidth, reports the 99 %
-  power width and has an optional **Max hold** trace (reset by Fit plots, a
-  cleared display or Clear histories).
-- **Time domain** draws a min/max envelope per display bin, so no peak is lost to
-  decimation, with markers at detected burst starts (green complete and
-  qualified, amber flagged or incomplete). Its selector switches to **Stream
-  phase** or **Stream level**: frame-to-frame history of each raw receive stream
-  against the first measured one. This is the view for checking ADC alignment
-  after an initialization; it describes the conducted path, not arrival angles.
-- **Constellation** separates payload, header and pilots by colour and shape over
-  ideal 16QAM rings and decision boundaries.
-- **Payload EVM** has a **% / dB** switch for the graph (the same stored values,
-  20·log10) and a selector: **History** (ringed points were quality-flagged, the
-  dotted line is the median, and the line is broken wherever an acquisition was
-  rejected or skipped), **Per subcarrier** or **Per symbol** of the current frame.
+- **DOA spectrum** and **Receive pattern** carry a `MODEL` badge: they are
+  quantities of the array model (uniform line, half a wavelength, isotropic
+  elements), not calibrated directions. Markers name the beam direction and the
+  other sources with their level. **Mirror** shows angle → −angle (as the antennas
+  are mounted); it changes the display and the board OLED only.
+- **Baseband spectrum** shades the signal bandwidth; **Max hold** keeps the
+  per-bin maximum.
+- **Time domain:** the selected output as a min/max envelope with burst starts
+  (green complete, amber flagged), or **Stream phase** / **Stream level**: the
+  frame-to-frame history of each ADC stream against ADC_D.
+- **Constellation:** 16-QAM payload, BPSK header and pilots over the ideal points.
+- **Payload EVM:** **History** (ringed points were flagged; the line breaks where
+  frames were refused), **Per subcarrier** or **Per symbol** of the current frame;
+  **%** / **dB**.
 
-A rejected, stale or paused acquisition blanks the current plots and writes the
-reason inside each one; the EVM history stays and is labelled history only.
-
-## Header actions
-
-- **Hold** (F3) freezes the plots on the current frame for inspection while the
-  board keeps streaming. The state pill, status line and window title say `HELD`
-  / `NOT LIVE`, and any invalid acquisition releases the hold and clears the
-  display, so a held frame can never mask a rejected one. Pause, by contrast,
-  stops the board stream.
-- **Snapshot** (F2) writes a PNG of the window and a MAT file with the displayed
-  snapshot struct, accepted settings, histories and event log. It goes to
-  `<outputDir>/snapshots` when the launcher sets an output folder, otherwise to a
-  folder chosen once. Snapshots are measurements: keep them out of the repository.
-- **Fit plots** (F5) restores default limits; F6 toggles the sidebar, F8 pauses.
-- **Light / Dark** (F7) switches the theme live; `cfg.theme` selects the start-up
-  theme. Every object is recoloured in place, nothing is rebuilt.
+A refused, stale or paused frame blanks the current plots and writes the reason in
+each. The EVM history stays and is marked as history.
 
 ## Sidebar
 
-Always visible above the pages, as in the original GUI: Start/Pause, then
-**Output** (combined beam, or one ADC: ADC_D, ADC_C, ADC_B, ADC_A), **Signal
-priority** (strongest or weaker source), **Beamformer**, **DOA estimator**, **Data
-amount** and **Set 0°**.
+Always visible:
 
-Receive streams 0..3 are ADC_D, ADC_C, ADC_B and ADC_A (tile 224 blocks 0/1, tile
-226 blocks 0/1, as the RFSoC 4x2 manual rev A5 and the PYNQ base design name
-them); the order was checked on the board by turning one ADC mixer phase at a time.
-DAC index 0 is DAC_B (tile 228), index 2 DAC_A (tile 230).
+| Control | Choices | Hardware default |
+|---|---|---|
+| Start / Pause | start the session; stop and resume the board stream | running |
+| Output | Combined beam, or one ADC (ADC_D, ADC_C, ADC_B, ADC_A) | Combined beam |
+| Signal priority | OFDM (tracked), Strongest, Weaker | OFDM (tracked) |
+| Beamformer | Without, Steering, OFDM pilot MVDR, MVDR, DMR, PC, PC_corr, LCMV, RVL, RAB PC, DL MVDR, DL ITER MVDR, QCB | OFDM pilot MVDR |
+| DOA estimator | MVDR, MUSIC, Beamscan, MUSICR, ESPRITE, ESPRITEBS, WSFR, MVDRman, MVDRman_corr | MVDR |
+| Data amount | 4096, 8192, 16384 or 32768 samples per frame | 4096 |
+| Set 0° | common-feed calibration of the ADC phases and gains | not calibrated |
+| Calibrate on | OFDM (wideband), CW tone | OFDM |
 
-**Set 0°** is the common-feed calibration: every ADC receives the same splitter
-output, so ADC_C, ADC_B and ADC_A are brought to ADC_D in phase (ADC mixer phase
-offsets, written on the running NCOs without re-synchronising the tiles) and level
-(QMC gains; the weakest ADC keeps gain 1.99). It measures six frames, corrects,
-repeats once and checks; the state next to the button shows the residual. The
-array model then reads the loopback signal at 0°. The converters are synchronised
-again at every session start and frequency change, which moves the phase between
-tile 224 and tile 226, so calibrate after each of them (the label says so). On the
-board the residual stayed within 0.6° and 0.06 dB over 30 s.
+**OFDM (tracked)** points the beam at the direction whose signal carries the OFDM
+preamble, whatever its power; **Strongest** and **Weaker** rank directions by the
+power of a beam steered to each (Weaker refuses a scene with one source).
+**OFDM pilot MVDR** takes the array response to the wanted signal from the
+preamble and the noise and interference covariance from the quiet gaps around each
+burst; without a usable preamble it uses the steering vector for that frame. The
+other adaptive beamformers use the preamble-measured signature when the beam is on
+the OFDM.
 
-**Data amount** sets the samples per frame: 32768 (full, checked), 16384, 8192
-or 4096 (one complete OFDM frame, fastest). With the board service a reduced
-amount is sent by the board (`dataChan`), uncompressed and with a cheap window
-choice: the window starts 256 samples before an OFDM frame, after the first
-12288 rows of the capture, where the shared player/capture start puts the loop
-wrap. The host then checks every stream against the transmitted loop at both
-ends of the window; it does not search the rows between them for a wrap or a
-lost sample as it does for the full window. Without the board command
-(simulation, an older service) the full frame is cropped on the host to the same
-layout. The native VSA comparison needs the full frame.
+**Data amount:** the board sends fewer rows per frame for a higher frame rate;
+4096 samples hold one complete OFDM frame. A reduced window is checked against the
+transmitted loop at both ends; the full 32768-row window also gets the complete
+continuity check.
 
-Four pages, switched by the segmented control:
+**Set 0°** needs every ADC fed from the same source. It sets the ADC mixer phases
+and gains until ADC_C, ADC_B and ADC_A match ADC_D (six frames, twice, then a
+check) and shows the residual. The converters re-synchronise at every session
+start and frequency change, so calibrate again after each. **CW tone** calibrates
+on the strongest spectral line instead, for a CW fed to every ADC.
 
-- **DSP** (first page): source count, scan width/step, averaging, filter
-  bandwidth, IQ and phase/power correction, and an optional native-VSA comparison.
-- **RF:** the original System-tab converter controls: ADC center, even Nyquist
-  zone and mirror; DAC B and DAC A centers with their even Nyquist zones (one
-  Apply sends the `fc` command); power of DAC B and DAC A (`dacPow`; both play the
-  same waveform and add in the combiner); **SYNC** (`da`: DAC = ADC, DAC = DAC,
-  free running); calibration-file loading; and the original **channel control**:
-  one Setting list with a field per connector for ADC/DAC mixer phase (0.01°),
-  ADC/DAC gain (QMC, 0–1.99), ADC/DAC I/Q phase (QMC, ±26.49°), ADC attenuator
-  (0–27 dB) and DAC output current (2.25–40.5 mA). The fields start from the
-  values the board reports (the board starts with ADC phases −90/−90/90/90). The
-  board helper keeps these settings and writes them again after every frequency
-  or legacy phase command, because the board wrapper resets QMC gain to 1.99 and
-  the DAC current to its maximum then. An older board helper offers only integer
-  mixer phases. An Apply
-  button is highlighted while its fields differ from the last values the board
-  accepted.
-- **Algorithms:** diagonal/robust loading, uncertainty, iteration count, mismatch
-  width/step and IQ filter length/step. Reviewed-engine parameter controls map to
-  the actual processing fields; changing loading is covered by a weight-change test.
-- **Monitor:** per-stream table (level, phase and coherence against the first
-  measured stream, applied weight in dB and degrees), acquisition counters by
-  rejection type, native-VSA comparison, OFDM profile and a time-stamped event log
-  of state changes, applied or refused controls and quality-flagged frames.
+### DSP page
 
-A refused control restores the previous value and shows the reason in the
-sidebar, the status line and the event log.
+| Control | Default |
+|---|---|
+| Source count: Auto, 1, 2, 3 | 1 (Auto counts sources on every frame and shows `Auto · n`) |
+| Scan width / scan step | 120° / 1° |
+| Average frames | 10 |
+| Signal bandwidth | 100 MHz |
+| Adaptive IQ correction, static IQ correction | off |
+| Phase / power correction | off (needs loaded steering and power tables) |
 
-Correction modes requiring data refuse activation until their filter or matching
-calibration exists. RF/phase changes clear model calibration and plot averaging.
-Automatic ADC calibration (`cal`), the separate `sync` command, ZCU216 controls,
-device/Arduino/generator launchers, raw commands, debug switches, converter
-clocks, cutter, waveform upload and duplicate plot windows are omitted from this
-layout.
+### RF page
 
-At normal desktop sizes the plots use three columns of stacked pairs: receive
-pattern under the DOA spectrum, time domain under the baseband spectrum and
-payload EVM under the constellation. Medium windows
-use two columns; compact/short windows scroll rather than clip the plots, and the
-tiles wrap to two rows. Controls can be collapsed. Every axes has zoom/pan/data
-tips; **Fit plots** restores limits, including constellation outliers. All curves,
-markers and labels are persistent objects updated per acquisition, with no
-interpolated or duplicate measurement frames; switching a plot mode creates none.
+ADC centre frequency, even Nyquist zone and Mirror (negative ADC mixer frequency);
+DAC B and DAC A centre frequencies with their even Nyquist zones; **Apply
+frequency** sends one `fc` command. DAC B power and DAC A power; **SYNC**: DAC = ADC
+(the DACs play during each capture), DAC = DAC, free running. Converter paths: one
+setting list (ADC/DAC mixer phase in 0.01°, ADC/DAC gain 0–1.99, ADC/DAC I/Q phase,
+ADC attenuator 0–27 dB, DAC current 2.25–40.5 mA) with a field per connector and
+**Apply**. **Load calibration…** reads steering and power tables. The fields start
+from the values the board reports; an Apply button is highlighted while its fields
+differ from what the board accepted. RF and phase changes clear the 0° calibration
+and the averaging.
 
-```powershell
-py -3 tools/run_original_vsa.py --config <private-config.json> --i-own-board --layout clean --mode durable --max-seconds 1800
-```
+Streams 0..3 are ADC_D, ADC_C, ADC_B and ADC_A (RFSoC 4x2 manual rev A5; checked by
+turning one ADC mixer phase at a time). DAC index 0 is DAC_B, index 2 DAC_A.
 
-`clean` is the default. `--layout legacy` keeps the earlier original App Designer
-interface available. The new view is code-based MATLAB (`BeamformerView`), backed
-by a headless `DemoSession`; it does not instantiate a hidden old GUI. The legacy
-`.mlapp` and matching export remain unchanged. Both layouts share the guarded
-`Controller`, `LegacyVsaBackend`, `processLegacyFrame` and `OfdmAnalyzer` core.
-The clean view always plots integrated OFDM metrics. `--analyzer both` or `vsa`
-adds a separately labelled vendor comparison; native-only operation remains in
-the legacy layout.
+### Algorithms page
 
-The acquisition format, thresholds and primary-EVM definition are unchanged.
-Invalid/stale captures clear all current plots and values. OFDM-only failures
-clear constellation/current EVM while admitted waveform/spatial diagnostics can
-remain. Pause and applied settings clear current data immediately. Closing the
-window closes its backend and releases the launcher's board session.
+Diagonal loading, uncertainty, robust loading γ, iterations, mismatch angle,
+algorithm step, IQ filter length and LMS step. The limits are the ones the session
+accepts (`origapp.processingLimits`).
 
-## Validation
+### Monitor page
 
-**Test / How:** synthetic GUI/session fixtures on a MATLAB host exercise real
-resize events and the stacked-pair layout, persistent graphics (constant object
-count across frames, plot modes and theme switches), readout tiles, per-stream
-table, model-angle and burst markers, EVM percent/dB and per-subcarrier/per-row
-modes, broken history lines, view-only hold and its release on an invalid
-acquisition, function keys, exact dark/light/dark colour round trip, snapshot
-contents, stale/blank rejection, callback rollback, calibration readiness and
-cleanup. Three design advisers and four reviewers with independent verification
-checked the change; every confirmed finding was fixed and given an assertion.
-A bounded DSP-hosted live run then exercised the same view with RFSoC4x2 samples.
+Per stream: level (dBFS), phase and coherence against ADC_D, applied weight in dB
+and degrees. Session counters by refusal type, the OFDM profile read from the setup
+file, a time-stamped event log and **Clear histories**.
 
-**Results:** both software fixtures pass with zero leaked figures/timers; a full
-redraw of a 32768-sample frame took about 61 ms on the fixture host. The live run
-accepted 51 frames and passed pause/resume, DAC phase 15°→0°, same-frequency RF
-apply, beamformer selection, hold (kept its frame while two more were accepted),
-diagnostic plot modes, monitor page and snapshot. Displayed EVM was about 4.8 %
-(−26.3 dB) on typical frames; the last frame of the run was quality-flagged at
-11.1 % with 2 of 5 bursts qualified, and such frames stay in the history. Eight
-rejections were logged (5 expired, 2 no signal, 1 stale); the event log names the
-timing-step burst behind each flagged frame. Per-stream phase against stream 0
-stayed within 0.9° over 48 retained frames of that one initialization. Both DAC
-RAMs were cleared/read back, outputs commanded off and shutdown reported no errors.
+A refused control restores the previous value and shows the reason in the sidebar,
+the status line and the event log.
 
-**Conclusions / Ways to resolve:** the redesigned interface works with real board
-data and makes the known capture sample slips visible per frame. This is
-GUI/control validation, not a throughput benchmark, and one initialization says
-nothing about phase repeatability across initializations. Current common
-splitter wiring still provides uncalibrated model DOA/pattern, not physical angles,
-beamforming gain or jammer rejection. Raw capture sample loss and streaming-speed
-optimization remain separate work.
+## Layout
+
+At desktop sizes the plots use three columns of stacked pairs (pattern under DOA,
+time under spectrum, EVM under constellation); medium windows use two columns;
+small windows scroll instead of clipping. The window opens on the primary monitor
+and sizes itself correctly on monitors with another display scale.

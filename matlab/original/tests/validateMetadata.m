@@ -1,5 +1,5 @@
 function validateMetadata()
-% Synthetic transport-contract controls; no sockets, VSA or hardware.
+% Synthetic transport-contract controls; no sockets or hardware.
 cfg=origapp.defaultConfig(); cfg.dataChan=16;
 good=struct('samples',zeros(16,4),'sequence',1,'timestamp',origapp.Controller.nowSeconds());
 for k=1:5

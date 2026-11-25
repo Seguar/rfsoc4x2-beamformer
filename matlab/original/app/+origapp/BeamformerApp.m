@@ -33,7 +33,6 @@ classdef BeamformerApp < handle
                 obj.AcqTimer=timer('ExecutionMode','fixedSpacing','BusyMode','drop', ...
                     'Period',cfg.periodSeconds,'Name','RFSoC focused frontend', ...
                     'TimerFcn',@(~,~)obj.tick(),'ErrorFcn',@(~,e)obj.timerError(e));
-                obj.Controller.setVsaIdle(@()obj.watchdog());
             catch err
                 obj.close();rethrow(err)
             end
@@ -66,11 +65,6 @@ classdef BeamformerApp < handle
             % Data amount (samples per frame) from a launcher option.
             obj.configure(struct('rows',n));
         end
-        function watchdog(obj)
-            if obj.Closed || isempty(obj.View),return,end
-            s=obj.Session.snapshot();
-            if ~s.valid,obj.View.show(s);end
-        end
         function close(obj)
             if obj.Closed,return,end
             obj.Closed=true;
@@ -98,7 +92,7 @@ classdef BeamformerApp < handle
         function render(obj,s)
             if obj.Closed || isempty(obj.View) || ~isvalid(obj.View),return,end
             if s.valid
-                key=string(s.sequence)+"|"+string(~isempty(s.vendor));
+                key=string(s.sequence);
             else
                 key="invalid|"+string(s.reason);
                 if isfield(s,'health'),key=key+"|"+string(s.health.errors)+"|"+string(s.health.noSignal);end

@@ -1,12 +1,12 @@
 function report=validateBeamformerView(outDir)
-% Synthetic GUI-only fixture: no board, sockets, VSA or DSP estimator.
+% Synthetic GUI-only fixture: no board, sockets or DSP estimator.
 % Run on a MATLAB host, optionally with -noFigureWindows. All screenshots
 % written here are labelled synthetic; never present them as live hardware.
 if nargin<1,outDir=tempname;end
 if ~isfolder(outDir),mkdir(outDir);end
 figures0=numel(findall(groot,'Type','figure'));timers0=numel(timerfindall);
 assert(origapp.defaultConfig().theme=="light",'The default theme must be light.');
-cfg=origapp.defaultConfig();cfg.visible=false;cfg.directOnly=false;cfg.analyzer='integrated';cfg.theme="dark";
+cfg=origapp.defaultConfig();cfg.visible=false;cfg.directOnly=false;cfg.theme="dark";
 cfg.fc=3e9;cfg.fc_d0=3e9;cfg.fc_d1=3e9;cfg.fcAnt=3e9;cfg.dacPow=[1 0 0 0];
 calls={};reject=false;
 cb=struct('start',@()mark('start',[]),'pause',@(v)mark('pause',v), ...
@@ -197,8 +197,6 @@ assert(C.scan_res.Limits(1)>1e-4,'Scan step lower limit does not follow averagin
 avg0=C.avg_factor.Value;
 h=C.avg_factor;h.Value=10;h.ValueChangedFcn(h,struct());h=C.scan_bw;h.Value=120;h.ValueChangedFcn(h,struct());
 assert(avg0==1000 && C.scan_res.Limits(2)==120);
-h=v.Controls.CompareVsa;h.Value=true;h.ValueChangedFcn(h,struct());
-assert(string(calls{end}.value.analyzer)=='both');
 h=v.Controls.Pause;h.Value=true;h.ValueChangedFcn(h,struct());
 assert(strcmp(calls{end}.name,'pause') && calls{end}.value && strcmp(h.Text,'Resume'));
 v.Controls.adcMHz.Value=3050;v.Controls.dacMHz.Value=3050;
@@ -255,7 +253,7 @@ cfg.directOnly=true;cfg.ch=1;v=origapp.BeamformerView(cfg,struct());
 assert(numel(v.Controls.ch.Items)==1 && v.Controls.ch.Value==1);
 assert(strcmp(v.Controls.Start.Enable,'off') && strcmp(v.Controls.Pause.Enable,'off'));
 delete(v);
-report=struct('label','SYNTHETIC GUI ONLY — no board/VSA', 'axes',6,'resizeWidths',widths, ...
+report=struct('label','SYNTHETIC GUI ONLY — no board', 'axes',6,'resizeWidths',widths, ...
     'persistentObjectCount',n,'callbacks',numel(calls),'plotModes',true,'viewOnlyHold',true,'themeSwitch',true, ...
     'snapshotFiles',numel(files),'eventLogLines',nlog,'leakedFigures',numel(findall(groot,'Type','figure'))-figures0, ...
     'leakedTimers',numel(timerfindall)-timers0);
